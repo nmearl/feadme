@@ -1,0 +1,181 @@
+import numpy as np
+import numpyro
+from pydantic import BaseModel, root_validator, model_validator, field_validator
+from enum import Enum, auto
+from typing import Optional, List, Callable, NamedTuple
+import jax.numpy as jnp
+from collections import namedtuple
+from jax.scipy import stats
+from .utils import truncnorm_ppf
+
+
+class Distribution(str, Enum):
+    uniform = "uniform"
+    log_uniform = "log_uniform"
+    normal = "normal"
+    log_normal = "log_normal"
+    half_normal = "half_normal"
+
+
+class Parameter(BaseModel):
+    name: str
+    distribution: Distribution = Distribution.uniform
+    fixed: Optional[bool] = False
+    tied: Optional[Callable] = None
+    shared: Optional[str] = None
+    low: Optional[float] = None
+    high: Optional[float] = None
+    loc: Optional[float] = None
+    scale: Optional[float] = None
+
+    @model_validator(mode="before")
+    def validate_parameters(cls, values):
+        dist = values.get("distribution")
+
+        if dist in ["uniform", "log_uniform"]:
+            if values.get("low") is None or values.get("high") is None:
+                raise ValueError(
+                    "For 'uniform' distribution, 'low' and 'high' parameters are required."
+                )
+        elif dist == "normal":
+            missing_params = [
+                param for param in ("loc", "scale") if values.get(param) is None
+            ]
+            if missing_params:
+                raise ValueError(
+                    f"For 'normal' distribution, {', '.join(missing_params)} are required."
+                )
+        elif dist == "log_normal":
+            if values.get("loc") is None or values.get("scale") is None:
+                raise ValueError(
+                    "For 'lognormal' distribution, 'loc' and 'scale' parameters are required."
+                )
+        elif dist == "half_normal":
+            if values.get("scale") is None:
+                raise ValueError(
+                    "For 'half_normal' distribution, 'scale' parameter is required."
+                )
+
+        return values
+
+    def transform(self, value):
+        if self.distribution == Distribution.uniform:
+            return stats.uniform.ppf(value, loc=self.low, scale=self.high - self.low)
+        elif self.distribution == Distribution.log_uniform:
+            # return jnp.exp(
+            #     stats.uniform.ppf(
+            #         value,
+            #         loc=jnp.log(self.low),
+            #         scale=jnp.log(self.high) - jnp.log(self.low),
+            #     )
+            # )
+            return 10 ** (
+                stats.uniform.ppf(
+                    value,
+                    loc=jnp.log10(self.low),
+                    scale=jnp.log10(self.high) - jnp.log10(self.low),
+                )
+            )
+        elif self.distribution == Distribution.normal:
+            # return stats.norm.ppf(value, loc=self.loc, scale=self.scale)
+            # low_n = (self.low - self.loc) / self.scale
+            # high_n = (self.high - self.loc) / self.scale
+            return truncnorm_ppf(
+                value,
+                self.loc,
+                self.scale,
+                self.low,
+                self.high,
+            )
+        elif self.distribution == Distribution.log_normal:
+            return stats.lognorm.ppf(value, s=self.scale, loc=jnp.exp(self.loc))
+
+
+class Profile(BaseModel):
+    name: str
+
+    @property
+    def shared(self):
+        fields = [getattr(self, field_name) for field_name in self.model_fields]
+
+        return [
+            field
+            for field in fields
+            if isinstance(field, Parameter) and field.shared is not None
+        ]
+
+    @property
+    def independent(self):
+        fields = [getattr(self, field_name) for field_name in self.model_fields]
+
+        return [
+            field
+            for field in fields
+            if isinstance(field, Parameter) and field.shared is None
+        ]
+
+
+class Mask(BaseModel):
+    lower_limit: float
+    upper_limit: float
+
+
+class Disk(Profile):
+    mask: Optional[List[Mask]] = []
+    center: Parameter
+    inner_radius: Parameter
+    delta_radius: Parameter
+    inclination: Parameter
+    sigma: Parameter
+    q: Parameter
+    eccentricity: Parameter
+    apocenter: Parameter
+    scale: Optional[Parameter] = Parameter(
+        name="scale", distribution=Distribution.uniform, low=0, high=2
+    )
+    offset: Optional[Parameter] = Parameter(
+        name="offset", distribution=Distribution.uniform, low=0, high=0.1
+    )
+
+
+class Shape(str, Enum):
+    gaussian = "gaussian"
+    lorentzian = "lorentzian"
+
+
+class Line(Profile):
+    shape: Optional[Shape] = Shape.gaussian
+    center: Parameter
+    amplitude: Parameter
+    vel_width: Parameter
+
+
+class Template(BaseModel):
+    name: str
+    redshift: Optional[float] = 0
+    disk_profiles: List[Disk]
+    line_profiles: List[Line]
+    white_noise: Optional[Parameter] = Parameter(
+        name="white_noise",
+        distribution=Distribution.normal,
+        low=0,
+        high=0.5,
+        loc=0,
+        scale=0.1,
+    )
+
+    @field_validator("disk_profiles", mode="after")
+    @classmethod
+    def validate_disk_profiles(cls, value):
+        disk_names = [disk.name for disk in value]
+        if len(disk_names) != len(set(disk_names)):
+            raise ValueError("Disk profile names must be unique.")
+        return value
+
+    @field_validator("line_profiles", mode="after")
+    @classmethod
+    def validate_line_profiles(cls, value):
+        line_names = [line.name for line in value]
+        if len(line_names) != len(set(line_names)):
+            raise ValueError("Line profile names must be unique.")
+        return value
