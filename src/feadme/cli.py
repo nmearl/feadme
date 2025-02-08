@@ -14,35 +14,9 @@ from numpyro.infer import MCMC, NUTS, init_to_feasible, init_to_sample, init_to_
 from feadme.compose import disk_model
 from feadme.parser import Template, Parameter
 from .plotting import plot_corner, plot_fit
+from .samplers import initialize_to_chees
 
 finfo = np.finfo(float)
-
-
-def output_results(mcmc, label, output_dir):
-    posterior_samples = mcmc.get_samples()
-    param_dict = {}
-
-    def summarize_posterior(samples):
-        summary = {}
-        for param, values in samples.items():
-            median = jnp.median(values)
-            lower_bound = jnp.percentile(values, 16)
-            upper_bound = jnp.percentile(values, 86)
-            summary[param] = {"median": median, "16%": lower_bound, "84%": upper_bound}
-        return summary
-
-    posterior_summary = summarize_posterior(posterior_samples)
-
-    for k, v in posterior_summary.items():
-        param_dict.setdefault("label", []).append(label)
-        param_dict.setdefault("param", []).append(k)
-        param_dict.setdefault("value", []).append(v["median"])
-        param_dict.setdefault("err_lo", []).append(v["median"] - v["16%"])
-        param_dict.setdefault("err_hi", []).append(v["84%"] - v["median"])
-
-    Table(param_dict).write(
-        f"{output_dir}/disk_param_results.csv", format="ascii.csv", overwrite=True
-    )
 
 
 @click.command()
@@ -109,9 +83,14 @@ def run(
 
     label = label or template.name
 
-    wave = data["wave"] / (1 + template.redshift)
-    flux = data["flux"]
-    flux_err = data["flux_err"]
+    wave = (data["wave"] / (1 + template.redshift)).value
+    flux = data["flux"].value
+    flux_err = data["flux_err"].value
+
+    mask = (wave > 6400) & (wave < 6900)
+    wave = wave[mask]
+    flux = flux[mask]
+    flux_err = flux_err[mask]
 
     profile_ref = {}
 
@@ -152,64 +131,21 @@ def run(
     full_disk_model = partial(
         disk_model,
         template=template,
-        # parameters={
-        #     prof.name: {
-        #         k: v for k, v in profile_ref[prof.name].items() if v["shared"] is None
-        #     }
-        #     for prof in template.disk_profiles + template.line_profiles
-        # },
-        # shared_parameters={
-        #     prof.name: {
-        #         k: v
-        #         for k, v in profile_ref[prof.name].items()
-        #         if v["shared"] is not None
-        #     }
-        #     for prof in template.disk_profiles + template.line_profiles
-        # },
         masks=masks,
     )
-
-    nuts_kernel = NUTS(
-        full_disk_model,
-        init_strategy=init_to_uniform(),
-        # find_heuristic_step_size=True,
-        # dense_mass=True,
-        # max_tree_depth=(20, 10),
-        # adapt_step_size=True,
-        # target_accept_prob=0.9,
-    )
-    rng_key = jax.random.PRNGKey(0)
 
     if not Path(output_dir).exists():
         Path(output_dir).mkdir(parents=True)
 
-    if Path(f"{output_dir}/{label}.pkl").exists():
-        with open(f"{output_dir}/{label}.pkl", "rb") as f:
-            mcmc = pickle.load(f)
-    else:
-        mcmc = MCMC(
-            nuts_kernel,
-            num_warmup=num_warmup,
-            num_samples=num_samples,
-            num_chains=num_chains,
-            chain_method=(
-                "vectorized" if jax.local_device_count() == 1 else "parallel"
-            ),
-        )
-
-        with numpyro.validation_enabled():
-            mcmc.run(
-                rng_key,
-                wave=jnp.asarray(wave),
-                flux=jnp.asarray(flux),
-                flux_err=jnp.asarray(flux_err),
-            )
-
-        with open(f"{output_dir}/{label}.pkl", "wb") as f:
-            pickle.dump(mcmc, f)
-
-    mcmc.print_summary()
-
-    output_results(mcmc, label, output_dir)
-    plot_fit(mcmc, full_disk_model, wave, flux, flux_err, output_dir, rng_key)
-    plot_corner(mcmc, output_dir)
+    initialize_to_chees(
+        disk_model,
+        template,
+        wave,
+        flux,
+        flux_err,
+        output_dir,
+        label,
+        num_warmup,
+        num_samples,
+        num_chains,
+    )
