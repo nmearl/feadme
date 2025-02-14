@@ -179,8 +179,20 @@ def nuts_with_adaptation(
     print(f"Average acceptance rate: {acceptance_rate:.2f}")
     print(f"There were {100 * num_divergent:.2f}% divergent transitions")
 
+    # samples_constrained = {}
+    #
+    # for i in range(num_samples):
+    #     pp_res = postprocess_fn(template, wave, flux, flux_err)(
+    #         {k: v[i] for k, v in states.position.items()}
+    #     )
+    #
+    #     for k, v in pp_res.items():
+    #         samples_constrained.setdefault(k, []).append(v)
+    #
+    # samples_constrained = {k: np.array(v) for k, v in samples_constrained.items()}
+
     samples_constrained = jax.vmap(postprocess_fn(template, wave, flux, flux_err))(
-        {k: v for k, v in states.position.items()}
+        states.position
     )
 
     plot_results(
