@@ -1,10 +1,8 @@
-import pprint
-
 import astropy.constants as const
 import astropy.units as u
 import numpyro
 
-numpyro.set_host_device_count(2)
+numpyro.set_host_device_count(1)
 numpyro.enable_x64()
 
 import numpyro.distributions as dist
@@ -12,12 +10,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .models.disk import jax_integrate, mixed_integrate
-from .parser import Template, Parameter, Profile
-
-from numpyro.infer.reparam import LocScaleReparam, TransformReparam
-from numpyro.distributions.transforms import AffineTransform, ExpTransform
-from numpyro.distributions import TransformedDistribution
+from .models.disk import jax_integrate
+from .parser import Template
 
 numpyro.set_platform("cpu")
 

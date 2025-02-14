@@ -3,18 +3,17 @@ from datetime import date
 from pathlib import Path
 
 import arviz as az
+import astropy.uncertainty as unc
 import blackjax
+import corner
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 import numpyro
-import optax
+from astropy.table import Table
 from numpyro.infer import MCMC, NUTS, init_to_uniform
 from numpyro.infer.util import initialize_model, Predictive
-from astropy.table import Table
-import corner
-import matplotlib.pyplot as plt
-import astropy.uncertainty as unc
 
 from .plotting import plot_corner, plot_fit
 
@@ -49,7 +48,16 @@ def output_results(mcmc, label, output_dir):
 
 
 def initialize_to_nuts(
-    model, wave, flux, flux_err, output_dir, label, num_warmup, num_samples, num_chains
+    model,
+    template,
+    wave,
+    flux,
+    flux_err,
+    output_dir,
+    label,
+    num_warmup,
+    num_samples,
+    num_chains,
 ):
 
     nuts_kernel = NUTS(
@@ -61,7 +69,7 @@ def initialize_to_nuts(
         # adapt_step_size=True,
         # target_accept_prob=0.9,
     )
-    rng_key = jax.random.PRNGKey(0)
+    rng_key = jax.random.key(int(date.today().strftime("%Y%m%d")))
 
     if Path(f"{output_dir}/{label}.pkl").exists():
         with open(f"{output_dir}/{label}.pkl", "rb") as f:
@@ -81,6 +89,7 @@ def initialize_to_nuts(
         with numpyro.validation_enabled():
             mcmc.run(
                 rng_key,
+                template=template,
                 wave=jnp.asarray(wave),
                 flux=jnp.asarray(flux),
                 flux_err=jnp.asarray(flux_err),
@@ -112,7 +121,7 @@ def inference_loop(rng_key, kernel, initial_state, num_samples):
     )
 
 
-def initialize_to_chees(
+def nuts_with_adaptation(
     model,
     template,
     wave,
@@ -122,42 +131,47 @@ def initialize_to_chees(
     label,
     num_warmup,
     num_samples,
-    num_chains,
+    num_chains=1,
+    learning_rate=0.5,
+    initial_step_size=0.1,
 ):
+    save_location = f"{output_dir}/{label}_save.pkl"
     rng_key = jax.random.key(int(date.today().strftime("%Y%m%d")))
-    rng_key, init_key = jax.random.split(rng_key)
-    init_params, potential_fn_gen, postprocess_fn, *_ = initialize_model(
-        init_key,
-        model,
-        model_args=(template, wave, flux, flux_err),
-        # model_kwargs={"wave": wave, "flux": flux, "flux_err": flux_err},
-        dynamic_args=True,
-    )
 
-    logdensity_fn = lambda position: -potential_fn_gen(template, wave, flux, flux_err)(
-        position
-    )
-    initial_position = init_params.z
+    if Path(save_location).exists():
+        with open(save_location, "rb") as f:
+            states, infos, postprocess_fn = pickle.load(f)
+    else:
+        rng_key, init_key = jax.random.split(rng_key)
+        init_params, potential_fn_gen, postprocess_fn, *_ = initialize_model(
+            init_key,
+            model,
+            model_args=(template, wave, flux, flux_err),
+            dynamic_args=True,
+        )
 
-    adapt = blackjax.window_adaptation(
-        blackjax.nuts, logdensity_fn, target_acceptance_rate=0.8
-    )
-    # learning_rate = optax.cosine_decay_schedule(1e-3, 1e4, 1e-5)
-    # initial_step_size = 1e-3
-    # optim = optax.adam(learning_rate)
-    # adapt = blackjax.chees_adaptation(
-    #     logdensity_fn, num_chains=1, target_acceptance_rate=0.8
-    # )
+        logdensity_fn = lambda position: -potential_fn_gen(
+            template, wave, flux, flux_err
+        )(position)
+        initial_position = init_params.z
 
-    rng_key, warmup_key = jax.random.split(rng_key)
-    (last_state, parameters), _ = adapt.run(
-        warmup_key, initial_position, num_warmup  #  initial_step_size, optim,
-    )
-    kernel = blackjax.nuts(logdensity_fn, **parameters).step
+        adapt = blackjax.window_adaptation(
+            blackjax.nuts, logdensity_fn, target_acceptance_rate=0.9, progress_bar=True
+        )
 
-    rng_key, sample_key = jax.random.split(rng_key)
-    states, infos = inference_loop(sample_key, kernel, last_state, num_samples)
-    _ = states.position["halpha_disk_center_base"].block_until_ready()
+        rng_key, warmup_key = jax.random.split(rng_key)
+        (last_state, parameters), _ = adapt.run(
+            warmup_key, initial_position, num_warmup
+        )
+        kernel = blackjax.nuts(logdensity_fn, **parameters).step
+
+        rng_key, sample_key = jax.random.split(rng_key)
+        states, infos = inference_loop(sample_key, kernel, last_state, num_samples)
+        _ = states.position["halpha_disk_center_base"].block_until_ready()
+
+        # Save the outputs
+        with open(f"{output_dir}/{label}_save.pkl", "wb") as f:
+            pickle.dump((states, infos, postprocess_fn), f)
 
     acceptance_rate = np.mean(infos[0])
     num_divergent = np.mean(infos[1])
@@ -165,20 +179,28 @@ def initialize_to_chees(
     print(f"Average acceptance rate: {acceptance_rate:.2f}")
     print(f"There were {100 * num_divergent:.2f}% divergent transitions")
 
+    samples_constrained = jax.vmap(postprocess_fn(template, wave, flux, flux_err))(
+        {k: v for k, v in states.position.items()}
+    )
+
+    plot_results(
+        rng_key, samples_constrained, output_dir, model, template, wave, flux, flux_err
+    )
+
+    # samples_constrained = {k: v for k, v in samples_constrained.items() if "_base" in k}
+
+    # print(samples_constrained)
+    #
     # res = {}
     # for prof in template.disk_profiles + template.line_profiles:
     #     for param in prof.independent:
     #         samp_name = f"{prof.name}_{param.name}"
-    #         res[samp_name] = param.transform(states.position[f"{samp_name}_base"])
+    #         res[samp_name] = param.transform(samples_constrained[f"{samp_name}_base"])
 
-    samples_constrained = jax.vmap(postprocess_fn(template, wave, flux, flux_err))(
-        states.position
-    )
 
+def plot_results(rng_key, samples, output_dir, model, template, wave, flux, flux_err):
     idata = az.from_dict(
-        posterior={
-            k: v[None, ...] for k, v in samples_constrained.items() if "_base" not in k
-        }
+        posterior={k: v[None, ...] for k, v in samples.items() if "_base" not in k}
         # posterior=res
     )
 
@@ -189,9 +211,7 @@ def initialize_to_chees(
 
     fig = axes.ravel()[0].figure
     fig.tight_layout()
-    fig.savefig(
-        "/home/nmearl/research/disk_comparison/results/ZTF18aaaotwe/posterior_plot.png"
-    )
+    fig.savefig(f"{output_dir}/posterior_plot.png")
 
     axes = az.plot_trace(
         idata,
@@ -200,9 +220,7 @@ def initialize_to_chees(
 
     fig = axes.ravel()[0].figure
     fig.tight_layout()
-    fig.savefig(
-        "/home/nmearl/research/disk_comparison/results/ZTF18aaaotwe/trace_plot.png"
-    )
+    fig.savefig(f"{output_dir}/trace_plot.png")
 
     fig = corner.corner(
         idata.posterior,
@@ -211,11 +229,9 @@ def initialize_to_chees(
         quantiles=[0.16, 0.5, 0.84],
         smooth=1,
     )
-    fig.savefig(
-        "/home/nmearl/research/disk_comparison/results/ZTF18aaaotwe/corner_plot.png"
-    )
+    fig.savefig(f"{output_dir}/corner_plot.png")
 
-    predictive = Predictive(model, posterior_samples=samples_constrained)
+    predictive = Predictive(model, posterior_samples=samples)
     y_pred = predictive(
         rng_key, template=template, wave=wave, flux=None, flux_err=flux_err
     )["obs"]
@@ -229,6 +245,4 @@ def initialize_to_chees(
     ax.fill_between(wave, lower_lim, upper_lim, alpha=0.5)
     ax.plot(wave, flux)
 
-    fig.savefig(
-        f"/home/nmearl/research/disk_comparison/results/ZTF18aaaotwe/model_fit.png"
-    )
+    fig.savefig(f"{output_dir}/model_fit.png")
