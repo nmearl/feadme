@@ -1,20 +1,15 @@
 import json
-import pickle
-from functools import partial
 from pathlib import Path
 
 import click
 import jax
 import jax.numpy as jnp
 import numpy as np
-import numpyro
 from astropy.table import Table
-from numpyro.infer import MCMC, NUTS, init_to_feasible, init_to_sample, init_to_uniform
 
 from feadme.compose import disk_model
 from feadme.parser import Template, Parameter
-from .plotting import plot_corner, plot_fit
-from .samplers import initialize_to_chees
+from .samplers import nuts_with_adaptation
 
 finfo = np.finfo(float)
 
@@ -72,9 +67,7 @@ def run(
     num_chains: int = jax.local_device_count(),
 ):
     # Load the data
-    data = Table.read(
-        data_file, format="ascii.basic", names=("wave", "flux", "flux_err")
-    )
+    data = Table.read(data_file, format="ascii.csv", names=("wave", "flux", "flux_err"))
 
     # Load the template
     with open(template_file, "r") as f:
@@ -128,16 +121,16 @@ def run(
 
         masks[prof.name] = {"mask": jnp.asarray(mask), "wave": jnp.asarray(wave[mask])}
 
-    full_disk_model = partial(
-        disk_model,
-        template=template,
-        masks=masks,
-    )
+    # full_disk_model = partial(
+    #     disk_model,
+    #     template=template,
+    #     masks=masks,
+    # )
 
     if not Path(output_dir).exists():
         Path(output_dir).mkdir(parents=True)
 
-    initialize_to_chees(
+    nuts_with_adaptation(
         disk_model,
         template,
         wave,
