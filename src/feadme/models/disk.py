@@ -15,7 +15,7 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-fixed_quadgk = GaussKronrodRule(order=51).integrate
+fixed_quadgk = GaussKronrodRule(order=21).integrate
 
 
 @jax.jit
@@ -108,51 +108,6 @@ def integrand(
 
 
 @jax.jit
-def mixed_inner_integrate(
-    xi: float,
-    phi1: float,
-    phi2: float,
-    X: ArrayLike,
-    inc: float,
-    sigma: float,
-    q: float,
-    e: float,
-    phi0: float,
-) -> Array:
-    phi = jnp.linspace(phi1, phi2, 25)  # orientation
-
-    res = jax.vmap(
-        integrand,
-        in_axes=(0, None, None, None, None, None, None, None),
-    )(phi, xi, X, inc, sigma, q, e, phi0)
-
-    inner_integral = jnp.trapezoid(res, phi, axis=0)
-
-    return inner_integral
-
-
-@jax.jit
-def mixed_integrate(
-    xi1: float,
-    xi2: float,
-    phi1: float,
-    phi2: float,
-    X: ArrayLike,
-    inc: float,
-    sigma: float,
-    q: float,
-    e: float,
-    phi0: float,
-) -> Array:
-    return quadgk(
-        mixed_inner_integrate,
-        [xi1, xi2],
-        args=(phi1, phi2, X, inc, sigma, q, e, phi0),
-        order=15,
-    )[0]
-
-
-@jax.jit
 def _inner_quad(
     xi: ArrayLike,
     phi1: float,
@@ -210,6 +165,46 @@ def _jax_integrate(
 
 
 @jax.jit
+def _intermediate(
+    phi: ArrayLike,
+    xi_tilde: ArrayLike,
+    X: ArrayLike,
+    inc: float,
+    sigma: float,
+    q: float,
+    e: float,
+    phi0: float,
+) -> Array:
+    res = jnp.where(
+        jnp.isnan(xi_tilde),
+        0.0,
+        _inner_quad(xi_tilde, phi[0], phi[-1], X, inc, sigma, q, e, phi0),
+    )
+
+    return res
+
+
+@jax.jit
+def jax_integrate_single(xi, phi, X, inc, sigma, q, e, phi0):
+    XI, PHI = jnp.meshgrid(
+        xi,
+        phi,
+        indexing="ij",
+    )
+
+    res = jax.vmap(_intermediate, in_axes=(0, 0, None, None, None, None, None, None))(
+        PHI, XI, X[:, None], inc, sigma, q, e, phi0
+    )
+
+    inner_integral = jnp.trapezoid(res, x=phi, axis=2)
+    outer_integral = jnp.trapezoid(inner_integral, x=xi, axis=0)
+
+    jax.debug.print("{x}", x=outer_integral)
+
+    return outer_integral
+
+
+@jax.jit
 def jax_integrate(
     xi1: float,
     xi2: float,
@@ -222,30 +217,37 @@ def jax_integrate(
     e: float,
     phi0: float,
 ) -> Array:
-    phi = jnp.linspace(phi1, phi2, 25)  # orientation
+    # xi = jax.lax.cond(
+    #     xi2 / xi1 > 10,
+    #     lambda _: jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi),
+    #     lambda _: jnp.linspace(xi1, xi2, N_xi),
+    #     operand=None,
+    # )
 
-    xi = jax.lax.cond(
-        xi2 / xi1 > 10,
-        lambda _: jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), 25),
-        lambda _: jnp.linspace(xi1, xi2, 25),
-        operand=None,
-    )
+    N_xi, N_phi = 50, 50
 
-    PHI, XI = jnp.meshgrid(
-        phi,
+    xi = jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi)
+    phi = jnp.linspace(phi1, phi2, N_phi)
+
+    XI, PHI = jnp.meshgrid(
         xi,
+        phi,
         indexing="ij",
     )
 
-    res = jax.vmap(
-        integrand,
-        in_axes=(0, 0, None, None, None, None, None, None),
-    )(PHI, XI, X[:, None], inc, sigma, q, e, phi0)
+    res = jax.vmap(integrand, in_axes=(0, 0, None, None, None, None, None, None))(
+        PHI, XI, X[:, None], inc, sigma, q, e, phi0
+    )
 
-    inner_integral = jnp.trapezoid(res, phi, axis=0)
-    outer_integral = jnp.trapezoid(inner_integral, xi, axis=1)
+    # inner_integral = jnp.trapezoid(res, x=phi, axis=2)
+    # outer_integral = jnp.trapezoid(inner_integral, x=xi, axis=0)
+    #
+    # return outer_integral
 
-    return outer_integral
+    dphi = (phi2 - phi1) / (N_phi - 1)
+    dxi = (xi2 - xi1) / (N_xi - 1)
+
+    return jnp.sum(res, axis=(2, 0)) * dphi * dxi
 
 
 def quad_simple_disk_model(
