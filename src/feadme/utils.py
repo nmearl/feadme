@@ -1,10 +1,13 @@
 from jax.scipy.stats import norm
 
 
-def truncnorm_ppf(u, mu, sigma, a, b):
-    """JAX-compatible PPF for truncated normal using NumPy's scipy.stats.norm.ppf."""
-    Fa = norm.cdf((a - mu) / sigma)  # CDF at lower bound
-    Fb = norm.cdf((b - mu) / sigma)  # CDF at upper bound
+def truncnorm_ppf(q, loc, scale, lower_limit, upper_limit):
+    a = (lower_limit - loc) / scale
+    b = (upper_limit - loc) / scale
 
-    # Transform uniform sample to truncated normal sample
-    return mu + sigma * norm.ppf(Fa + u * (Fb - Fa))
+    # Compute CDF bounds
+    cdf_a = norm.cdf(a)
+    cdf_b = norm.cdf(b)
+
+    # Compute the truncated normal PPF
+    return norm.ppf(cdf_a + q * (cdf_b - cdf_a)) * scale + loc
