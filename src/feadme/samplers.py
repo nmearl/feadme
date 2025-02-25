@@ -11,17 +11,18 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import numpyro
+import optax
 from astropy.table import Table
-from numpyro.infer import MCMC, NUTS, init_to_uniform
+from numpyro.infer import MCMC, NUTS, init_to_uniform, init_to_median
 from numpyro.infer.util import initialize_model, Predictive
+from blackjax.util import run_inference_algorithm
 
 from .plotting import plot_corner, plot_fit
 
 finfo = np.finfo(float)
 
 
-def output_results(mcmc, label, output_dir):
-    posterior_samples = mcmc.get_samples()
+def output_results(posterior_samples, label, output_dir):
     param_dict = {}
 
     def summarize_posterior(samples):
@@ -62,10 +63,10 @@ def initialize_to_nuts(
 
     nuts_kernel = NUTS(
         model,
-        init_strategy=init_to_uniform(),
+        init_strategy=init_to_median(),
         # find_heuristic_step_size=True,
-        # dense_mass=True,
-        # max_tree_depth=(20, 10),
+        dense_mass=True,
+        # max_tree_depth=20,
         # adapt_step_size=True,
         # target_accept_prob=0.9,
     )
@@ -80,10 +81,10 @@ def initialize_to_nuts(
             num_warmup=num_warmup,
             num_samples=num_samples,
             num_chains=num_chains,
-            # chain_method=(
-            #     "vectorized" if jax.local_device_count() == 1 else "parallel"
-            # ),
-            chain_method="vectorized",
+            chain_method=(
+                "vectorized" if jax.local_device_count() == 1 else "parallel"
+            ),
+            # chain_method="vectorized",
         )
 
         with numpyro.validation_enabled():
@@ -100,9 +101,47 @@ def initialize_to_nuts(
 
     mcmc.print_summary()
 
-    output_results(mcmc, label, output_dir)
-    plot_fit(mcmc, model, wave, flux, flux_err, output_dir, rng_key)
-    plot_corner(mcmc, output_dir)
+    # output_results(mcmc, label, output_dir)
+    # plot_fit(mcmc, model, wave, flux, flux_err, output_dir, rng_key)
+    # plot_corner(mcmc, output_dir)
+
+    posterior_samples = mcmc.get_samples()
+
+    posterior_predictive_samples_transformed = Predictive(
+        model=model,
+        posterior_samples=posterior_samples,
+    )(rng_key, template=template, wave=wave, flux=None, flux_err=None)
+
+    fixed_fields = [
+        f"{prof.name}_{param.name}"
+        for prof in template.disk_profiles + template.line_profiles
+        for param in prof.fixed
+    ]
+
+    idata_transformed = az.from_dict(
+        posterior={
+            k: np.expand_dims(a=np.asarray(v), axis=0)
+            for k, v in posterior_samples.items()
+            if k not in fixed_fields
+        },
+        posterior_predictive={
+            k: np.expand_dims(a=np.asarray(v), axis=0)
+            for k, v in posterior_predictive_samples_transformed.items()
+            if k not in fixed_fields
+        },
+    )
+
+    output_results(posterior_predictive_samples_transformed, label, output_dir)
+
+    plot_results(
+        output_dir,
+        posterior_predictive_samples_transformed,
+        idata_transformed,
+        wave,
+        flux,
+        flux_err,
+        label,
+    )
 
 
 def inference_loop(rng_key, kernel, initial_state, num_samples):
@@ -140,7 +179,9 @@ def nuts_with_adaptation(
 
     if Path(save_location).exists():
         with open(save_location, "rb") as f:
-            states, infos, postprocess_fn = pickle.load(f)
+            states, infos, postprocess_fn, template, wave, flux, flux_err = pickle.load(
+                f
+            )
     else:
         rng_key, init_key = jax.random.split(rng_key)
         init_params, potential_fn_gen, postprocess_fn, *_ = initialize_model(
@@ -156,7 +197,7 @@ def nuts_with_adaptation(
         initial_position = init_params.z
 
         adapt = blackjax.window_adaptation(
-            blackjax.nuts, logdensity_fn, target_acceptance_rate=0.9, progress_bar=True
+            blackjax.nuts, logdensity_fn, target_acceptance_rate=0.8, progress_bar=True
         )
 
         rng_key, warmup_key = jax.random.split(rng_key)
@@ -171,7 +212,9 @@ def nuts_with_adaptation(
 
         # Save the outputs
         with open(f"{output_dir}/{label}_save.pkl", "wb") as f:
-            pickle.dump((states, infos, postprocess_fn), f)
+            pickle.dump(
+                (states, infos, postprocess_fn, template, wave, flux, flux_err), f
+            )
 
     acceptance_rate = np.mean(infos[0])
     num_divergent = np.mean(infos[1])
@@ -191,70 +234,263 @@ def nuts_with_adaptation(
     #
     # samples_constrained = {k: np.array(v) for k, v in samples_constrained.items()}
 
-    samples_constrained = jax.vmap(postprocess_fn(template, wave, flux, flux_err))(
-        states.position
+    posterior_samples_transformed = jax.vmap(
+        postprocess_fn(template, wave, flux, flux_err)
+    )(states.position)
+
+    posterior_predictive_samples_transformed = Predictive(
+        model=model,
+        posterior_samples=posterior_samples_transformed,
+    )(rng_key, template=template, wave=wave, flux=None, flux_err=None)
+
+    fixed_fields = [
+        f"{prof.name}_{param.name}"
+        for prof in template.disk_profiles + template.line_profiles
+        for param in prof.fixed
+    ]
+
+    idata_transformed = az.from_dict(
+        posterior={
+            k: np.expand_dims(a=np.asarray(v), axis=0)
+            for k, v in posterior_samples_transformed.items()
+            if k not in fixed_fields
+        },
+        posterior_predictive={
+            k: np.expand_dims(a=np.asarray(v), axis=0)
+            for k, v in posterior_predictive_samples_transformed.items()
+            if k not in fixed_fields
+        },
     )
 
     plot_results(
-        rng_key, samples_constrained, output_dir, model, template, wave, flux, flux_err
+        output_dir,
+        posterior_predictive_samples_transformed,
+        idata_transformed,
+        wave,
+        flux,
+        flux_err,
+        label,
     )
 
-    # samples_constrained = {k: v for k, v in samples_constrained.items() if "_base" in k}
 
-    # print(samples_constrained)
+def nuts_with_adaptation_multi(
+    model,
+    template,
+    wave,
+    flux,
+    flux_err,
+    output_dir,
+    label,
+    num_warmup,
+    num_samples,
+    num_chains=2,
+):
+    num_devices = jax.local_device_count()  # Number of available devices
+    if num_chains % num_devices != 0:
+        raise ValueError(
+            f"num_chains ({num_chains}) must be a multiple of num_devices ({num_devices}) for pmap."
+        )
+
+    rng_key = jax.random.key(int(date.today().strftime("%Y%m%d")))
+
+    _, potential_fn_gen, postprocess_fn, *_ = initialize_model(
+        rng_key,
+        model,
+        model_args=(template, wave, flux, flux_err),
+        dynamic_args=True,
+    )
+
+    def logdensity_fn(position):
+        return -potential_fn_gen(template, wave, flux, flux_err)(position)
+
+    adapt = blackjax.window_adaptation(
+        blackjax.nuts, logdensity_fn, target_acceptance_rate=0.9, progress_bar=False
+    )
+
+    rng_keys = jax.random.split(rng_key, num_chains)
+
+    def single_chain_run(init_key):
+        """Runs NUTS sampling for a single chain."""
+        init_params, _, _, *_ = initialize_model(
+            init_key,
+            model,
+            model_args=(template, wave, flux, flux_err),
+            dynamic_args=True,
+        )
+
+        initial_position = init_params.z
+
+        rng_key, warmup_key = jax.random.split(init_key)
+
+        (last_state, parameters), _ = adapt.run(
+            warmup_key, initial_position, num_warmup
+        )
+
+        kernel = blackjax.nuts(logdensity_fn, **parameters).step
+
+        rng_key, sample_key = jax.random.split(rng_key)
+        states, infos = inference_loop(sample_key, kernel, last_state, num_samples)
+
+        return states.position  # Return sampled positions
+
+    # Convert inputs into per-device arrays
+    # replicated_keys = jnp.array(rng_keys).reshape(
+    #     num_devices, num_chains // num_devices, -1
+    # )
+
+    # Run multiple chains in parallel across devices
+    results = jax.pmap(single_chain_run, in_axes=(0,))(rng_keys)
+
+    # Ensure computation completes before returning
+    _ = results["halpha_disk_center_base"].block_until_ready()
+
+    # Save the outputs
+    # with open(f"{output_dir}/{label}_save.pkl", "wb") as f:
+    #     pickle.dump((states, infos, postprocess_fn, template, wave, flux, flux_err), f)
+
+    # acceptance_rate = np.mean(infos[0])
+    # num_divergent = np.mean(infos[1])
     #
-    # res = {}
-    # for prof in template.disk_profiles + template.line_profiles:
-    #     for param in prof.independent:
-    #         samp_name = f"{prof.name}_{param.name}"
-    #         res[samp_name] = param.transform(samples_constrained[f"{samp_name}_base"])
+    # print(f"Average acceptance rate: {acceptance_rate:.2f}")
+    # print(f"There were {100 * num_divergent:.2f}% divergent transitions")
 
+    # samples_constrained = {}
+    #
+    # for i in range(num_samples):
+    #     pp_res = postprocess_fn(template, wave, flux, flux_err)(
+    #         {k: v[i] for k, v in states.position.items()}
+    #     )
+    #
+    #     for k, v in pp_res.items():
+    #         samples_constrained.setdefault(k, []).append(v)
+    #
+    # samples_constrained = {k: np.array(v) for k, v in samples_constrained.items()}
 
-def plot_results(rng_key, samples, output_dir, model, template, wave, flux, flux_err):
-    idata = az.from_dict(
-        posterior={k: v[None, ...] for k, v in samples.items() if "_base" not in k}
-        # posterior=res
+    # print(results)
+
+    results = {k: v.flatten() for k, v in results.items()}
+
+    posterior_samples_transformed = jax.vmap(
+        postprocess_fn(template, wave, flux, flux_err)
+    )(results)
+
+    posterior_predictive_samples_transformed = Predictive(
+        model=model,
+        posterior_samples=posterior_samples_transformed,
+    )(rng_key, template=template, wave=wave, flux=None, flux_err=None)
+
+    idata_transformed = az.from_dict(
+        posterior={
+            k: np.expand_dims(a=np.asarray(v), axis=0)
+            for k, v in posterior_samples_transformed.items()
+        },
+        posterior_predictive={
+            k: np.expand_dims(a=np.asarray(v), axis=0)
+            for k, v in posterior_predictive_samples_transformed.items()
+        },
     )
 
-    axes = az.plot_posterior(
-        idata,
-        var_names=[x for x in idata.posterior.keys()],
+    plot_results(
+        output_dir,
+        posterior_predictive_samples_transformed,
+        idata_transformed,
+        wave,
+        flux,
+        flux_err,
+        label,
     )
 
-    fig = axes.ravel()[0].figure
-    fig.tight_layout()
-    fig.savefig(f"{output_dir}/posterior_plot.png")
 
+def plot_results(
+    output_dir,
+    posterior_predictive_samples_transformed,
+    idata_transformed,
+    wave,
+    flux,
+    flux_err,
+    label,
+):
     axes = az.plot_trace(
-        idata,
-        var_names=[x for x in idata.posterior.keys()],
+        idata_transformed,
+        var_names=[x for x in idata_transformed.posterior.keys() if "_base" not in x],
+        compact=True,
+        backend_kwargs={"layout": "constrained"},
     )
 
     fig = axes.ravel()[0].figure
     fig.tight_layout()
     fig.savefig(f"{output_dir}/trace_plot.png")
 
-    fig = corner.corner(
-        idata.posterior,
-        var_names=[x for x in idata.posterior.keys() if "_base" not in x],
-        labels=[x for x in idata.posterior.keys() if "_base" not in x],
-        quantiles=[0.16, 0.5, 0.84],
-        smooth=1,
+    axes = az.plot_trace(
+        idata_transformed,
+        var_names=[x for x in idata_transformed.posterior.keys() if "_base" in x],
+        compact=True,
+        backend_kwargs={"layout": "constrained"},
     )
-    fig.savefig(f"{output_dir}/corner_plot.png")
 
-    predictive = Predictive(model, posterior_samples=samples)
-    y_pred = predictive(
-        rng_key, template=template, wave=wave, flux=None, flux_err=flux_err
-    )["obs"]
+    fig = axes.ravel()[0].figure
+    fig.tight_layout()
+    fig.savefig(f"{output_dir}/base_trace_plot.png")
 
-    real_dist = unc.Distribution(y_pred.T)
-    lower_lim, median, upper_lim = real_dist.pdf_percentiles([16, 50, 84])
+    fig, ax = plt.subplots(figsize=(8, 4), layout="constrained")
+
+    ax.plot(wave, flux)
+    az.plot_hdi(
+        ax=ax,
+        x=wave,
+        y=idata_transformed["posterior_predictive"]["obs"],
+        fill_kwargs={"alpha": 0.5},
+        color="C1",
+    )
+    fig.savefig(f"{output_dir}/hdi_plot.png")
 
     fig, ax = plt.subplots()
+    ax.errorbar(
+        wave,
+        flux,
+        yerr=flux_err,
+        fmt="o",
+        color="grey",
+        # markeredgecolor="grey",
+        # ecolor="grey",
+        zorder=-10,
+        alpha=0.25,
+    )
 
-    ax.plot(wave, median)
-    ax.fill_between(wave, lower_lim, upper_lim, alpha=0.5)
-    ax.plot(wave, flux)
+    for var in ["disk_flux", "line_flux"]:
+        var_dist = unc.Distribution(posterior_predictive_samples_transformed[var].T)
+        _, median, _ = var_dist.pdf_percentiles([16, 50, 84])
+        ax.plot(wave, median, label=f"{var}")
 
+    real_dist = unc.Distribution(posterior_predictive_samples_transformed["obs"].T)
+    lower_lim, median, upper_lim = real_dist.pdf_percentiles([16, 50, 84])
+    # lower_lim = median - lower_lim
+    # upper_lim = upper_lim - median
+
+    ax.plot(wave, median, color="C3", label="Model Fit")
+    ax.fill_between(wave, lower_lim, upper_lim, alpha=0.5, color="C3")
+
+    ax.set_ylabel("Flux [mJy]")
+    ax.set_xlabel("Wavelength [AA]")
+    ax.set_title(f"{label} Model Fit")
+
+    ax.legend()
     fig.savefig(f"{output_dir}/model_fit.png")
+
+    fig = corner.corner(
+        idata_transformed,
+        var_names=[
+            x
+            for x in idata_transformed.posterior.keys()
+            if "_base" not in x and "_flux" not in x
+        ],
+        labels=[
+            x
+            for x in idata_transformed.posterior.keys()
+            if "_base" not in x and "_flux" not in x
+        ],
+        quantiles=[0.16, 0.5, 0.84],
+        smooth=1,
+        show_titles=True,
+    )
+    fig.savefig(f"{output_dir}/corner_plot.png")
