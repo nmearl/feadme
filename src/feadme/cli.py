@@ -9,7 +9,11 @@ from astropy.table import Table
 
 from feadme.compose import disk_model
 from feadme.parser import Template, Parameter
-from .samplers import nuts_with_adaptation
+from .samplers import (
+    nuts_with_adaptation,
+    nuts_with_adaptation_multi,
+    initialize_to_nuts,
+)
 
 finfo = np.finfo(float)
 
@@ -80,7 +84,7 @@ def run(
     flux = data["flux"].value
     flux_err = data["flux_err"].value
 
-    mask = (wave > 6400) & (wave < 6900)
+    mask = (wave > 6350) & (wave < 6800)
     wave = wave[mask]
     flux = flux[mask]
     flux_err = flux_err[mask]
@@ -130,7 +134,7 @@ def run(
     if not Path(output_dir).exists():
         Path(output_dir).mkdir(parents=True)
 
-    nuts_with_adaptation(
+    initialize_to_nuts(
         disk_model,
         template,
         wave,
