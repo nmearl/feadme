@@ -7,6 +7,7 @@ import jax.numpy as jnp
 from collections import namedtuple
 from jax.scipy import stats
 from .utils import truncnorm_ppf
+from functools import cached_property
 
 
 class Distribution(str, Enum):
@@ -20,6 +21,7 @@ class Distribution(str, Enum):
 class Parameter(BaseModel):
     name: str
     distribution: Distribution = Distribution.uniform
+    value: Optional[float] = None
     fixed: Optional[bool] = False
     tied: Optional[Callable] = None
     shared: Optional[str] = None
@@ -94,25 +96,33 @@ class Parameter(BaseModel):
 class Profile(BaseModel):
     name: str
 
-    @property
+    @cached_property
+    def _parameter_fields(self):
+        return [
+            getattr(self, field_name)
+            for field_name in self.model_fields
+            if isinstance(getattr(self, field_name), Parameter)
+        ]
+
+    @cached_property
     def shared(self):
-        fields = [getattr(self, field_name) for field_name in self.model_fields]
-
         return [
             field
-            for field in fields
-            if isinstance(field, Parameter) and field.shared is not None
+            for field in self._parameter_fields
+            if field.shared is not None and not field.fixed
         ]
 
-    @property
+    @cached_property
     def independent(self):
-        fields = [getattr(self, field_name) for field_name in self.model_fields]
-
         return [
             field
-            for field in fields
-            if isinstance(field, Parameter) and field.shared is None
+            for field in self._parameter_fields
+            if field.shared is None and not field.fixed
         ]
+
+    @cached_property
+    def fixed(self):
+        return [field for field in self._parameter_fields if field.fixed]
 
 
 class Mask(BaseModel):
