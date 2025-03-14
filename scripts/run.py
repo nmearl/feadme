@@ -36,8 +36,8 @@ for template_file in sorted(templates_dir.glob("*.json")):
             str(template_file),
             "--output-dir",
             output_dir,
-            "--num_warmup=5000",
-            "--num_samples=5000",
+            "--num_warmup=10000",
+            "--num_samples=10000",
             "--num_chains=1",
         ]
 
