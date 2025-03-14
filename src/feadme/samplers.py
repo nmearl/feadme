@@ -16,13 +16,17 @@ from astropy.table import Table
 from numpyro.infer import MCMC, NUTS, init_to_uniform, init_to_median
 from numpyro.infer.util import initialize_model, Predictive
 from blackjax.util import run_inference_algorithm
+from numpyro.diagnostics import summary
+import pandas as pd
 
 from .plotting import plot_corner, plot_fit
 
 finfo = np.finfo(float)
 
 
-def output_results(posterior_samples, label, output_dir):
+def output_results(mcmc, posterior_samples, label, output_dir):
+    fit_summary = summary(mcmc.get_samples(), group_by_chain=False)
+
     param_dict = {}
 
     def summarize_posterior(samples):
@@ -37,15 +41,42 @@ def output_results(posterior_samples, label, output_dir):
     posterior_summary = summarize_posterior(posterior_samples)
 
     for k, v in posterior_summary.items():
+        if "disk_flux" in k or "line_flux" in k:
+            continue
+
         param_dict.setdefault("label", []).append(label)
         param_dict.setdefault("param", []).append(k)
         param_dict.setdefault("value", []).append(v["median"])
         param_dict.setdefault("err_lo", []).append(v["median"] - v["16%"])
         param_dict.setdefault("err_hi", []).append(v["84%"] - v["median"])
+        param_dict.setdefault("n_eff", []).append(
+            fit_summary.get(f"{k}_base", {"n_eff": np.nan})["n_eff"]
+        )
+        param_dict.setdefault("r_hat", []).append(
+            fit_summary.get(f"{k}_base", {"r_hat": np.nan})["r_hat"]
+        )
 
     Table(param_dict).write(
         f"{output_dir}/disk_param_results.csv", format="ascii.csv", overwrite=True
     )
+
+
+def check_convergence(mcmc):
+    prior_summary = summary(mcmc.get_samples(), group_by_chain=False)
+    pivot_prior_summary = {}
+
+    for k, v in prior_summary.items():
+        if "disk_flux" in k or "line_flux" in k or "base" not in k:
+            continue
+
+        pivot_prior_summary.setdefault("param", []).append(k)
+        pivot_prior_summary.setdefault("mean", []).append(v["mean"])
+        pivot_prior_summary.setdefault("std", []).append(v["std"])
+        pivot_prior_summary.setdefault("n_eff", []).append(v["n_eff"])
+        pivot_prior_summary.setdefault("r_hat", []).append(v["r_hat"])
+
+    pivot_prior_summary = pd.DataFrame(pivot_prior_summary)
+    return 0.99 <= pivot_prior_summary["r_hat"].mean() < 1.01
 
 
 def initialize_to_nuts(
@@ -71,21 +102,38 @@ def initialize_to_nuts(
         # target_accept_prob=0.9,
     )
     rng_key = jax.random.key(int(date.today().strftime("%Y%m%d")))
+    converged = False
+    conv_num = 0
+    path_exists = Path(f"{output_dir}/{label}.pkl").exists()
 
-    if Path(f"{output_dir}/{label}.pkl").exists():
+    if path_exists:
         with open(f"{output_dir}/{label}.pkl", "rb") as f:
             mcmc = pickle.load(f)
-    else:
-        mcmc = MCMC(
-            nuts_kernel,
-            num_warmup=num_warmup,
-            num_samples=num_samples,
-            num_chains=num_chains,
-            chain_method=(
-                "vectorized" if jax.local_device_count() == 1 else "parallel"
-            ),
-            # chain_method="vectorized",
-        )
+
+        converged = check_convergence(mcmc)
+
+    if converged:
+        return
+
+    # if not path_exists or not converged:
+    while not converged:
+        if not converged and conv_num > 0:
+            print(f"R_hat values are not converged. Re-running MCMC ({conv_num})")
+            mcmc.post_warmup_state = mcmc.last_state
+            rng_key = mcmc.post_warmup_state.rng_key
+
+        # if not path_exists:
+        if not converged and conv_num == 0:
+            mcmc = MCMC(
+                nuts_kernel,
+                num_warmup=num_warmup,
+                num_samples=num_samples,
+                num_chains=num_chains,
+                chain_method=(
+                    "vectorized" if jax.local_device_count() == 1 else "parallel"
+                ),
+                # chain_method="vectorized",
+            )
 
         with numpyro.validation_enabled():
             mcmc.run(
@@ -99,7 +147,9 @@ def initialize_to_nuts(
         with open(f"{output_dir}/{label}.pkl", "wb") as f:
             pickle.dump(mcmc, f)
 
-    mcmc.print_summary()
+        mcmc.print_summary()
+        converged = check_convergence(mcmc)
+        conv_num += 1
 
     # output_results(mcmc, label, output_dir)
     # plot_fit(mcmc, model, wave, flux, flux_err, output_dir, rng_key)
@@ -131,7 +181,7 @@ def initialize_to_nuts(
         },
     )
 
-    output_results(posterior_predictive_samples_transformed, label, output_dir)
+    output_results(mcmc, posterior_predictive_samples_transformed, label, output_dir)
 
     plot_results(
         output_dir,
@@ -410,16 +460,16 @@ def plot_results(
     flux_err,
     label,
 ):
-    axes = az.plot_trace(
-        idata_transformed,
-        var_names=[x for x in idata_transformed.posterior.keys() if "_base" not in x],
-        compact=True,
-        backend_kwargs={"layout": "constrained"},
-    )
-
-    fig = axes.ravel()[0].figure
-    fig.tight_layout()
-    fig.savefig(f"{output_dir}/trace_plot.png")
+    # axes = az.plot_trace(
+    #     idata_transformed,
+    #     var_names=[x for x in idata_transformed.posterior.keys() if "_base" not in x],
+    #     compact=True,
+    #     backend_kwargs={"layout": "constrained"},
+    # )
+    #
+    # fig = axes.ravel()[0].figure
+    # fig.tight_layout()
+    # fig.savefig(f"{output_dir}/trace_plot.png")
 
     axes = az.plot_trace(
         idata_transformed,
