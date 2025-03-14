@@ -84,10 +84,10 @@ def run(
     flux = data["flux"].value
     flux_err = data["flux_err"].value
 
-    mask = (wave > 6350) & (wave < 6800)
+    mask = (wave > 6300) & (wave < 6850)
     wave = wave[mask]
     flux = flux[mask]
-    flux_err = flux_err[mask]
+    flux_err = flux_err[mask] * 0.1
 
     profile_ref = {}
 
