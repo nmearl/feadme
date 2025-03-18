@@ -51,38 +51,6 @@ def disk_model(
                 param.transform(base_value),
             )
 
-            # if param.distribution == Distribution.uniform:
-            #     base_value = numpyro.sample(samp_name + "_base", dist.Normal(0, 1))
-            #     param_mods[samp_name] = numpyro.deterministic(
-            #         samp_name,
-            #         param.low
-            #         + (param.high - param.low) * jax.scipy.stats.norm.cdf(base_value),
-            #     )
-            #
-            # elif param.distribution == Distribution.log_uniform:
-            #     base_value = numpyro.sample(samp_name + "_base", dist.Normal(0, 1))
-            #     log_low, log_high = jnp.log10(param.low), jnp.log10(param.high)
-            #     param_mods[samp_name] = numpyro.deterministic(
-            #         samp_name,
-            #         10
-            #         ** (
-            #             log_low
-            #             + (log_high - log_low) * jax.scipy.stats.norm.cdf(base_value)
-            #         ),
-            #     )
-            #
-            # elif param.distribution == Distribution.normal:
-            #     base_value = numpyro.sample(samp_name + "_base", dist.Normal(0, 1))
-            #     param_mods[samp_name] = numpyro.deterministic(
-            #         samp_name, param.loc + param.scale * base_value
-            #     )
-            #
-            # elif param.distribution == Distribution.log_normal:
-            #     base_value = numpyro.sample(samp_name + "_base", dist.Normal(0, 1))
-            #     param_mods[samp_name] = numpyro.deterministic(
-            #         samp_name, jnp.exp(param.loc + param.scale * base_value)
-            #     )
-
         # Sample all shared parameters
         for param in prof.shared:
             samp_name = f"{prof.name}_{param.name}"
@@ -169,12 +137,10 @@ def disk_model(
     )
 
     # Construct total error
-    # total_error = jnp.sqrt(flux_err**2 + white_noise**2)
     total_error = jnp.sqrt(flux_err**2 + total_flux**2 * jnp.exp(2 * white_noise))
 
     numpyro.deterministic("disk_flux", tot_disk_flux)
     numpyro.deterministic("line_flux", tot_line_flux)
 
     with numpyro.plate("data", wave.shape[0]):
-        # numpyro.deterministic("total_flux", total_flux)
         numpyro.sample("obs", dist.Normal(total_flux, total_error), obs=flux)

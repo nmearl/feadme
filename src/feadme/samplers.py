@@ -508,16 +508,15 @@ def plot_results(
     )
 
     for var in ["disk_flux", "line_flux"]:
-        var_dist = unc.Distribution(posterior_predictive_samples_transformed[var].T)
-        _, median, _ = var_dist.pdf_percentiles([16, 50, 84])
+        var_dist = posterior_predictive_samples_transformed[var]
+        median = np.percentile(var_dist, 50, axis=0)
         ax.plot(wave, median, label=f"{var}")
 
-    real_dist = unc.Distribution(posterior_predictive_samples_transformed["obs"].T)
-    lower_lim, median, upper_lim = real_dist.pdf_percentiles([16, 50, 84])
-    # lower_lim = median - lower_lim
-    # upper_lim = upper_lim - median
-
-    ax.plot(wave, median, color="C3", label="Model Fit")
+    obs_dist = posterior_predictive_samples_transformed["obs"]
+    median = np.percentile(obs_dist, 50, axis=0)
+    lower_lim = np.percentile(obs_dist, 16, axis=0)
+    upper_lim = np.percentile(obs_dist, 84, axis=0)
+    ax.plot(wave, median, label="Model Fit", color="C3")
     ax.fill_between(wave, lower_lim, upper_lim, alpha=0.5, color="C3")
 
     ax.set_ylabel("Flux [mJy]")
