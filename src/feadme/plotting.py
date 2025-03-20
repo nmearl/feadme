@@ -8,6 +8,10 @@ import corner
 import arviz as az
 
 
+def plot_all():
+    pass
+
+
 def plot_fit(mcmc, model, wave, flux, flux_err, output_dir, rng_key=None):
     rng_key = rng_key if rng_key is not None else jax.random.PRNGKey(0)
 
@@ -42,5 +46,14 @@ def plot_corner(mcmc, output_dir):
     )
 
     fig.savefig(f"{output_dir}/corner_plot.png")
+
+    return fig
+
+
+def plot_trace(mcmc, output_dir):
+    idata = az.from_numpyro(mcmc)
+
+    fig = az.plot_trace(idata)
+    fig.savefig(f"{output_dir}/trace_plot.png")
 
     return fig
