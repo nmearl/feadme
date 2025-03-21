@@ -1,0 +1,36 @@
+[project]
+name = "feadme"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Nicholas Earl", email = "contact@nicholasearl.me" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "arviz>=0.21.0",
+    "astropy>=7.0.1",
+    "black>=25.1.0",
+    "blackjax>=1.2.5",
+    "click>=8.1.8",
+    "corner>=2.2.3",
+    "notebook>=7.3.3",
+    "numpyro>=0.18.0",
+    "pandas>=2.2.3",
+    "pydantic>=2.10.6",
+    "quadax>=0.2.6",
+]
+
+[project.scripts]
+feadme = "feadme.cli:run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.6.9",
+    "mkdocstrings[python]>=0.29.0",
+]
