@@ -103,9 +103,5 @@ def run(
 
     nuts_sampler.sample()
 
-    print(nuts_sampler._mcmc.get_samples().keys())
-    print(nuts_sampler.posterior_samples.keys())
-    print(nuts_sampler.posterior_samples_transformed.keys())
-
     nuts_sampler.write_results()
     nuts_sampler.plot_results()

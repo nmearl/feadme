@@ -29,7 +29,7 @@ def check_convergence(mcmc):
     pivot_prior_summary = {}
 
     for k, v in prior_summary.items():
-        if "disk_flux" in k or "line_flux" in k or "base" not in k:
+        if "disk_flux" in k or "line_flux" in k or "_base" not in k:
             continue
 
         pivot_prior_summary.setdefault("param", []).append(k)
@@ -92,6 +92,7 @@ class Sampler:
         path_exists = Path(f"{output_dir}/{label}.pkl").exists()
 
         if path_exists:
+            print(f"Loading existing MCMC sampler from {output_dir}/{label}.pkl")
             with open(f"{output_dir}/{label}.pkl", "rb") as f:
                 self._mcmc = pickle.load(f)
 
@@ -109,11 +110,18 @@ class Sampler:
     def label(self):
         return self._label
 
-    @cached_property
+    @property
     def posterior_samples(self):
-        return {k: v for k, v in self._mcmc.get_samples().items() if "base" in k}
+        return {
+            k: v
+            for k, v in self._mcmc.get_samples().items()
+            if "_flux" not in k
+            # and "_base" not in k
+            # and "_decentered" not in k
+            and k not in self.fixed_fields
+        }
 
-    @cached_property
+    @property
     def posterior_predictive_samples(self):
         return Predictive(
             model=self._model,
@@ -126,47 +134,20 @@ class Sampler:
             flux_err=None,
         )
 
-    # @cached_property
-    # def posterior_samples_transformed(self):
-    #     return {
-    #         k: v
-    #         for k, v in self._mcmc.get_samples().items()
-    #         if "base" not in k and "flux" not in k and "obs" not in k
-    #     }
-
-    @cached_property
-    def posterior_samples_transformed(self):
-        return jax.vmap(
-            self._postprocess_fn(self._template, self._wave, self._flux, self._flux_err)
-        )(self.posterior_samples)
-
-    @cached_property
-    def posterior_predictive_samples_transformed(self):
-        return Predictive(
-            model=self._model,
-            posterior_samples=self.posterior_samples_transformed,
-        )(
-            jax.random.PRNGKey(0),
-            template=self._template,
-            wave=self._wave,
-            flux=None,
-            flux_err=None,
-        )
-
-    @cached_property
+    @property
     def _idata_transformed(self):
         return az.from_dict(
             posterior={
                 k: np.expand_dims(a=np.asarray(v), axis=0)
-                for k, v in self.posterior_samples_transformed.items()
+                for k, v in self.posterior_samples.items()
             },
             posterior_predictive={
                 k: np.expand_dims(a=np.asarray(v), axis=0)
-                for k, v in self.posterior_predictive_samples_transformed.items()
+                for k, v in self.posterior_predictive_samples.items()
             },
         )
 
-    @cached_property
+    @property
     def fixed_fields(self):
         return [
             f"{prof.name}_{param.name}"
@@ -174,7 +155,7 @@ class Sampler:
             for param in prof.fixed
         ]
 
-    def summary(self, write=True):
+    def write_results(self):
         fit_summary = summary(self.posterior_samples, group_by_chain=False)
 
         param_dict = {}
@@ -192,10 +173,10 @@ class Sampler:
                 }
             return summary
 
-        posterior_summary = summarize_posterior(self.posterior_samples_transformed)
+        posterior_summary = summarize_posterior(self.posterior_samples)
 
         for k, v in posterior_summary.items():
-            if "disk_flux" in k or "line_flux" in k:
+            if "disk_flux" in k or "line_flux" in k or "_base" in k:
                 continue
 
             param_dict.setdefault("label", []).append(self.label)
@@ -204,32 +185,29 @@ class Sampler:
             param_dict.setdefault("err_lo", []).append(v["median"] - v["16%"])
             param_dict.setdefault("err_hi", []).append(v["84%"] - v["median"])
             param_dict.setdefault("n_eff", []).append(
-                fit_summary.get(f"{k}_base", {"n_eff": np.nan})["n_eff"]
+                fit_summary.get(f"{k}", {"n_eff": np.nan})["n_eff"]
             )
             param_dict.setdefault("r_hat", []).append(
-                fit_summary.get(f"{k}_base", {"r_hat": np.nan})["r_hat"]
+                fit_summary.get(f"{k}", {"r_hat": np.nan})["r_hat"]
             )
 
         param_tab = Table(param_dict)
-        param_tab.pprint_all()
 
-        if write:
-            param_tab.write(
-                f"{self._output_dir}/disk_param_results.csv",
-                format="ascii.csv",
-                overwrite=True,
-            )
+        param_tab.write(
+            f"{self._output_dir}/disk_param_results.csv",
+            format="ascii.csv",
+            overwrite=True,
+        )
 
-    def write_results(self):
+    def write_run(self):
         with open(f"{self._output_dir}/{self.label}.pkl", "wb") as f:
             pickle.dump(self._mcmc, f)
 
-        self.summary()
-
     def plot_results(self):
         plot_results(
+            self._template,
             self._output_dir,
-            self.posterior_predictive_samples_transformed,
+            self.posterior_predictive_samples,
             self._idata_transformed,
             self._wave,
             self._flux,
@@ -254,24 +232,14 @@ class NUTSSampler(Sampler):
 
         converged = False
         conv_num = 0
-        mcmc = self._mcmc
 
-        if mcmc is not None:
-            converged = check_convergence(mcmc)
-
-        if converged:
-            return
+        if self._mcmc is not None:
+            converged = check_convergence(self._mcmc)
 
         # if not path_exists or not converged:
         while not converged:
-            if not converged and conv_num > 0:
-                print(f"R_hat values are not converged. Re-running MCMC ({conv_num})")
-                mcmc.post_warmup_state = mcmc.last_state
-                rng_key = mcmc.post_warmup_state.rng_key
-
-            # if not path_exists:
-            if not converged and conv_num == 0:
-                mcmc = MCMC(
+            if self._mcmc is None:
+                self._mcmc = MCMC(
                     nuts_kernel,
                     num_warmup=self._num_warmup,
                     num_samples=self._num_samples,
@@ -280,8 +248,12 @@ class NUTSSampler(Sampler):
                         "vectorized" if jax.local_device_count() == 1 else "parallel"
                     ),
                 )
+            else:
+                print(f"R_hat values are not converged. Re-running MCMC ({conv_num})")
+                self._mcmc.post_warmup_state = self._mcmc.last_state
+                rng_key = self._mcmc.post_warmup_state.rng_key
 
-            mcmc.run(
+            self._mcmc.run(
                 rng_key,
                 template=self._template,
                 wave=jnp.asarray(self._wave),
@@ -289,13 +261,13 @@ class NUTSSampler(Sampler):
                 flux_err=jnp.asarray(self._flux_err),
             )
 
-            self._mcmc = mcmc
-            self.write_results()
-            mcmc.print_summary()
-
-            converged = check_convergence(mcmc)
-            converged = True
+            converged = check_convergence(self._mcmc)
             conv_num += 1
+            self._mcmc.print_summary()
+        else:
+            self.write_results()
+            self.write_run()
+            self.plot_results()
 
 
 def inference_loop(rng_key, kernel, initial_state, num_samples):

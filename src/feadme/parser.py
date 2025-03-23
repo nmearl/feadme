@@ -1,6 +1,12 @@
 import numpy as np
 import numpyro
-from pydantic import BaseModel, root_validator, model_validator, field_validator
+from pydantic import (
+    BaseModel,
+    root_validator,
+    model_validator,
+    field_validator,
+    ConfigDict,
+)
 from enum import Enum, auto
 from typing import Optional, List, Callable, NamedTuple
 import jax.numpy as jnp
@@ -19,6 +25,8 @@ class Distribution(str, Enum):
 
 
 class Parameter(BaseModel):
+    model_config = ConfigDict(use_enum_values=True)
+
     name: str
     distribution: Distribution = Distribution.uniform
     value: Optional[float] = None
@@ -59,38 +67,6 @@ class Parameter(BaseModel):
                 )
 
         return values
-
-    def transform(self, value):
-        if self.distribution == Distribution.uniform:
-            return stats.uniform.ppf(value, loc=self.low, scale=self.high - self.low)
-        elif self.distribution == Distribution.log_uniform:
-            # return jnp.exp(
-            #     stats.uniform.ppf(
-            #         value,
-            #         loc=jnp.log(self.low),
-            #         scale=jnp.log(self.high) - jnp.log(self.low),
-            #     )
-            # )
-            return 10 ** (
-                stats.uniform.ppf(
-                    value,
-                    loc=jnp.log10(self.low),
-                    scale=jnp.log10(self.high) - jnp.log10(self.low),
-                )
-            )
-        elif self.distribution == Distribution.normal:
-            # return stats.norm.ppf(value, loc=self.loc, scale=self.scale)
-            # low_n = (self.low - self.loc) / self.scale
-            # high_n = (self.high - self.loc) / self.scale
-            return truncnorm_ppf(
-                value,
-                self.loc,
-                self.scale,
-                self.low,
-                self.high,
-            )
-        elif self.distribution == Distribution.log_normal:
-            return stats.lognorm.ppf(value, s=self.scale, loc=jnp.exp(self.loc))
 
 
 class Profile(BaseModel):

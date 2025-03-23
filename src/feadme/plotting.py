@@ -8,8 +8,11 @@ import corner
 import arviz as az
 import numpy as np
 
+from .compose import evaluate_disk_model
+
 
 def plot_results(
+    template,
     output_dir,
     posterior_predictive_samples_transformed,
     idata_transformed,
@@ -31,14 +34,14 @@ def plot_results(
 
     axes = az.plot_trace(
         idata_transformed,
-        var_names=[x for x in idata_transformed.posterior.keys() if "_base" in x],
+        var_names=list(idata_transformed.posterior.keys()),
         compact=True,
         backend_kwargs={"layout": "constrained"},
     )
 
     fig = axes.ravel()[0].figure
     fig.tight_layout()
-    fig.savefig(f"{output_dir}/base_trace_plot.png")
+    fig.savefig(f"{output_dir}/trace_plot.png")
 
     fig, ax = plt.subplots(figsize=(8, 4), layout="constrained")
 
@@ -46,7 +49,7 @@ def plot_results(
     az.plot_hdi(
         ax=ax,
         x=wave,
-        y=idata_transformed["posterior_predictive"]["obs"],
+        y=idata_transformed["posterior_predictive"]["total_flux"],
         fill_kwargs={"alpha": 0.5},
         color="C1",
     )
@@ -70,12 +73,31 @@ def plot_results(
         median = np.percentile(var_dist, 50, axis=0)
         ax.plot(wave, median, label=f"{var}")
 
-    obs_dist = posterior_predictive_samples_transformed["obs"]
+    obs_dist = posterior_predictive_samples_transformed["total_flux"]
     median = np.percentile(obs_dist, 50, axis=0)
     lower_lim = np.percentile(obs_dist, 16, axis=0)
     upper_lim = np.percentile(obs_dist, 84, axis=0)
     ax.plot(wave, median, label="Model Fit", color="C3")
     ax.fill_between(wave, lower_lim, upper_lim, alpha=0.5, color="C3")
+
+    res_pars = {}
+
+    for var in posterior_predictive_samples_transformed.keys():
+        if "_flux" in var:
+            continue
+
+        var_dist = posterior_predictive_samples_transformed[var]
+        median = np.percentile(var_dist, 50, axis=0)
+
+        res_pars[var] = median
+
+    res_flux, res_disk_flux, res_line_flux = evaluate_disk_model(
+        template, wave, res_pars
+    )
+
+    ax.plot(wave, res_flux, label="R. Model Fit", color="C3")
+    ax.plot(wave, res_disk_flux, label="R. Disk Model", color="C4")
+    ax.plot(wave, res_line_flux, label="R. Line Model", color="C5")
 
     ax.set_ylabel("Flux [mJy]")
     ax.set_xlabel("Wavelength [AA]")
@@ -89,12 +111,12 @@ def plot_results(
         var_names=[
             x
             for x in idata_transformed.posterior.keys()
-            if "_base" not in x and "_flux" not in x
+            if "_flux" not in x and "_base" not in x
         ],
         labels=[
             x
             for x in idata_transformed.posterior.keys()
-            if "_base" not in x and "_flux" not in x
+            if "_flux" not in x and "_base" not in x
         ],
         quantiles=[0.16, 0.5, 0.84],
         smooth=1,
