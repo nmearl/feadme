@@ -5,7 +5,7 @@ from numpyro.infer.reparam import TransformReparam, LocScaleReparam
 from .utils import TruncatedAffineTransform, truncnorm_ppf
 import jax.scipy.stats as stats
 
-numpyro.set_host_device_count(2)
+numpyro.set_host_device_count(1)
 numpyro.enable_x64()
 
 import numpyro.distributions as dist
@@ -20,7 +20,7 @@ from .models.disk import (
 )
 from .parser import Template, Distribution
 
-numpyro.set_platform("cpu")
+# numpyro.set_platform("cpu")
 
 print(jax.local_device_count())
 

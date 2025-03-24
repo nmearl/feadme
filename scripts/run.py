@@ -6,8 +6,8 @@ import json
 
 # Define directories
 # data_dir = Path("/home/nmearl/research/tde_agn_comparison/data")
-templates_dir = Path("/Users/nmearl/research/tde_agn_comparison/tde_templates")
-results_dir = Path("/Users/nmearl/research/tde_agn_comparison/tde_results")
+templates_dir = Path("/home/nmearl/research/tde_agn_comparison/tde_templates")
+results_dir = Path("/home/nmearl/research/tde_agn_comparison/tde_results")
 
 # Get all files in the data and templates directories
 # data_files = sorted(glob.glob(os.path.join(data_dir, "*.csv")))
@@ -36,9 +36,9 @@ for template_file in sorted(templates_dir.glob("*.json")):
             str(template_file),
             "--output-dir",
             output_dir,
-            "--num_warmup=1000",
-            "--num_samples=1000",
-            "--num_chains=2",
+            "--num_warmup=10000",
+            "--num_samples=10000",
+            "--num_chains=1",
         ]
 
         # Run the command
@@ -46,5 +46,3 @@ for template_file in sorted(templates_dir.glob("*.json")):
         subprocess.run(cmd)
     else:
         print(f"Warning: No matching template found for {data_file}")
-
-    break

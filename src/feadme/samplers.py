@@ -79,6 +79,8 @@ class Sampler:
         self._flux_err = flux_err[mask]
         self._output_dir = output_dir
         self._label = label
+        self._mjd = template.mjd
+        self._redshift = template.redshift
         self._num_warmup = num_warmup
         self._num_samples = num_samples
         self._num_chains = num_chains
@@ -109,6 +111,14 @@ class Sampler:
     @property
     def label(self):
         return self._label
+
+    @property
+    def mjd(self):
+        return self._mjd
+
+    @property
+    def redshift(self):
+        return self._redshift
 
     @property
     def posterior_samples(self):
@@ -180,6 +190,8 @@ class Sampler:
                 continue
 
             param_dict.setdefault("label", []).append(self.label)
+            param_dict.setdefault("mjd", []).append(self.mjd)
+            param_dict.setdefault("redshift", []).append(self.redshift)
             param_dict.setdefault("param", []).append(k)
             param_dict.setdefault("value", []).append(v["median"])
             param_dict.setdefault("err_lo", []).append(v["median"] - v["16%"])

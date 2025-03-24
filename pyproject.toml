@@ -15,10 +15,11 @@ dependencies = [
     "click>=8.1.8",
     "corner>=2.2.3",
     "notebook>=7.3.3",
-    "numpyro>=0.18.0",
+    "numpyro[cuda]>=0.18.0",
     "pandas>=2.2.3",
     "pydantic>=2.10.6",
     "quadax>=0.2.6",
+    "seaborn>=0.13.2",
 ]
 
 [project.scripts]
