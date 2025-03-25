@@ -6,8 +6,8 @@ import json
 
 # Define directories
 # data_dir = Path("/home/nmearl/research/tde_agn_comparison/data")
-templates_dir = Path("/home/nmearl/research/tde_agn_comparison/tde_templates")
-results_dir = Path("/home/nmearl/research/tde_agn_comparison/tde_results")
+templates_dir = Path.home() / Path("research/tde_agn_comparison/tde_templates")
+results_dir = Path.home() / Path("research/tde_agn_comparison/tde_results")
 
 # Get all files in the data and templates directories
 # data_files = sorted(glob.glob(os.path.join(data_dir, "*.csv")))

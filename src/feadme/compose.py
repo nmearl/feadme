@@ -1,24 +1,25 @@
 import astropy.constants as const
 import astropy.units as u
-import numpyro
-from numpyro.infer.reparam import TransformReparam, LocScaleReparam
-from .utils import TruncatedAffineTransform, truncnorm_ppf
 import jax.scipy.stats as stats
+import numpyro
+from numpyro.infer.reparam import LocScaleReparam, TransformReparam
+
+from .utils import TruncatedAffineTransform, truncnorm_ppf
 
 numpyro.set_host_device_count(1)
 numpyro.enable_x64()
 
-import numpyro.distributions as dist
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpyro.distributions as dist
 
 from .models.disk import (
-    jax_integrate,
     _jax_integrate,
+    jax_integrate,
     jax_integrate_single,
 )
-from .parser import Template, Distribution
+from .parser import Distribution, Template
 
 # numpyro.set_platform("cpu")
 
