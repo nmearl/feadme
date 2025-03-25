@@ -224,7 +224,7 @@ def jax_integrate(
     #     operand=None,
     # )
 
-    N_xi, N_phi = 50, 50
+    N_xi, N_phi = 100, 100
 
     xi = jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi)
     phi = jnp.linspace(phi1, phi2, N_phi)
@@ -239,51 +239,12 @@ def jax_integrate(
         PHI, XI, X[:, None], inc, sigma, q, e, phi0
     )
 
-    # inner_integral = jnp.trapezoid(res, x=phi, axis=2)
-    # outer_integral = jnp.trapezoid(inner_integral, x=xi, axis=0)
-    #
-    # return outer_integral
+    inner_integral = jnp.trapezoid(res, x=phi, axis=2)
+    outer_integral = jnp.trapezoid(inner_integral, x=xi, axis=0)
+    
+    return outer_integral
 
-    dphi = (phi2 - phi1) / (N_phi - 1)
-    dxi = (xi2 - xi1) / (N_xi - 1)
+    # dphi = (phi2 - phi1) / (N_phi - 1)
+    # dxi = (xi2 - xi1) / (N_xi - 1)
 
-    return jnp.sum(res, axis=(2, 0)) * dphi * dxi
-
-
-def quad_simple_disk_model(
-    x,
-    center,
-    inner_radius,
-    outer_radius,
-    inclination,
-    sigma,
-    q,
-    eccentricity,
-    apocenter,
-    scale,
-    offset,
-):
-    nu = c_cgs / (x * 1e-8)
-    nu0 = c_cgs / (center * 1e-8)
-    X = nu / nu0 - 1
-
-    sigma = 10**sigma * 1e5 * nu0 / c_cgs
-    inner_radius = 10**inner_radius
-    outer_radius = 10**outer_radius
-    scale = 10**scale
-
-    res = jax_integrate(
-        inner_radius,
-        outer_radius,
-        -jnp.pi * 0.5,
-        jnp.pi * 0.5,
-        jnp.asarray(X),
-        nu0,
-        inclination,
-        sigma,
-        q,
-        eccentricity,
-        apocenter,
-    )
-
-    return res / jnp.max(res) * scale + offset
+    # return jnp.sum(res, axis=(2, 0)) #* dphi * dxi
