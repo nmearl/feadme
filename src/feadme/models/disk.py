@@ -15,7 +15,7 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-fixed_quadgk = GaussKronrodRule(order=21).integrate
+fixed_quadgk = GaussKronrodRule(order=31).integrate
 
 
 @jax.jit
@@ -165,46 +165,6 @@ def _jax_integrate(
 
 
 @jax.jit
-def _intermediate(
-    phi: ArrayLike,
-    xi_tilde: ArrayLike,
-    X: ArrayLike,
-    inc: float,
-    sigma: float,
-    q: float,
-    e: float,
-    phi0: float,
-) -> Array:
-    res = jnp.where(
-        jnp.isnan(xi_tilde),
-        0.0,
-        _inner_quad(xi_tilde, phi[0], phi[-1], X, inc, sigma, q, e, phi0),
-    )
-
-    return res
-
-
-@jax.jit
-def jax_integrate_single(xi, phi, X, inc, sigma, q, e, phi0):
-    XI, PHI = jnp.meshgrid(
-        xi,
-        phi,
-        indexing="ij",
-    )
-
-    res = jax.vmap(_intermediate, in_axes=(0, 0, None, None, None, None, None, None))(
-        PHI, XI, X[:, None], inc, sigma, q, e, phi0
-    )
-
-    inner_integral = jnp.trapezoid(res, x=phi, axis=2)
-    outer_integral = jnp.trapezoid(inner_integral, x=xi, axis=0)
-
-    jax.debug.print("{x}", x=outer_integral)
-
-    return outer_integral
-
-
-@jax.jit
 def jax_integrate(
     xi1: float,
     xi2: float,
@@ -224,7 +184,7 @@ def jax_integrate(
     #     operand=None,
     # )
 
-    N_xi, N_phi = 100, 100
+    N_xi, N_phi = 50, 50
 
     xi = jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi)
     phi = jnp.linspace(phi1, phi2, N_phi)
