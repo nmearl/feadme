@@ -1,29 +1,21 @@
 import astropy.constants as const
 import astropy.units as u
-import jax.scipy.stats as stats
 import numpyro
-from numpyro.infer.reparam import LocScaleReparam, TransformReparam
 
-from .utils import TruncatedAffineTransform, truncnorm_ppf
+from .utils import truncnorm_ppf
 
-numpyro.set_host_device_count(1)
+numpyro.set_host_device_count(2)
 numpyro.enable_x64()
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import numpyro.distributions as dist
 
 from .models.disk import (
-    _jax_integrate,
-    jax_integrate,
-    jax_integrate_single,
+    jax_integrate, _jax_integrate
 )
 from .parser import Distribution, Template
 
-# numpyro.set_platform("cpu")
-
-print(jax.local_device_count())
 
 ERR = float(np.finfo(np.float32).tiny)
 c_cgs = const.c.cgs.value
@@ -47,7 +39,7 @@ def evaluate_disk_model(template, wave, param_mods):
         phi1 = -jnp.pi * 0.5
         phi2 = jnp.pi * 0.5
 
-        res = jax_integrate(
+        res = _jax_integrate(
             xi1,
             xi2,
             phi1,
@@ -104,24 +96,7 @@ def disk_model(
 
     # Pre-compute all profiles to iterate over
     all_profiles = template.disk_profiles + template.line_profiles
-
-    # Build re-parameterization configuration more efficiently
-    # reparam_config = {}
-    #
-    # for prof in all_profiles:
-    #     for param in prof.independent:
-    #         samp_name = f"{prof.name}_{param.name}"
-    #
-    #         if param.distribution in [
-    #             Distribution.uniform,
-    #             Distribution.log_uniform,
-    #         ]:
-    #             reparam_config[samp_name] = TransformReparam()
-    #         elif param.distribution in [Distribution.normal, Distribution.log_normal]:
-    #             reparam_config[samp_name] = LocScaleReparam(centered=0)
-
-    # Sample parameters with optimized reparam
-    # with numpyro.handlers.reparam(config=reparam_config):
+    
     for prof in all_profiles:
         # Sample all shared parameters
         for param in prof.shared:
@@ -163,57 +138,6 @@ def disk_model(
                         base_value, param.loc, param.scale, param.low, param.high
                     ),
                 )
-
-                # if param.distribution == Distribution.uniform:
-                #     base_dist = dist.Uniform(0, 1)
-                #     transforms = [
-                #         dist.transforms.AffineTransform(param.low, param.high)
-                #     ]
-                #     unif_param_dist = dist.TransformedDistribution(
-                #         base_dist, transforms
-                #     )
-                #     param_mods[samp_name] = numpyro.sample(samp_name, unif_param_dist)
-                # elif param.distribution == Distribution.log_uniform:
-                #     # Create distribution using properly normalized base distribution
-                #     base_dist = dist.Uniform(0, 1)
-                #     transforms = [
-                #         dist.transforms.AffineTransform(
-                #             jnp.log10(param.low), jnp.log10(param.high)
-                #         ),
-                #         dist.transforms.PowerTransform(10.0),
-                #     ]
-                #     log_unif_param_dist = dist.TransformedDistribution(
-                #         base_dist, transforms
-                #     )
-                #     param_mods[samp_name] = numpyro.sample(
-                #         samp_name, log_unif_param_dist
-                #     )
-                # elif param.distribution == Distribution.normal:
-                #     param_mods[samp_name] = numpyro.sample(
-                #         samp_name,
-                #         dist.Normal(
-                #             param.loc,
-                #             param.scale,  # low=param.low, high=param.high
-                #         ),
-                #     )
-                # elif param.distribution == Distribution.log_normal:
-                #     # Create distribution using properly normalized base distribution
-                #     base_dist = dist.Normal(
-                #         jnp.log10(param.loc), jnp.log10(param.scale)
-                #     )
-                #     transforms = [
-                #         dist.transforms.PowerTransform(10.0),
-                #     ]
-                #     log_norm_param_dist = dist.TransformedDistribution(
-                #         base_dist, transforms
-                #     )
-                #     param_mods[samp_name] = numpyro.sample(
-                #         samp_name, log_norm_param_dist
-                #     )
-                # else:
-                #     raise ValueError(
-                #         f"Invalid distribution: {param.distribution} for parameter {param.name}"
-                #     )
 
     # Sample white noise
     white_noise = numpyro.sample(
