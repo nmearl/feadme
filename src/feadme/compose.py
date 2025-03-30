@@ -4,16 +4,14 @@ import numpyro
 
 from .utils import truncnorm_ppf
 
-numpyro.set_host_device_count(2)
+numpyro.set_host_device_count(1)
 numpyro.enable_x64()
 
 import jax.numpy as jnp
 import numpy as np
 import numpyro.distributions as dist
 
-from .models.disk import (
-    jax_integrate, _jax_integrate
-)
+from .models.disk import jax_integrate, _jax_integrate
 from .parser import Distribution, Template
 
 
@@ -39,7 +37,7 @@ def evaluate_disk_model(template, wave, param_mods):
         phi1 = -jnp.pi * 0.5
         phi2 = jnp.pi * 0.5
 
-        res = _jax_integrate(
+        res = jax_integrate(
             xi1,
             xi2,
             phi1,
@@ -96,7 +94,7 @@ def disk_model(
 
     # Pre-compute all profiles to iterate over
     all_profiles = template.disk_profiles + template.line_profiles
-    
+
     for prof in all_profiles:
         # Sample all shared parameters
         for param in prof.shared:
