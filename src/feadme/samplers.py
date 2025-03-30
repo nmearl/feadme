@@ -98,13 +98,6 @@ class Sampler:
             with open(f"{output_dir}/{label}.pkl", "rb") as f:
                 self._mcmc = pickle.load(f)
 
-        # _, self._potential_fn_gen, self._postprocess_fn, *_ = initialize_model(
-        #     self._rng_key,
-        #     model,
-        #     model_args=(template, wave, flux, flux_err),
-        #     dynamic_args=True,
-        # )
-
     def sample(self):
         pass
 
@@ -119,6 +112,13 @@ class Sampler:
     @property
     def redshift(self):
         return self._redshift
+
+    @property
+    def converged(self):
+        if self._mcmc is None:
+            return False
+
+        return check_convergence(self._mcmc)
 
     @property
     def posterior_samples(self):
@@ -248,7 +248,6 @@ class NUTSSampler(Sampler):
         if self._mcmc is not None:
             converged = check_convergence(self._mcmc)
 
-        # if not path_exists or not converged:
         while not converged:
             if self._mcmc is None:
                 self._mcmc = MCMC(
@@ -297,6 +296,12 @@ def inference_loop(rng_key, kernel, initial_state, num_samples):
         infos.num_integration_steps,
     )
 
+ # _, self._potential_fn_gen, self._postprocess_fn, *_ = initialize_model(
+#     self._rng_key,
+#     model,
+#     model_args=(template, wave, flux, flux_err),
+#     dynamic_args=True,
+# )
 
 def nuts_with_adaptation(
     model,

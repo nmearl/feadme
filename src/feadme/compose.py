@@ -4,9 +4,6 @@ import numpyro
 
 from .utils import truncnorm_ppf
 
-numpyro.set_host_device_count(1)
-numpyro.enable_x64()
-
 import jax.numpy as jnp
 import numpy as np
 import numpyro.distributions as dist
