@@ -94,28 +94,33 @@ def run(
 
         if data_file is None:
             print(f"Using data file from template: {template.data_path}")
-            data_file = template.data_path
+            local_data_file = template.data_path
+        else:
+            local_data_file = data_file
 
-        if not Path(data_file).exists():
-            print(f"Warning: Data file {data_file} does not exist.")
+        if not Path(local_data_file).exists():
+            print(f"Warning: Data file {local_data_file} does not exist.")
             continue
 
-        data = Table.read(data_file, format="ascii.csv",
+        data = Table.read(local_data_file, format="ascii.csv",
                           names=("wave", "flux", "flux_err"))
 
-        label = label or template.name
+        local_label = label or template.name
+        base_name = template_path.stem
 
-        output_dir = Path(output_dir) / label
+        print(f"Fitting model for {local_label}")
 
-        if not output_dir.exists():
-            output_dir.mkdir(parents=True)
+        local_output_dir = Path(output_dir) / base_name
+
+        if not local_output_dir.exists():
+            local_output_dir.mkdir(parents=True)
 
         wave = (data["wave"] / (1 + template.redshift)).value
         flux = data["flux"].value
         flux_err = data["flux_err"].value
 
-        if not Path(output_dir).exists():
-            Path(output_dir).mkdir(parents=True)
+        if not Path(local_output_dir).exists():
+            Path(local_output_dir).mkdir(parents=True)
 
         nuts_sampler = NUTSSampler(
             disk_model,
@@ -123,8 +128,8 @@ def run(
             wave,
             flux,
             flux_err,
-            output_dir,
-            label,
+            local_output_dir,
+            local_label,
             num_warmup,
             num_samples,
             num_chains,
