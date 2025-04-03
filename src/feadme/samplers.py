@@ -59,7 +59,7 @@ class Sampler:
         num_chains,
         *,
         rng_key=None,
-        progress_bar=True
+        progress_bar=True,
     ):
         self._model = model
         self._template = template
@@ -251,6 +251,14 @@ class NUTSSampler(Sampler):
         if self._mcmc is not None:
             converged = check_convergence(self._mcmc)
 
+        chain_method = "vectorized" if jax.local_device_count() == 1 else "parallel"
+
+        print(
+            f"Running in mode `{chain_method}` with "
+            f"`{jax.local_device_count()}` local devices and "
+            f"`{self._num_chains}` chains."
+        )
+
         while not converged:
             if self._mcmc is None:
                 self._mcmc = MCMC(
@@ -258,10 +266,8 @@ class NUTSSampler(Sampler):
                     num_warmup=self._num_warmup,
                     num_samples=self._num_samples,
                     num_chains=self._num_chains,
-                    chain_method=(
-                        "vectorized" if jax.local_device_count() == 1 else "parallel"
-                    ),
-                    progress_bar=self._progress_bar
+                    chain_method=chain_method,
+                    progress_bar=self._progress_bar,
                 )
             else:
                 print(f"R_hat values are not converged. Re-running MCMC ({conv_num})")
@@ -305,12 +311,14 @@ def inference_loop(rng_key, kernel, initial_state, num_samples):
         infos.num_integration_steps,
     )
 
- # _, self._potential_fn_gen, self._postprocess_fn, *_ = initialize_model(
+
+# _, self._potential_fn_gen, self._postprocess_fn, *_ = initialize_model(
 #     self._rng_key,
 #     model,
 #     model_args=(template, wave, flux, flux_err),
 #     dynamic_args=True,
 # )
+
 
 def nuts_with_adaptation(
     model,
