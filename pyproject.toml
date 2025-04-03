@@ -14,6 +14,7 @@ dependencies = [
     "blackjax>=1.2.5",
     "click>=8.1.8",
     "corner>=2.2.3",
+    "loguru>=0.7.3",
     "notebook>=7.3.3",
     "numpyro>=0.18.0",
     "pandas>=2.2.3",

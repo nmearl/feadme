@@ -10,6 +10,8 @@ import numpy as np
 
 from .compose import evaluate_disk_model
 
+az.rcParams["plot.max_subplots"] = 200
+
 
 def plot_results(
     template,
@@ -21,17 +23,6 @@ def plot_results(
     flux_err,
     label,
 ):
-    # axes = az.plot_trace(
-    #     idata_transformed,
-    #     var_names=[x for x in idata_transformed.posterior.keys() if "_base" not in x],
-    #     compact=True,
-    #     backend_kwargs={"layout": "constrained"},
-    # )
-    #
-    # fig = axes.ravel()[0].figure
-    # fig.tight_layout()
-    # fig.savefig(f"{output_dir}/trace_plot.png")
-
     axes = az.plot_trace(
         idata_transformed,
         var_names=list(idata_transformed.posterior.keys()),
@@ -40,7 +31,6 @@ def plot_results(
     )
 
     fig = axes.ravel()[0].figure
-    fig.tight_layout()
     fig.savefig(f"{output_dir}/trace_plot.png")
 
     fig, ax = plt.subplots(figsize=(8, 4), layout="constrained")
