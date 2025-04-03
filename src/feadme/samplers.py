@@ -59,6 +59,7 @@ class Sampler:
         num_chains,
         *,
         rng_key=None,
+        progress_bar=True
     ):
         self._model = model
         self._template = template
@@ -89,6 +90,8 @@ class Sampler:
             if rng_key is not None
             else jax.random.key(int(date.today().strftime("%Y%m%d")))
         )
+        self._progress_bar = progress_bar
+
         self._mcmc = None
 
         path_exists = Path(f"{output_dir}/{label}.pkl").exists()
@@ -258,6 +261,7 @@ class NUTSSampler(Sampler):
                     chain_method=(
                         "vectorized" if jax.local_device_count() == 1 else "parallel"
                     ),
+                    progress_bar=self._progress_bar
                 )
             else:
                 print(f"R_hat values are not converged. Re-running MCMC ({conv_num})")

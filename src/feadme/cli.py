@@ -49,22 +49,28 @@ finfo = np.finfo(float)
          "template file.",
 )
 @click.option(
-    "--num_warmup",
+    "--num-warmup",
     type=int,
     default=1000,
     help="Number of warmup steps for the MCMC sampler.",
 )
 @click.option(
-    "--num_samples",
+    "--num-samples",
     type=int,
     default=2000,
     help="Number of samples to draw from the posterior.",
 )
 @click.option(
-    "--num_chains",
+    "--num-chains",
     type=int,
     default=jax.local_device_count(),
     help="Number of chains to run in parallel.",
+)
+@click.option(
+    "--no-progress-bar",
+    is_flag=True,
+    default=False,
+    help="Display a progress bar during sampling.",
 )
 def run(
     template_file: str,
@@ -74,6 +80,7 @@ def run(
     num_warmup: int = 2000,
     num_samples: int = 2000,
     num_chains: int = jax.local_device_count(),
+    no_progress_bar: bool = True,
 ):
     template_file = Path(template_file)
 
@@ -133,6 +140,7 @@ def run(
             num_warmup,
             num_samples,
             num_chains,
+            progress_bar=not no_progress_bar,
         )
 
         if not nuts_sampler.converged:
