@@ -40,13 +40,13 @@ finfo = np.finfo(float)
     type=click.Path(),
     default="output",
     help="Directory to which the output files and plots will be saved. "
-         "Defaults to current directory.",
+    "Defaults to current directory.",
 )
 @click.option(
     "--label",
     type=str,
     help="Optional label for the object. Overrides the name given in the "
-         "template file.",
+    "template file.",
 )
 @click.option(
     "--num-warmup",
@@ -109,8 +109,9 @@ def run(
             print(f"Warning: Data file {local_data_file} does not exist.")
             continue
 
-        data = Table.read(local_data_file, format="ascii.csv",
-                          names=("wave", "flux", "flux_err"))
+        data = Table.read(
+            local_data_file, format="ascii.csv", names=("wave", "flux", "flux_err")
+        )
 
         local_label = label or template.name
         base_name = template_path.stem

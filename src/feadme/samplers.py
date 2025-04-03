@@ -1,24 +1,19 @@
 import pickle
 from datetime import date
-from functools import cached_property
 from pathlib import Path
 
 import arviz as az
-import astropy.uncertainty as unc
 import blackjax
-import corner
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 import numpy as np
-import numpyro
-import optax
-from astropy.table import Table
-from numpyro.infer import MCMC, NUTS, init_to_uniform, init_to_median
-from numpyro.infer.util import initialize_model, Predictive
-from blackjax.util import run_inference_algorithm
-from numpyro.diagnostics import summary
 import pandas as pd
+from astropy.table import Table
+from astropy.time import Time
+from numpyro.diagnostics import summary
+from numpyro.infer import MCMC, NUTS, init_to_median
+from numpyro.infer.util import initialize_model, Predictive
+
 from .plotting import plot_results
 
 finfo = np.finfo(float)
@@ -259,6 +254,8 @@ class NUTSSampler(Sampler):
             f"`{self._num_chains}` chains."
         )
 
+        start_time = Time.now()
+
         while not converged:
             if self._mcmc is None:
                 self._mcmc = MCMC(
@@ -290,6 +287,10 @@ class NUTSSampler(Sampler):
             if conv_num > 10:
                 print("Convergence failed after 10 attempts. Stopping.")
                 break
+
+        delta_time = (Time.now() - start_time).to_datetime()
+
+        print(f"Finished sampling {self._label} in {delta_time}.")
 
         self.write_results()
         self.write_run()
