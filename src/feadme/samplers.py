@@ -254,7 +254,7 @@ class NUTSSampler(Sampler):
         chain_method = "vectorized" if jax.local_device_count() == 1 else "parallel"
 
         print(
-            f"Running in mode `{chain_method}` with "
+            f"Fitting {self._label} using the `{chain_method}` method with "
             f"`{jax.local_device_count()}` local devices and "
             f"`{self._num_chains}` chains."
         )

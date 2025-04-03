@@ -115,8 +115,6 @@ def run(
         local_label = label or template.name
         base_name = template_path.stem
 
-        print(f"Fitting model for {local_label}")
-
         local_output_dir = Path(output_dir) / base_name
 
         if not local_output_dir.exists():
