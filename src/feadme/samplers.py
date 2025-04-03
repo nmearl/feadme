@@ -276,13 +276,18 @@ class NUTSSampler(Sampler):
                 flux_err=jnp.asarray(self._flux_err),
             )
 
+            self._mcmc.print_summary()
+
             converged = check_convergence(self._mcmc)
             conv_num += 1
-            self._mcmc.print_summary()
-        else:
-            self.write_results()
-            self.write_run()
-            self.plot_results()
+
+            if conv_num > 10:
+                print("Convergence failed after 10 attempts. Stopping.")
+                break
+
+        self.write_results()
+        self.write_run()
+        self.plot_results()
 
 
 def inference_loop(rng_key, kernel, initial_state, num_samples):
