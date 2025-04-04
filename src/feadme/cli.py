@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from astropy.table import Table
+from loguru import logger
 
 from .compose import disk_model
 from .parser import Template, Parameter
@@ -100,13 +101,13 @@ def run(
             template = Template(**loaded_data)
 
         if data_file is None:
-            print(f"Using data file from template: {template.data_path}")
+            logger.info(f"Using data file from template: {template.data_path}")
             local_data_file = template.data_path
         else:
             local_data_file = data_file
 
         if not Path(local_data_file).exists():
-            print(f"Warning: Data file {local_data_file} does not exist.")
+            logger.warning(f"Data file {local_data_file} does not exist.")
             continue
 
         data = Table.read(
@@ -147,4 +148,4 @@ def run(
             nuts_sampler.write_results()
             nuts_sampler.plot_results()
         else:
-            print(f"{label} is already converged. Skipping sampling.")
+            logger.info(f"{label} is already converged. Skipping sampling.")

@@ -13,6 +13,7 @@ from astropy.time import Time
 from numpyro.diagnostics import summary
 from numpyro.infer import MCMC, NUTS, init_to_median
 from numpyro.infer.util import initialize_model, Predictive
+from loguru import logger
 
 from .plotting import plot_results
 
@@ -34,7 +35,7 @@ def check_convergence(mcmc):
         pivot_prior_summary.setdefault("r_hat", []).append(v["r_hat"])
 
     pivot_prior_summary = pd.DataFrame(pivot_prior_summary)
-    print(f"Average R_hat values: {pivot_prior_summary['r_hat'].mean()}")
+    logger.info(f"Average R_hat values: {pivot_prior_summary['r_hat'].mean()}")
 
     return 0.99 <= pivot_prior_summary["r_hat"].mean() < 1.01
 
@@ -92,7 +93,7 @@ class Sampler:
         path_exists = Path(f"{output_dir}/{label}.pkl").exists()
 
         if path_exists:
-            print(f"Loading existing MCMC sampler from {output_dir}/{label}.pkl")
+            logger.info(f"Loading existing MCMC sampler from {output_dir}/{label}.pkl")
             with open(f"{output_dir}/{label}.pkl", "rb") as f:
                 self._mcmc = pickle.load(f)
 
@@ -248,7 +249,7 @@ class NUTSSampler(Sampler):
 
         chain_method = "vectorized" if jax.local_device_count() == 1 else "parallel"
 
-        print(
+        logger.info(
             f"Fitting {self._label} using the `{chain_method}` method with "
             f"`{jax.local_device_count()}` local devices and "
             f"`{self._num_chains}` chains."
@@ -267,7 +268,9 @@ class NUTSSampler(Sampler):
                     progress_bar=self._progress_bar,
                 )
             else:
-                print(f"R_hat values are not converged. Re-running MCMC ({conv_num})")
+                logger.info(
+                    f"R_hat values are not converged. Re-running MCMC ({conv_num})"
+                )
                 self._mcmc.post_warmup_state = self._mcmc.last_state
                 rng_key = self._mcmc.post_warmup_state.rng_key
 
@@ -285,12 +288,12 @@ class NUTSSampler(Sampler):
             conv_num += 1
 
             if conv_num > 10:
-                print("Convergence failed after 10 attempts. Stopping.")
+                logger.warning("Convergence failed after 10 attempts. Stopping.")
                 break
 
         delta_time = (Time.now() - start_time).to_datetime()
 
-        print(f"Finished sampling {self._label} in {delta_time}.")
+        logger.info(f"Finished sampling {self._label} in {delta_time}.")
 
         self.write_results()
         self.write_run()
@@ -380,8 +383,8 @@ def nuts_with_adaptation(
     acceptance_rate = np.mean(infos[0])
     num_divergent = np.mean(infos[1])
 
-    print(f"Average acceptance rate: {acceptance_rate:.2f}")
-    print(f"There were {100 * num_divergent:.2f}% divergent transitions")
+    logger.info(f"Average acceptance rate: {acceptance_rate:.2f}")
+    logger.info(f"There were {100 * num_divergent:.2f}% divergent transitions")
 
     # samples_constrained = {}
     #
