@@ -95,15 +95,15 @@ def run(
             # Skip the 14li template for now
             continue
 
-        local_label = label or template.name
-        base_name = template_path.stem
-
-        logger.info(f"Starting sampling for `{local_label}`.")
-
         # Load the template
         with open(template_path, "r") as f:
             loaded_data = json.load(f)
             template = Template(**loaded_data)
+
+        local_label = label or template.name
+        base_name = template_path.stem
+
+        logger.info(f"Starting sampling for `{local_label}`.")
 
         if data_file is None:
             logger.info(f"Reading data file from template: `{template.data_path}`")
