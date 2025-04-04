@@ -95,13 +95,18 @@ def run(
             # Skip the 14li template for now
             continue
 
+        local_label = label or template.name
+        base_name = template_path.stem
+
+        logger.info(f"Starting sampling for `{local_label}`.")
+
         # Load the template
         with open(template_path, "r") as f:
             loaded_data = json.load(f)
             template = Template(**loaded_data)
 
         if data_file is None:
-            logger.info(f"Using data file from template: {template.data_path}")
+            logger.info(f"Reading data file from template: `{template.data_path}`")
             local_data_file = template.data_path
         else:
             local_data_file = data_file
@@ -113,9 +118,6 @@ def run(
         data = Table.read(
             local_data_file, format="ascii.csv", names=("wave", "flux", "flux_err")
         )
-
-        local_label = label or template.name
-        base_name = template_path.stem
 
         local_output_dir = Path(output_dir) / base_name
 
