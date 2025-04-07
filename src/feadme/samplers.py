@@ -290,7 +290,7 @@ class NUTSSampler(Sampler):
             converged = check_convergence(self._mcmc)
             conv_num += 1
 
-            if conv_num > 5:
+            if conv_num == 5:
                 logger.warning(
                     f"Convergence failed for {self._label} after 5 attempts. Retrying with double the samples."
                 )
@@ -307,9 +307,7 @@ class NUTSSampler(Sampler):
 
         logger.info(f"Finished sampling {self._label} in {delta_time}.")
 
-        self.write_results()
         self.write_run()
-        self.plot_results()
 
 
 def inference_loop(rng_key, kernel, initial_state, num_samples):
