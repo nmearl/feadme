@@ -232,17 +232,6 @@ class Sampler:
 
 class NUTSSampler(Sampler):
     def sample(self, init_strategy=init_to_median(), dense_mass=True, **kwargs):
-        nuts_kernel = NUTS(
-            self._model,
-            init_strategy=init_strategy,
-            # find_heuristic_step_size=True,
-            dense_mass=dense_mass,
-            # max_tree_depth=20,
-            # adapt_step_size=True,
-            # target_accept_prob=0.9,
-            **kwargs,
-        )
-
         converged = False
         conv_num = 0
 
@@ -261,8 +250,20 @@ class NUTSSampler(Sampler):
 
         while not converged:
             if self._mcmc is None:
-                logger.info(f"Constructing MCMC for {self._label}.")
-                rng_key = jax.random.key(int(date.today().strftime("%Y%m%d")))
+                logger.debug(f"Constructing MCMC for {self._label}.")
+
+                rng_key = self._rng_key
+
+                nuts_kernel = NUTS(
+                    self._model,
+                    init_strategy=init_strategy,
+                    # find_heuristic_step_size=True,
+                    dense_mass=dense_mass,
+                    # max_tree_depth=20,
+                    # adapt_step_size=True,
+                    # target_accept_prob=0.9,
+                    **kwargs,
+                )
 
                 self._mcmc = MCMC(
                     nuts_kernel,
@@ -300,8 +301,6 @@ class NUTSSampler(Sampler):
                 self._mcmc = None
                 self._num_samples *= 2
                 self._num_warmup *= 2
-
-                continue
             elif conv_num >= 5:
                 logger.critical(
                     f"Convergence failed for {self._label} after 5 attempts. Skipping."
