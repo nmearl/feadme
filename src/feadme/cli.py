@@ -39,12 +39,12 @@ finfo = np.finfo(float)
 @click.option(
     "--override-data-dir",
     type=click.Path(),
-    default="output",
     help="Overrides the data directory read from template file.",
 )
 @click.option(
     "--output-dir",
     type=click.Path(),
+    default="output",
     help="Directory to which the output files and plots will be saved. "
     "Defaults to current directory.",
 )
