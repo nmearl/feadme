@@ -242,7 +242,6 @@ class NUTSSampler(Sampler):
             # target_accept_prob=0.9,
             **kwargs,
         )
-        rng_key = jax.random.key(int(date.today().strftime("%Y%m%d")))
 
         converged = False
         conv_num = 0
@@ -262,6 +261,7 @@ class NUTSSampler(Sampler):
 
         while not converged:
             if self._mcmc is None:
+                rng_key = jax.random.key(int(date.today().strftime("%Y%m%d")))
                 self._mcmc = MCMC(
                     nuts_kernel,
                     num_warmup=self._num_warmup,
@@ -297,8 +297,8 @@ class NUTSSampler(Sampler):
                 self._mcmc = None
                 self._num_samples *= 2
                 self._num_warmup *= 2
-            elif conv_num > 10:
-                logger.warning(
+            elif conv_num >= 10:
+                logger.critical(
                     f"Convergence failed for {self._label} after 10 attempts. Skipping."
                 )
                 break
