@@ -16,6 +16,7 @@ from numpyro.infer.util import initialize_model, Predictive
 from loguru import logger
 
 from .plotting import plot_results
+from .utils import dict_to_namedtuple
 
 finfo = np.finfo(float)
 
@@ -58,7 +59,9 @@ class Sampler:
         progress_bar=True,
     ):
         self._model = model
-        self._template = template
+        self._template = (
+            template  # dict_to_namedtuple("NTTemplate", template.model_dump())
+        )
 
         # Construct masks
         mask = [

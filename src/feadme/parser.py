@@ -6,6 +6,7 @@ from pydantic import (
     model_validator,
     field_validator,
     ConfigDict,
+    computed_field,
 )
 from enum import Enum, auto
 from typing import Optional, List, Callable, NamedTuple
@@ -80,8 +81,7 @@ class Profile(BaseModel):
             if isinstance(getattr(self, field_name), Parameter)
         ]
 
-    @cached_property
-    def shared(self):
+    def _shared(self):
         return [
             field
             for field in self._parameter_fields
@@ -89,7 +89,10 @@ class Profile(BaseModel):
         ]
 
     @cached_property
-    def independent(self):
+    def shared(self) -> List[Parameter]:
+        return self._shared()
+
+    def _independent(self):
         return [
             field
             for field in self._parameter_fields
@@ -97,8 +100,15 @@ class Profile(BaseModel):
         ]
 
     @cached_property
-    def fixed(self):
+    def independent(self) -> List[Parameter]:
+        return self._independent()
+
+    def _fixed(self):
         return [field for field in self._parameter_fields if field.fixed]
+
+    @cached_property
+    def fixed(self) -> List[Parameter]:
+        return self._fixed()
 
 
 class Mask(BaseModel):
@@ -151,6 +161,10 @@ class Template(BaseModel):
         scale=0.1,
     )
     mask: Optional[List[Mask]] = []
+
+    @cached_property
+    def all_profiles(self) -> List[Profile]:
+        return self.disk_profiles + self.line_profiles
 
     @field_validator("disk_profiles", mode="after")
     @classmethod

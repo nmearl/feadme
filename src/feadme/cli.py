@@ -95,6 +95,9 @@ def run(
             # Skip the 14li template for now
             continue
 
+        if "ZTF" not in str(template_path):
+            continue
+
         # Load the template
         with open(template_path, "r") as f:
             loaded_data = json.load(f)
@@ -150,4 +153,4 @@ def run(
             nuts_sampler.write_results()
             nuts_sampler.plot_results()
         else:
-            logger.info(f"{label} is already converged. Skipping sampling.")
+            logger.info(f"{local_label} is already converged. Skipping sampling.")

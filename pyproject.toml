@@ -19,6 +19,7 @@ dependencies = [
     "numpyro>=0.18.0",
     "pandas>=2.2.3",
     "pydantic>=2.10.6",
+    "python-box>=7.3.2",
     "quadax>=0.2.6",
     "seaborn>=0.13.2",
 ]

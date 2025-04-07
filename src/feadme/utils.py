@@ -1,6 +1,22 @@
 from jax.scipy.stats import norm
 import numpyro.distributions as dist
 import jax.numpy as jnp
+from collections import namedtuple
+
+
+def dict_to_namedtuple(name, d):
+    """
+    Recursively convert a nested dictionary into a namedtuple.
+    """
+    if isinstance(d, list):
+        return tuple(dict_to_namedtuple(name, item) for item in d)
+
+    if not isinstance(d, dict):
+        return d
+
+    fields = {k: dict_to_namedtuple(k.capitalize(), v) for k, v in d.items()}
+    NT = namedtuple(name, fields.keys())
+    return NT(**fields)
 
 
 def truncnorm_ppf(q, loc, scale, lower_limit, upper_limit):
