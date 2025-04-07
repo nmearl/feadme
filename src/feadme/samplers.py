@@ -290,8 +290,17 @@ class NUTSSampler(Sampler):
             converged = check_convergence(self._mcmc)
             conv_num += 1
 
-            if conv_num > 10:
-                logger.warning("Convergence failed after 10 attempts. Stopping.")
+            if conv_num > 5:
+                logger.warning(
+                    f"Convergence failed for {self._label} after 5 attempts. Retrying with double the samples."
+                )
+                self._mcmc = None
+                self._num_samples *= 2
+                self._num_warmup *= 2
+            elif conv_num > 10:
+                logger.warning(
+                    f"Convergence failed for {self._label} after 10 attempts. Skipping."
+                )
                 break
 
         delta_time = (Time.now() - start_time).to_datetime()

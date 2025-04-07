@@ -45,7 +45,6 @@ class LineParams(NamedTuple):
 
 @jax.jit
 def compute_single_disk_flux(wave: jnp.array, disk_params: jnp.array):
-    # def _compute():
     nu = c_cgs / wave
     nu0 = c_cgs / disk_params[1]
     X = nu / nu0 - 1
@@ -67,8 +66,6 @@ def compute_single_disk_flux(wave: jnp.array, disk_params: jnp.array):
 
     return res_norm * disk_params[9] + disk_params[10]
 
-    # return jax.lax.cond(len(disk_params) > 0, _compute, lambda: jnp.zeros_like(wave))
-
 
 @jax.jit
 def compute_single_line_flux(wave: jnp.array, line_params: jnp.array):
@@ -84,10 +81,6 @@ def compute_single_line_flux(wave: jnp.array, line_params: jnp.array):
         return amp * jnp.exp(-0.5 * ((wave - center) / stddev) ** 2)
 
     return jax.lax.switch(line_params[4].astype(int), [lorentzian, gaussian])
-
-    # return jax.lax.cond(
-    #     jnp.any(jnp.isnan(line_params)), lambda: jnp.zeros_like(wave), _compute
-    # )
 
 
 @jax.jit
@@ -115,7 +108,6 @@ def evaluate_disk_model(wave, disk_params, line_params):
     return total_flux, total_disk_flux, total_line_flux
 
 
-# @partial(jax.jit, static_argnums=(0,))
 def _evaluate_disk_model(template, wave, param_mods):
     total_disk_flux = jnp.zeros_like(wave)
     total_line_flux = jnp.zeros_like(wave)
@@ -215,6 +207,19 @@ def disk_model(
                     samp_name,
                     truncnorm_ppf(
                         base_value, param.loc, param.scale, param.low, param.high
+                    ),
+                )
+            elif param.distribution == Distribution.log_normal:
+                base_value = numpyro.sample(samp_name + "_base", dist.Uniform(0, 1))
+                param_mods[samp_name] = numpyro.deterministic(
+                    samp_name,
+                    10
+                    ** truncnorm_ppf(
+                        base_value,
+                        jnp.log10(param.loc),
+                        jnp.log10(param.scale),
+                        jnp.log10(param.low),
+                        jnp.log10(param.high),
                     ),
                 )
 
