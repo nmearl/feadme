@@ -37,9 +37,14 @@ finfo = np.finfo(float)
     #      "(in Angstrom), fluxes, and flux uncertainties in (in mJy).",
 )
 @click.option(
-    "--output-dir",
+    "--override-data-dir",
     type=click.Path(),
     default="output",
+    help="Overrides the data directory read from template file.",
+)
+@click.option(
+    "--output-dir",
+    type=click.Path(),
     help="Directory to which the output files and plots will be saved. "
     "Defaults to current directory.",
 )
@@ -76,6 +81,7 @@ finfo = np.finfo(float)
 def run(
     template_file: str,
     data_file: str = None,
+    override_data_dir: str = None,
     output_dir: str = None,
     label: str = None,
     num_warmup: int = 2000,
@@ -113,6 +119,9 @@ def run(
             local_data_file = template.data_path
         else:
             local_data_file = data_file
+
+        if override_data_dir is not None:
+            local_data_file = Path(override_data_dir) / Path(local_data_file).name
 
         if not Path(local_data_file).exists():
             logger.warning(f"Data file {local_data_file} does not exist.")
