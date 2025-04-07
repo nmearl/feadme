@@ -84,7 +84,7 @@ def compute_single_line_flux(wave: jnp.array, line_params: jnp.array):
 
 
 @jax.jit
-def evaluate_disk_model(wave, disk_params, line_params):
+def _evaluate_disk_model(wave, disk_params, line_params):
     def compute_disks():
         vmap_disk = jax.vmap(compute_single_disk_flux, in_axes=(None, 0))
         disk_fluxes = vmap_disk(wave, disk_params)
@@ -108,7 +108,7 @@ def evaluate_disk_model(wave, disk_params, line_params):
     return total_flux, total_disk_flux, total_line_flux
 
 
-def _evaluate_disk_model(template, wave, param_mods):
+def evaluate_disk_model(template, wave, param_mods):
     total_disk_flux = jnp.zeros_like(wave)
     total_line_flux = jnp.zeros_like(wave)
 
@@ -254,37 +254,37 @@ def disk_model(
             + param_mods[f"{prof.name}_delta_radius"],
         )
 
-    disk_params = [
-        DiskParams(
-            **{
-                k.replace(f"{prof.name}_", ""): v
-                for k, v in param_mods.items()
-                if k.startswith(f"{prof.name}_") and "delta_radius" not in k
-            }
-        )
-        for prof in template.disk_profiles
-    ] or [DiskParams(empty=True)]
-
-    line_params = [
-        LineParams(
-            **{
-                **{
-                    k.replace(f"{prof.name}_", ""): v
-                    for k, v in param_mods.items()
-                    if k.startswith(f"{prof.name}_")
-                },
-            }
-        )
-        for prof in template.line_profiles
-    ] or [LineParams(empty=True)]
+    # disk_params = [
+    #     DiskParams(
+    #         **{
+    #             k.replace(f"{prof.name}_", ""): v
+    #             for k, v in param_mods.items()
+    #             if k.startswith(f"{prof.name}_") and "delta_radius" not in k
+    #         }
+    #     )
+    #     for prof in template.disk_profiles
+    # ] or [DiskParams(empty=True)]
+    #
+    # line_params = [
+    #     LineParams(
+    #         **{
+    #             **{
+    #                 k.replace(f"{prof.name}_", ""): v
+    #                 for k, v in param_mods.items()
+    #                 if k.startswith(f"{prof.name}_")
+    #             },
+    #         }
+    #     )
+    #     for prof in template.line_profiles
+    # ] or [LineParams(empty=True)]
+    #
+    # total_flux, total_disk_flux, total_line_flux = evaluate_disk_model(
+    #     wave, jnp.array(disk_params), jnp.array(line_params)
+    # )
 
     total_flux, total_disk_flux, total_line_flux = evaluate_disk_model(
-        wave, jnp.array(disk_params), jnp.array(line_params)
+        template, wave, param_mods
     )
-
-    # total_flux, total_disk_flux, total_line_flux = evaluate_disk_model(
-    #     template, wave, param_mods
-    # )
 
     # Construct total error
     flux_err = flux_err if flux_err is not None else jnp.zeros_like(wave)

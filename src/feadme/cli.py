@@ -126,7 +126,7 @@ def run(
             logger.warning(f"Data file {local_data_file} does not exist.")
             continue
 
-        logger.info(f"Reading data file from template: `{template.data_path}`")
+        logger.info(f"Reading data file from template: `{local_data_file}`")
 
         data = Table.read(
             local_data_file, format="ascii.csv", names=("wave", "flux", "flux_err")

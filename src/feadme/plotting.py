@@ -8,7 +8,7 @@ import corner
 import arviz as az
 import numpy as np
 
-from .compose import _evaluate_disk_model
+from .compose import evaluate_disk_model
 
 az.rcParams["plot.max_subplots"] = 200
 
@@ -81,7 +81,7 @@ def plot_results(
 
         res_pars[var] = median
 
-    res_flux, res_disk_flux, res_line_flux = _evaluate_disk_model(
+    res_flux, res_disk_flux, res_line_flux = evaluate_disk_model(
         template, wave, res_pars
     )
 
