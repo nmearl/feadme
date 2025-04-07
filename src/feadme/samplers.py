@@ -261,7 +261,9 @@ class NUTSSampler(Sampler):
 
         while not converged:
             if self._mcmc is None:
+                logger.info(f"Constructing MCMC for {self._label}.")
                 rng_key = jax.random.key(int(date.today().strftime("%Y%m%d")))
+
                 self._mcmc = MCMC(
                     nuts_kernel,
                     num_warmup=self._num_warmup,
@@ -290,16 +292,19 @@ class NUTSSampler(Sampler):
             converged = check_convergence(self._mcmc)
             conv_num += 1
 
-            if conv_num == 5:
+            if conv_num == 2:
                 logger.warning(
-                    f"Convergence failed for {self._label} after 5 attempts. Retrying with double the samples."
+                    f"Convergence failed for {self._label} after 2 attempts. "
+                    f"Retrying with double the samples."
                 )
                 self._mcmc = None
                 self._num_samples *= 2
                 self._num_warmup *= 2
-            elif conv_num >= 10:
+
+                continue
+            elif conv_num >= 5:
                 logger.critical(
-                    f"Convergence failed for {self._label} after 10 attempts. Skipping."
+                    f"Convergence failed for {self._label} after 5 attempts. Skipping."
                 )
                 break
 
