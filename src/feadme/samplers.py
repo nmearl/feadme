@@ -248,6 +248,9 @@ class NUTSSampler(Sampler):
 
         start_time = Time.now()
 
+        num_warmup = self._num_warmup
+        num_samples = self._num_samples
+
         while not converged:
             if self._mcmc is None:
                 logger.debug(f"Constructing MCMC for {self._label}.")
@@ -267,8 +270,8 @@ class NUTSSampler(Sampler):
 
                 self._mcmc = MCMC(
                     nuts_kernel,
-                    num_warmup=self._num_warmup,
-                    num_samples=self._num_samples,
+                    num_warmup=num_warmup,
+                    num_samples=num_samples,
                     num_chains=self._num_chains,
                     chain_method=chain_method,
                     progress_bar=self._progress_bar,
@@ -299,8 +302,8 @@ class NUTSSampler(Sampler):
                     f"Retrying with double the samples."
                 )
                 self._mcmc = None
-                self._num_samples *= 2
-                self._num_warmup *= 2
+                num_warmup *= 2
+                num_samples *= 2
             elif conv_num >= 5:
                 logger.critical(
                     f"Convergence failed for {self._label} after 5 attempts. Skipping."

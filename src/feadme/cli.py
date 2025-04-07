@@ -115,7 +115,6 @@ def run(
         logger.info(f"Starting sampling for `{local_label}`.")
 
         if data_file is None:
-            logger.info(f"Reading data file from template: `{template.data_path}`")
             local_data_file = template.data_path
         else:
             local_data_file = data_file
@@ -126,6 +125,8 @@ def run(
         if not Path(local_data_file).exists():
             logger.warning(f"Data file {local_data_file} does not exist.")
             continue
+
+        logger.info(f"Reading data file from template: `{template.data_path}`")
 
         data = Table.read(
             local_data_file, format="ascii.csv", names=("wave", "flux", "flux_err")
