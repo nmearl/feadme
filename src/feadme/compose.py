@@ -118,10 +118,10 @@ def evaluate_disk_model(template, wave, param_mods):
         nu0 = c_cgs / (param_mods[f"{prof.name}_center"] * 1e-8)
         X = nu / nu0 - 1
 
-        local_sigma = param_mods[f"{prof.name}_sigma"] * 1e5
+        local_sigma = 10 ** param_mods[f"{prof.name}_sigma"] * 1e5
 
-        xi1 = param_mods[f"{prof.name}_inner_radius"]
-        xi2 = param_mods[f"{prof.name}_outer_radius"]
+        xi1 = 10 ** param_mods[f"{prof.name}_inner_radius"]
+        xi2 = 10 ** param_mods[f"{prof.name}_outer_radius"]
         phi1 = -jnp.pi * 0.5
         phi2 = jnp.pi * 0.5
 
