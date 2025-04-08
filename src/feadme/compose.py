@@ -248,10 +248,11 @@ def disk_model(
     # disk_profiles = []
 
     for prof in template.disk_profiles:
-        param_mods[f"{prof.name}_outer_radius"] = numpyro.deterministic(
-            f"{prof.name}_outer_radius",
-            param_mods[f"{prof.name}_inner_radius"]
-            + param_mods[f"{prof.name}_delta_radius"],
+        param_name = f"{prof.name}_outer_radius"
+        ir = param_mods[f"{prof.name}_inner_radius"]
+        dr = param_mods[f"{prof.name}_delta_radius"]
+        param_mods[param_name] = numpyro.deterministic(
+            param_name, 10 ** ir + 10 ** dr
         )
 
     # disk_params = [
