@@ -294,21 +294,23 @@ class NUTSSampler(Sampler):
             self._mcmc.print_summary()
 
             converged = check_convergence(self._mcmc)
-            conv_num += 1
 
-            if conv_num % 2 == 0:
-                logger.warning(
-                    f"Convergence failed for {self._label} after {conv_num} attempts. "
-                    f"Retrying with double the samples."
-                )
-                self._mcmc = None
-                num_warmup *= 2
-                num_samples *= 2
-            elif conv_num >= 5:
-                logger.critical(
-                    f"Convergence failed for {self._label} after 5 attempts. Skipping."
-                )
-                break
+            if not converged:
+                conv_num += 1
+
+                if conv_num % 2 == 0:
+                    logger.warning(
+                        f"Convergence failed for {self._label} after {conv_num} attempts. "
+                        f"Retrying with double the samples."
+                    )
+                    self._mcmc = None
+                    num_warmup *= 2
+                    num_samples *= 2
+                elif conv_num >= 5:
+                    logger.critical(
+                        f"Convergence failed for {self._label} after 5 attempts. Skipping."
+                    )
+                    break
 
         delta_time = (Time.now() - start_time).to_datetime()
 
