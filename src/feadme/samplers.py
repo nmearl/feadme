@@ -231,7 +231,7 @@ class Sampler:
 
 
 class NUTSSampler(Sampler):
-    def sample(self, init_strategy=init_to_median(), dense_mass=True, **kwargs):
+    def sample(self, init_strategy=init_to_median(), dense_mass=False, **kwargs):
         converged = False
         conv_num = 0
 

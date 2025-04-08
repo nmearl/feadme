@@ -135,7 +135,7 @@ def _inner_quad(
 
 
 @jax.jit
-def _jax_integrate(
+def jax_integrate(
     xi1: float,
     xi2: float,
     phi1: float,
@@ -165,7 +165,7 @@ def _jax_integrate(
 
 
 @jax.jit
-def jax_integrate(
+def _jax_integrate(
     xi1: float,
     xi2: float,
     phi1: float,
@@ -201,7 +201,7 @@ def jax_integrate(
 
     inner_integral = jnp.trapezoid(res, x=phi, axis=2)
     outer_integral = jnp.trapezoid(inner_integral, x=xi, axis=0)
-    
+
     return outer_integral
 
     # dphi = (phi2 - phi1) / (N_phi - 1)

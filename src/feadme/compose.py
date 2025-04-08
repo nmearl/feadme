@@ -84,7 +84,7 @@ def compute_single_line_flux(wave: jnp.array, line_params: jnp.array):
 
 
 @jax.jit
-def _evaluate_disk_model(wave, disk_params, line_params):
+def jax_evaluate_disk_model(wave, disk_params, line_params):
     def compute_disks():
         vmap_disk = jax.vmap(compute_single_disk_flux, in_axes=(None, 0))
         disk_fluxes = vmap_disk(wave, disk_params)
@@ -244,9 +244,6 @@ def disk_model(
         ),
     )
 
-    # Re-parameterize inner/outer radius relationship
-    # disk_profiles = []
-
     for prof in template.disk_profiles:
         param_name = f"{prof.name}_outer_radius"
         ir = param_mods[f"{prof.name}_inner_radius"]
@@ -277,7 +274,7 @@ def disk_model(
     #     for prof in template.line_profiles
     # ] or [LineParams(empty=True)]
     #
-    # total_flux, total_disk_flux, total_line_flux = evaluate_disk_model(
+    # total_flux, total_disk_flux, total_line_flux = jax_evaluate_disk_model(
     #     wave, jnp.array(disk_params), jnp.array(line_params)
     # )
 
