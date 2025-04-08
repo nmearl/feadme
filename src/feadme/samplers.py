@@ -298,13 +298,12 @@ class NUTSSampler(Sampler):
 
             if conv_num % 2 == 0:
                 logger.warning(
-                    f"Convergence failed for {self._label} after 2 attempts. "
+                    f"Convergence failed for {self._label} after {conv_num} attempts. "
                     f"Retrying with double the samples."
                 )
                 self._mcmc = None
                 num_warmup *= 2
                 num_samples *= 2
-                conv_num = 0
             elif conv_num >= 5:
                 logger.critical(
                     f"Convergence failed for {self._label} after 5 attempts. Skipping."
