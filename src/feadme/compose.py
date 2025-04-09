@@ -248,7 +248,7 @@ def disk_model(
         param_name = f"{prof.name}_outer_radius"
         ir = param_mods[f"{prof.name}_inner_radius"]
         dr = param_mods[f"{prof.name}_delta_radius"]
-        param_mods[param_name] = numpyro.deterministic(param_name, jnp.log10(ir + dr))
+        param_mods[param_name] = numpyro.deterministic(param_name, ir + dr)
 
     # disk_params = [
     #     DiskParams(

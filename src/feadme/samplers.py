@@ -259,7 +259,7 @@ class NUTSSampler(Sampler):
 
                 nuts_kernel = NUTS(
                     self._model,
-                    init_strategy=init_strategy,
+                    # init_strategy=init_strategy,
                     # find_heuristic_step_size=True,
                     dense_mass=dense_mass,
                     # max_tree_depth=20,
