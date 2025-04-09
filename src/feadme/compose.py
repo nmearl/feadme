@@ -5,7 +5,7 @@ from typing import NamedTuple
 from functools import partial
 from collections import namedtuple
 
-from .utils import truncnorm_ppf, dict_to_namedtuple
+from .utils import truncnorm_ppf, dict_to_namedtuple, TruncatedAffineTransform
 
 import jax
 import jax.numpy as jnp
@@ -14,98 +14,12 @@ import numpyro.distributions as dist
 
 from .models.disk import jax_integrate, _jax_integrate
 from .parser import Distribution, Template
+from numpyro.infer.reparam import TransformReparam, LocScaleReparam
 
 
 ERR = float(np.finfo(np.float32).tiny)
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
-
-
-class DiskParams(NamedTuple):
-    empty: bool = False
-    center: float = np.nan
-    inner_radius: float = np.nan
-    outer_radius: float = np.nan
-    inclination: float = np.nan
-    sigma: float = np.nan
-    q: float = np.nan
-    eccentricity: float = np.nan
-    apocenter: float = np.nan
-    scale: float = np.nan
-    offset: float = np.nan
-
-
-class LineParams(NamedTuple):
-    empty: bool = False
-    center: float = np.nan
-    vel_width: float = np.nan
-    amplitude: float = np.nan
-    shape: int = 1  # 0 = lorentzian, 1 = gaussian
-
-
-@jax.jit
-def compute_single_disk_flux(wave: jnp.array, disk_params: jnp.array):
-    nu = c_cgs / wave
-    nu0 = c_cgs / disk_params[1]
-    X = nu / nu0 - 1
-
-    res = jax_integrate(
-        disk_params[2],
-        disk_params[3],
-        -jnp.pi * 0.5,
-        jnp.pi * 0.5,
-        X,
-        disk_params[4],
-        disk_params[5] * 1e5,
-        disk_params[6],
-        disk_params[7],
-        disk_params[8],
-    )
-
-    res_norm = res / jnp.max(res)
-
-    return res_norm * disk_params[9] + disk_params[10]
-
-
-@jax.jit
-def compute_single_line_flux(wave: jnp.array, line_params: jnp.array):
-    fwhm = line_params[2] / c_kms * line_params[1]
-    center = line_params[1]
-    amp = line_params[3]
-
-    def lorentzian():
-        return amp * ((fwhm * 0.5) / ((wave - center) ** 2 + (fwhm * 0.5) ** 2))
-
-    def gaussian():
-        stddev = fwhm / 2.355
-        return amp * jnp.exp(-0.5 * ((wave - center) / stddev) ** 2)
-
-    return jax.lax.switch(line_params[4].astype(int), [lorentzian, gaussian])
-
-
-@jax.jit
-def jax_evaluate_disk_model(wave, disk_params, line_params):
-    def compute_disks():
-        vmap_disk = jax.vmap(compute_single_disk_flux, in_axes=(None, 0))
-        disk_fluxes = vmap_disk(wave, disk_params)
-        return jnp.sum(disk_fluxes, axis=0)
-
-    total_disk_flux = jax.lax.cond(
-        disk_params[0][0].astype(int), lambda: jnp.zeros_like(wave), compute_disks
-    )
-
-    def compute_lines():
-        vmap_line = jax.vmap(compute_single_line_flux, in_axes=(None, 0))
-        line_fluxes = vmap_line(wave, line_params)
-        return jnp.sum(line_fluxes, axis=0)
-
-    total_line_flux = jax.lax.cond(
-        line_params[0][0].astype(int), lambda: jnp.zeros_like(wave), compute_lines
-    )
-
-    total_flux = total_disk_flux + total_line_flux
-
-    return total_flux, total_disk_flux, total_line_flux
 
 
 def evaluate_disk_model(template, wave, param_mods):
@@ -176,53 +90,88 @@ def disk_model(
     wave: jnp.ndarray,
     flux: jnp.ndarray | None = None,
     flux_err: jnp.ndarray | None = None,
-    masks: dict[str, jnp.ndarray] | None = None,
 ):
     param_mods = {}
 
-    # Pre-compute all profiles to iterate over
+    # Build re-parameterization configuration more efficiently
+    reparam_config = {}
+
     for prof in template.all_profiles:
         for param in prof.independent:
             samp_name = f"{prof.name}_{param.name}"
+            reparam_config[samp_name] = TransformReparam()
 
-            if param.distribution == Distribution.uniform:
-                base_value = numpyro.sample(samp_name + "_base", dist.Uniform(0, 1))
-                param_mods[samp_name] = numpyro.deterministic(
-                    samp_name,
-                    param.low + base_value * (param.high - param.low),
-                )
-            elif param.distribution == Distribution.log_uniform:
-                base_value = numpyro.sample(samp_name + "_base", dist.Uniform(0, 1))
-                param_mods[samp_name] = numpyro.deterministic(
-                    samp_name,
-                    10
-                    ** (
-                        jnp.log10(param.low)
-                        + base_value * (jnp.log10(param.high) - jnp.log10(param.low))
-                    ),
-                )
-            elif param.distribution == Distribution.normal:
-                base_value = numpyro.sample(samp_name + "_base", dist.Uniform(0, 1))
-                param_mods[samp_name] = numpyro.deterministic(
-                    samp_name,
-                    truncnorm_ppf(
-                        base_value, param.loc, param.scale, param.low, param.high
-                    ),
-                )
-            elif param.distribution == Distribution.log_normal:
-                base_value = numpyro.sample(samp_name + "_base", dist.Uniform(0, 1))
-                param_mods[samp_name] = numpyro.deterministic(
-                    samp_name,
-                    10
-                    ** truncnorm_ppf(
-                        base_value,
-                        jnp.log10(param.loc),
-                        jnp.log10(param.scale),
-                        jnp.log10(param.low),
-                        jnp.log10(param.high),
-                    ),
-                )
+    # Pre-compute all profiles to iterate over
+    with numpyro.handlers.reparam(config=reparam_config):
+        for prof in template.all_profiles:
+            for param in prof.independent:
+                samp_name = f"{prof.name}_{param.name}"
 
+                if param.distribution == Distribution.uniform:
+                    base_dist = dist.Uniform(0, 1)
+                    transforms = [
+                        dist.transforms.AffineTransform(
+                            param.low, param.high - param.low
+                        )
+                    ]
+                    unif_param_dist = dist.TransformedDistribution(
+                        base_dist, transforms
+                    )
+                    param_mods[samp_name] = numpyro.sample(samp_name, unif_param_dist)
+                elif param.distribution == Distribution.log_uniform:
+                    base_dist = dist.Uniform(0, 1)
+                    transforms = [
+                        dist.transforms.AffineTransform(
+                            jnp.log(param.low),
+                            jnp.log(param.high) - jnp.log(param.low),
+                        ),
+                        dist.transforms.ExpTransform(),
+                    ]
+                    log_unif_param_dist = dist.TransformedDistribution(
+                        base_dist, transforms
+                    )
+                    param_mods[samp_name] = numpyro.sample(
+                        samp_name, log_unif_param_dist
+                    )
+                elif param.distribution == Distribution.normal:
+                    base_dist = dist.TruncatedNormal(
+                        0,
+                        1,
+                        low=(param.low - param.loc) / param.scale,
+                        high=(param.high - param.loc) / param.scale,
+                    )
+                    transforms = [
+                        dist.transforms.AffineTransform(param.loc, param.scale),
+                    ]
+                    norm_param_dist = dist.TransformedDistribution(
+                        base_dist, transforms
+                    )
+                    param_mods[samp_name] = numpyro.sample(samp_name, norm_param_dist)
+                elif param.distribution == Distribution.log_normal:
+                    base_dist = dist.TruncatedNormal(
+                        0,
+                        1,
+                        low=(jnp.log(param.low) - jnp.log(param.loc))
+                        / jnp.log(param.scale),
+                        high=(jnp.log(param.high) - jnp.log(param.loc))
+                        / jnp.log(param.scale),
+                    )
+                    transforms = [
+                        dist.transforms.AffineTransform(
+                            jnp.log(param.loc), jnp.log(param.scale)
+                        ),
+                        dist.transforms.ExpTransform(),
+                    ]
+                    norm_param_dist = dist.TransformedDistribution(
+                        base_dist, transforms
+                    )
+                    param_mods[samp_name] = numpyro.sample(samp_name, norm_param_dist)
+                else:
+                    raise ValueError(
+                        f"Invalid distribution: {param.distribution} for parameter {param.name}"
+                    )
+
+    for prof in template.all_profiles:
         # Sample all shared parameters
         for param in prof.shared:
             samp_name = f"{prof.name}_{param.name}"
@@ -249,34 +198,6 @@ def disk_model(
         ir = param_mods[f"{prof.name}_inner_radius"]
         dr = param_mods[f"{prof.name}_delta_radius"]
         param_mods[param_name] = numpyro.deterministic(param_name, ir + dr)
-
-    # disk_params = [
-    #     DiskParams(
-    #         **{
-    #             k.replace(f"{prof.name}_", ""): v
-    #             for k, v in param_mods.items()
-    #             if k.startswith(f"{prof.name}_") and "delta_radius" not in k
-    #         }
-    #     )
-    #     for prof in template.disk_profiles
-    # ] or [DiskParams(empty=True)]
-    #
-    # line_params = [
-    #     LineParams(
-    #         **{
-    #             **{
-    #                 k.replace(f"{prof.name}_", ""): v
-    #                 for k, v in param_mods.items()
-    #                 if k.startswith(f"{prof.name}_")
-    #             },
-    #         }
-    #     )
-    #     for prof in template.line_profiles
-    # ] or [LineParams(empty=True)]
-    #
-    # total_flux, total_disk_flux, total_line_flux = jax_evaluate_disk_model(
-    #     wave, jnp.array(disk_params), jnp.array(line_params)
-    # )
 
     total_flux, total_disk_flux, total_line_flux = evaluate_disk_model(
         template, wave, param_mods

@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 from astropy.table import Table
 from loguru import logger
+from numpyro.infer import init_to_value
 
 from .compose import disk_model
 from .parser import Template, Parameter
@@ -164,3 +165,5 @@ def run(
             nuts_sampler.plot_results()
         else:
             logger.info(f"{local_label} is already converged. Skipping sampling.")
+
+        break

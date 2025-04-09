@@ -44,6 +44,9 @@ class TruncatedAffineTransform(dist.transforms.AffineTransform):
         # Clip the value to stay within bounds
         return jnp.clip(x_transformed, self.lower, self.upper)
 
+    def _inverse(self, y):
+        return (y - self.loc) / self.scale
+
 
 # Build re-parameterization configuration more efficiently
 #     reparam_config = {}
