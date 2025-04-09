@@ -165,5 +165,3 @@ def run(
             nuts_sampler.plot_results()
         else:
             logger.info(f"{local_label} is already converged. Skipping sampling.")
-
-        break
