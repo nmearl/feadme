@@ -7,15 +7,10 @@ import jax.numpy as jnp
 import numpy as np
 from astropy.table import Table
 from loguru import logger
-from numpyro.infer import init_to_value
+from numpyro.infer import init_to_value, init_to_sample
 
 from .compose import disk_model
 from .parser import Template, Parameter
-from .samplers import (
-    nuts_with_adaptation,
-    nuts_with_adaptation_multi,
-    # initialize_to_nuts,
-)
 from .samplers import NUTSSampler
 
 finfo = np.finfo(float)
@@ -105,6 +100,9 @@ def run(
         if "ZTF" not in str(template_path):
             continue
 
+        # if "ZTF18aacckko" not in str(template_path):
+        #     continue
+
         # Load the template
         with open(template_path, "r") as f:
             loaded_data = json.load(f)
@@ -160,7 +158,7 @@ def run(
         )
 
         if not nuts_sampler.converged:
-            nuts_sampler.sample()
+            nuts_sampler.sample(init_strategy=init_to_sample)
             nuts_sampler.write_results()
             nuts_sampler.plot_results()
         else:
