@@ -1,9 +1,11 @@
 import pickle
 from datetime import date
 from pathlib import Path
+from abc import ABC, abstractmethod
 
 import arviz as az
 import blackjax
+from blackjax.util import run_inference_algorithm
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -41,7 +43,7 @@ def check_convergence(mcmc):
     return 0.99 <= pivot_prior_summary["r_hat"].mean() < 1.01
 
 
-class Sampler:
+class Sampler(ABC):
     def __init__(
         self,
         model,
@@ -100,6 +102,17 @@ class Sampler:
             with open(f"{output_dir}/{label}.pkl", "rb") as f:
                 self._mcmc = pickle.load(f)
 
+    @property
+    @abstractmethod
+    def posterior_samples(self):
+        pass
+
+    @property
+    @abstractmethod
+    def posterior_predictive_samples(self):
+        pass
+
+    @abstractmethod
     def sample(self):
         pass
 
@@ -121,30 +134,6 @@ class Sampler:
             return False
 
         return check_convergence(self._mcmc)
-
-    @property
-    def posterior_samples(self):
-        return {
-            k: v
-            for k, v in self._mcmc.get_samples().items()
-            if "_flux" not in k
-            # and "_base" not in k
-            # and "_decentered" not in k
-            and k not in self.fixed_fields
-        }
-
-    @property
-    def posterior_predictive_samples(self):
-        return Predictive(
-            model=self._model,
-            posterior_samples=self.posterior_samples,
-        )(
-            jax.random.PRNGKey(0),
-            template=self._template,
-            wave=self._wave,
-            flux=None,
-            flux_err=None,
-        )
 
     @property
     def _idata_transformed(self):
@@ -231,7 +220,53 @@ class Sampler:
 
 
 class NUTSSampler(Sampler):
-    def sample(self, init_strategy=init_to_median(), dense_mass=True, **kwargs):
+    @property
+    def posterior_samples(self):
+        return {
+            k: v
+            for k, v in self._mcmc.get_samples().items()
+            if "_flux" not in k
+            # and "_base" not in k
+            # and "_decentered" not in k
+            and k not in self.fixed_fields
+        }
+
+    @property
+    def posterior_predictive_samples(self):
+        return Predictive(
+            model=self._model,
+            posterior_samples=self.posterior_samples,
+        )(
+            jax.random.PRNGKey(0),
+            template=self._template,
+            wave=self._wave,
+            flux=None,
+            flux_err=None,
+        )
+
+    def initialize_parameters(self, init_params):
+        model_kwargs = {
+            "template": self._template,
+            "wave": jnp.asarray(self._wave),
+            "flux": jnp.asarray(self._flux),
+            "flux_err": jnp.asarray(self._flux_err),
+        }
+
+        rng_key, init_key = jax.random.split(self._rng_key)
+        init_params, potential_fn_gen, postprocess_fn, *_ = initialize_model(
+            init_key,
+            self._model,
+            model_args=tuple(model_kwargs.values()),
+            dynamic_args=True,
+        )
+
+        samples_transformed = jax.vmap(
+            postprocess_fn(*model_kwargs.values())
+        )(states.position)
+
+        return
+
+    def sample(self, init_strategy=init_to_median, dense_mass=True, **kwargs):
         converged = False
         conv_num = 0
 
@@ -298,6 +333,8 @@ class NUTSSampler(Sampler):
             if not converged:
                 conv_num += 1
 
+                self.plot_results()
+
                 if conv_num % 2 == 0:
                     logger.warning(
                         f"Convergence failed for {self._label} after {conv_num} attempts. "
@@ -319,266 +356,84 @@ class NUTSSampler(Sampler):
         self.write_run()
 
 
-def inference_loop(rng_key, kernel, initial_state, num_samples):
-    @jax.jit
-    def one_step(state, rng_key):
-        state, info = kernel(rng_key, state)
-        return state, (state, info)
+class NUTSWithAdaptationSampler(Sampler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-    keys = jax.random.split(rng_key, num_samples)
-    _, (states, infos) = jax.lax.scan(one_step, initial_state, keys)
+        self._posterior_samples = None
+        self._posterior_samples_transformed = None
+        self._posterior_predictive_samples_transformed = None
 
-    return states, (
-        infos.acceptance_rate,
-        infos.is_divergent,
-        infos.num_integration_steps,
-    )
+    @staticmethod
+    def inference_loop(rng_key, kernel, initial_state, num_samples):
+        @jax.jit
+        def one_step(state, rng_key):
+            state, info = kernel(rng_key, state)
+            return state, (state, info)
 
+        keys = jax.random.split(rng_key, num_samples)
+        _, (states, infos) = jax.lax.scan(one_step, initial_state, keys)
 
-# _, self._potential_fn_gen, self._postprocess_fn, *_ = initialize_model(
-#     self._rng_key,
-#     model,
-#     model_args=(template, wave, flux, flux_err),
-#     dynamic_args=True,
-# )
+        return states, (
+            infos.acceptance_rate,
+            infos.is_divergent,
+            infos.num_integration_steps,
+        )
 
+    @property
+    def posterior_samples(self):
+        return self._posterior_samples_transformed
 
-def nuts_with_adaptation(
-    model,
-    template,
-    wave,
-    flux,
-    flux_err,
-    output_dir,
-    label,
-    num_warmup,
-    num_samples,
-    num_chains=1,
-    learning_rate=0.5,
-    initial_step_size=0.1,
-):
-    save_location = f"{output_dir}/{label}_save.pkl"
-    rng_key = jax.random.key(int(date.today().strftime("%Y%m%d")))
+    @property
+    def posterior_predictive_samples(self):
+        return self._posterior_predictive_samples_transformed
 
-    if Path(save_location).exists():
-        with open(save_location, "rb") as f:
-            states, infos, postprocess_fn, template, wave, flux, flux_err = pickle.load(
-                f
-            )
-    else:
-        rng_key, init_key = jax.random.split(rng_key)
+    def sample(self):
+        model_kwargs = {
+            "template": self._template,
+            "wave": jnp.asarray(self._wave),
+            "flux": jnp.asarray(self._flux),
+            "flux_err": jnp.asarray(self._flux_err),
+        }
+
+        rng_key, init_key = jax.random.split(self._rng_key)
         init_params, potential_fn_gen, postprocess_fn, *_ = initialize_model(
             init_key,
-            model,
-            model_args=(template, wave, flux, flux_err),
+            self._model,
+            model_args=tuple(model_kwargs.values()),
             dynamic_args=True,
         )
 
-        logdensity_fn = lambda position: -potential_fn_gen(
-            template, wave, flux, flux_err
-        )(position)
+        logdensity_fn = lambda position: -potential_fn_gen(*model_kwargs.values())(
+            position
+        )
         initial_position = init_params.z
 
         adapt = blackjax.window_adaptation(
-            blackjax.nuts, logdensity_fn, target_acceptance_rate=0.8, progress_bar=True
+            blackjax.nuts, logdensity_fn, target_acceptance_rate=0.8
         )
 
         rng_key, warmup_key = jax.random.split(rng_key)
         (last_state, parameters), _ = adapt.run(
-            warmup_key, initial_position, num_warmup
+            warmup_key, initial_position, self._num_warmup
         )
-        kernel = blackjax.nuts(logdensity_fn, **parameters).step
+        kernel = blackjax.nuts(logdensity_fn, **parameters)
 
         rng_key, sample_key = jax.random.split(rng_key)
-        states, infos = inference_loop(sample_key, kernel, last_state, num_samples)
+        states, infos = run_inference_algorithm(
+            sample_key, kernel, self._num_samples, last_state, progress_bar=True
+        )
+
         _ = states.position["halpha_disk_center_base"].block_until_ready()
 
-        # Save the outputs
-        with open(f"{output_dir}/{label}_save.pkl", "wb") as f:
-            pickle.dump(
-                (states, infos, postprocess_fn, template, wave, flux, flux_err), f
-            )
+        logger.info(f"Average acceptance rate: {infos[0]:.2f}")
+        logger.info(f"There were {100 * infos[1]:.2f}% divergent transitions")
 
-    acceptance_rate = np.mean(infos[0])
-    num_divergent = np.mean(infos[1])
+        self._posterior_samples_transformed = jax.vmap(
+            postprocess_fn(*model_kwargs.values())
+        )(states.position)
 
-    logger.info(f"Average acceptance rate: {acceptance_rate:.2f}")
-    logger.info(f"There were {100 * num_divergent:.2f}% divergent transitions")
-
-    # samples_constrained = {}
-    #
-    # for i in range(num_samples):
-    #     pp_res = postprocess_fn(template, wave, flux, flux_err)(
-    #         {k: v[i] for k, v in states.position.items()}
-    #     )
-    #
-    #     for k, v in pp_res.items():
-    #         samples_constrained.setdefault(k, []).append(v)
-    #
-    # samples_constrained = {k: np.array(v) for k, v in samples_constrained.items()}
-
-    posterior_samples_transformed = jax.vmap(
-        postprocess_fn(template, wave, flux, flux_err)
-    )(states.position)
-
-    posterior_predictive_samples_transformed = Predictive(
-        model=model,
-        posterior_samples=posterior_samples_transformed,
-    )(rng_key, template=template, wave=wave, flux=None, flux_err=None)
-
-    fixed_fields = [
-        f"{prof.name}_{param.name}"
-        for prof in template.disk_profiles + template.line_profiles
-        for param in prof.fixed
-    ]
-
-    idata_transformed = az.from_dict(
-        posterior={
-            k: np.expand_dims(a=np.asarray(v), axis=0)
-            for k, v in posterior_samples_transformed.items()
-            if k not in fixed_fields
-        },
-        posterior_predictive={
-            k: np.expand_dims(a=np.asarray(v), axis=0)
-            for k, v in posterior_predictive_samples_transformed.items()
-            if k not in fixed_fields
-        },
-    )
-
-    plot_results(
-        output_dir,
-        posterior_predictive_samples_transformed,
-        idata_transformed,
-        wave,
-        flux,
-        flux_err,
-        label,
-    )
-
-
-def nuts_with_adaptation_multi(
-    model,
-    template,
-    wave,
-    flux,
-    flux_err,
-    output_dir,
-    label,
-    num_warmup,
-    num_samples,
-    num_chains=2,
-):
-    num_devices = jax.local_device_count()  # Number of available devices
-    if num_chains % num_devices != 0:
-        raise ValueError(
-            f"num_chains ({num_chains}) must be a multiple of num_devices ({num_devices}) for pmap."
-        )
-
-    rng_key = jax.random.key(int(date.today().strftime("%Y%m%d")))
-
-    _, potential_fn_gen, postprocess_fn, *_ = initialize_model(
-        rng_key,
-        model,
-        model_args=(template, wave, flux, flux_err),
-        dynamic_args=True,
-    )
-
-    def logdensity_fn(position):
-        return -potential_fn_gen(template, wave, flux, flux_err)(position)
-
-    adapt = blackjax.window_adaptation(
-        blackjax.nuts, logdensity_fn, target_acceptance_rate=0.9, progress_bar=False
-    )
-
-    rng_keys = jax.random.split(rng_key, num_chains)
-
-    def single_chain_run(init_key):
-        """Runs NUTS sampling for a single chain."""
-        init_params, _, _, *_ = initialize_model(
-            init_key,
-            model,
-            model_args=(template, wave, flux, flux_err),
-            dynamic_args=True,
-        )
-
-        initial_position = init_params.z
-
-        rng_key, warmup_key = jax.random.split(init_key)
-
-        (last_state, parameters), _ = adapt.run(
-            warmup_key, initial_position, num_warmup
-        )
-
-        kernel = blackjax.nuts(logdensity_fn, **parameters).step
-
-        rng_key, sample_key = jax.random.split(rng_key)
-        states, infos = inference_loop(sample_key, kernel, last_state, num_samples)
-
-        return states.position  # Return sampled positions
-
-    # Convert inputs into per-device arrays
-    # replicated_keys = jnp.array(rng_keys).reshape(
-    #     num_devices, num_chains // num_devices, -1
-    # )
-
-    # Run multiple chains in parallel across devices
-    results = jax.pmap(single_chain_run, in_axes=(0,))(rng_keys)
-
-    # Ensure computation completes before returning
-    _ = results["halpha_disk_center_base"].block_until_ready()
-
-    # Save the outputs
-    # with open(f"{output_dir}/{label}_save.pkl", "wb") as f:
-    #     pickle.dump((states, infos, postprocess_fn, template, wave, flux, flux_err), f)
-
-    # acceptance_rate = np.mean(infos[0])
-    # num_divergent = np.mean(infos[1])
-    #
-    # print(f"Average acceptance rate: {acceptance_rate:.2f}")
-    # print(f"There were {100 * num_divergent:.2f}% divergent transitions")
-
-    # samples_constrained = {}
-    #
-    # for i in range(num_samples):
-    #     pp_res = postprocess_fn(template, wave, flux, flux_err)(
-    #         {k: v[i] for k, v in states.position.items()}
-    #     )
-    #
-    #     for k, v in pp_res.items():
-    #         samples_constrained.setdefault(k, []).append(v)
-    #
-    # samples_constrained = {k: np.array(v) for k, v in samples_constrained.items()}
-
-    # print(results)
-
-    results = {k: v.flatten() for k, v in results.items()}
-
-    posterior_samples_transformed = jax.vmap(
-        postprocess_fn(template, wave, flux, flux_err)
-    )(results)
-
-    posterior_predictive_samples_transformed = Predictive(
-        model=model,
-        posterior_samples=posterior_samples_transformed,
-    )(rng_key, template=template, wave=wave, flux=None, flux_err=None)
-
-    idata_transformed = az.from_dict(
-        posterior={
-            k: np.expand_dims(a=np.asarray(v), axis=0)
-            for k, v in posterior_samples_transformed.items()
-        },
-        posterior_predictive={
-            k: np.expand_dims(a=np.asarray(v), axis=0)
-            for k, v in posterior_predictive_samples_transformed.items()
-        },
-    )
-
-    plot_results(
-        output_dir,
-        posterior_predictive_samples_transformed,
-        idata_transformed,
-        wave,
-        flux,
-        flux_err,
-        label,
-    )
+        self._posterior_predictive_samples_transformed = Predictive(
+            model=self._model,
+            posterior_samples=self._posterior_samples_transformed,
+        )(rng_key, **model_kwargs)
