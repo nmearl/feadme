@@ -15,7 +15,7 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-fixed_quadgk = GaussKronrodRule(order=31).integrate
+fixed_quadgk = GaussKronrodRule(order=41).integrate
 
 
 @jax.jit
@@ -177,6 +177,8 @@ def jax_integrate(
     e: float,
     phi0: float,
 ) -> Array:
+    N_xi, N_phi = 50, 50
+
     # xi = jax.lax.cond(
     #     xi2 / xi1 > 10,
     #     lambda _: jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi),
@@ -184,10 +186,24 @@ def jax_integrate(
     #     operand=None,
     # )
 
-    N_xi, N_phi = 50, 50
-
     xi = jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi)
     phi = jnp.linspace(phi1, phi2, N_phi)
+
+    # DISP, XI, PHI = jnp.meshgrid(
+    #     X,
+    #     xi,
+    #     phi,
+    #     indexing="ij",
+    # )
+    #
+    # res = jax.vmap(integrand, in_axes=(0, 0, 0, None, None, None, None, None))(
+    #     PHI, XI, DISP, inc, sigma, q, e, phi0
+    # )
+    #
+    # inner_integral = jnp.trapezoid(res, x=phi, axis=2)
+    # outer_integral = jnp.trapezoid(inner_integral, x=xi, axis=1)
+
+    # jax.debug.print("{}", res.shape)
 
     XI, PHI = jnp.meshgrid(
         xi,
@@ -202,9 +218,22 @@ def jax_integrate(
     inner_integral = jnp.trapezoid(res, x=phi, axis=2)
     outer_integral = jnp.trapezoid(inner_integral, x=xi, axis=0)
 
+    # jax.debug.print("{}", res.shape)
+
+    # res = jax.vmap(integrand, in_axes=(None, 0, None, None, None, None, None, None))(
+    #     phi[:, None], xi, X[None, :], inc, sigma, q, e, phi0
+    # )
+    #
+    # inner_integral = jnp.trapezoid(res, x=phi, axis=1)
+    # outer_integral = jnp.trapezoid(inner_integral, x=xi, axis=0)
+
+    # jax.debug.print("{}", res.shape)
+
+    # res = integrand(
+    #     phi[:, None, None], xi[None, :, None], X[None, None, :], inc, sigma, q, e, phi0
+    # )
+    #
+    # inner_integral = jnp.trapezoid(res, x=phi, axis=0)
+    # outer_integral = jnp.trapezoid(inner_integral, x=xi, axis=0)
+
     return outer_integral
-
-    # dphi = (phi2 - phi1) / (N_phi - 1)
-    # dxi = (xi2 - xi1) / (N_xi - 1)
-
-    # return jnp.sum(res, axis=(2, 0)) #* dphi * dxi
