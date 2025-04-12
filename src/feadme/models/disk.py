@@ -151,7 +151,7 @@ def jax_integrate(
     e: float,
     phi0: float,
 ) -> Array:
-    return fixed_quadgk21(
+    return fixed_quadgk41(
         _inner_quad, xi1, xi2, args=(phi1, phi2, X, inc, sigma, q, e, phi0)
     )[0]
     # return quadgk(
