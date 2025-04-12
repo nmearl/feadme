@@ -100,7 +100,7 @@ def run(
         if "ZTF" not in str(template_path):
             continue
 
-        # if "ZTF18aacckko" not in str(template_path):
+        # if "ZTF18aamfryk" not in str(template_path):
         #     continue
 
         # Load the template

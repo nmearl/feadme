@@ -15,7 +15,9 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-fixed_quadgk = GaussKronrodRule(order=41).integrate
+fixed_quadgk = GaussKronrodRule(order=31).integrate
+fixed_quadgk21 = GaussKronrodRule(order=21).integrate
+fixed_quadgk41 = GaussKronrodRule(order=41).integrate
 
 
 @jax.jit
@@ -119,7 +121,9 @@ def _inner_quad(
     e: float,
     phi0: float,
 ) -> Array:
-    return fixed_quadgk(integrand, phi1, phi2, args=(xi, X, inc, sigma, q, e, phi0))[0]
+    return fixed_quadgk41(integrand, phi1, phi2, args=(xi, X, inc, sigma, q, e, phi0))[
+        0
+    ]
     # return quadgk(
     #     integrand,
     #     [phi1, phi2],
@@ -135,7 +139,7 @@ def _inner_quad(
 
 
 @jax.jit
-def _jax_integrate(
+def jax_integrate(
     xi1: float,
     xi2: float,
     phi1: float,
@@ -147,7 +151,7 @@ def _jax_integrate(
     e: float,
     phi0: float,
 ) -> Array:
-    return fixed_quadgk(
+    return fixed_quadgk21(
         _inner_quad, xi1, xi2, args=(phi1, phi2, X, inc, sigma, q, e, phi0)
     )[0]
     # return quadgk(
@@ -165,7 +169,7 @@ def _jax_integrate(
 
 
 @jax.jit
-def jax_integrate(
+def _jax_integrate(
     xi1: float,
     xi2: float,
     phi1: float,
