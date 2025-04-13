@@ -7,7 +7,8 @@ import jax.numpy as jnp
 import numpy as np
 from astropy.table import Table
 from loguru import logger
-from numpyro.infer import init_to_value, init_to_sample, init_to_mean
+from numpyro.infer import init_to_value, init_to_sample, init_to_median, init_to_uniform
+from numpyro.infer.util import unconstrain_fn, constrain_fn, get_transforms
 
 from .compose import disk_model
 from .parser import Template, Parameter
@@ -158,7 +159,7 @@ def run(
         )
 
         if not nuts_sampler.converged:
-            nuts_sampler.sample(init_strategy=init_to_mean)
+            nuts_sampler.sample(init_strategy=init_to_median(num_samples=1000))
             nuts_sampler.write_results()
             nuts_sampler.plot_results()
         else:

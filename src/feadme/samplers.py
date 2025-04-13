@@ -260,9 +260,9 @@ class NUTSSampler(Sampler):
             dynamic_args=True,
         )
 
-        samples_transformed = jax.vmap(
-            postprocess_fn(*model_kwargs.values())
-        )(states.position)
+        # samples_transformed = jax.vmap(
+        #     postprocess_fn(*model_kwargs.values())
+        # )(states.position)
 
         return
 
