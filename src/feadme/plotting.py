@@ -113,3 +113,4 @@ def plot_results(
         show_titles=True,
     )
     fig.savefig(f"{output_dir}/corner_plot.png")
+    plt.close(fig)

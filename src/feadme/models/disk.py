@@ -15,7 +15,7 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-fixed_quadgk = GaussKronrodRule(order=51).integrate
+fixed_quadgk = GaussKronrodRule(order=41).integrate
 
 
 @jax.jit

@@ -343,7 +343,7 @@ class NUTSSampler(Sampler):
                     self._mcmc = None
                     num_warmup *= 2
                     num_samples *= 2
-                elif conv_num >= 5:
+                elif conv_num >= 3:
                     logger.critical(
                         f"Convergence failed for {self._label} after 5 attempts. Skipping."
                     )
