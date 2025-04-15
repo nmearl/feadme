@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 from astropy.table import Table
 from astropy.time import Time
+from numpyro.contrib.nested_sampling import NestedSampler
 from numpyro.diagnostics import summary
 from numpyro.infer import MCMC, NUTS, init_to_median
 from numpyro.infer.util import initialize_model, Predictive
@@ -105,16 +106,16 @@ class Sampler(ABC):
     @property
     @abstractmethod
     def posterior_samples(self):
-        pass
+        raise NotImplementedError("Posterior samples not implemented.")
 
     @property
     @abstractmethod
     def posterior_predictive_samples(self):
-        pass
+        raise NotImplementedError("Posterior predictive samples not implemented.")
 
     @abstractmethod
     def sample(self):
-        pass
+        raise NotImplementedError("Sampling not implemented.")
 
     @property
     def label(self):
@@ -241,7 +242,7 @@ class NUTSSampler(Sampler):
             template=self._template,
             wave=self._wave,
             flux=None,
-            flux_err=None,
+            flux_err=self._flux_err,
         )
 
     def initialize_parameters(self, init_params):
@@ -354,6 +355,63 @@ class NUTSSampler(Sampler):
         logger.info(f"Finished sampling {self._label} in {delta_time}.")
 
         self.write_run()
+
+
+class NSSampler(Sampler):
+
+    @property
+    def posterior_samples(self):
+        ns_samples = self._ns.get_samples(
+            jax.random.PRNGKey(1), num_samples=self._num_samples
+        )
+        return {
+            k: v
+            for k, v in ns_samples.items()
+            if "_flux" not in k
+            # and "_base" not in k
+            # and "_decentered" not in k
+            and k not in self.fixed_fields
+        }
+
+    @property
+    def posterior_predictive_samples(self):
+        return Predictive(
+            model=self._model,
+            posterior_samples=self.posterior_samples,
+        )(
+            jax.random.PRNGKey(0),
+            template=self._template,
+            wave=self._wave,
+            flux=None,
+            flux_err=self._flux_err,
+        )
+
+    def sample(self, *args, **kwargs):
+
+        chain_method = "vectorized" if jax.local_device_count() == 1 else "parallel"
+
+        logger.info(
+            f"Fitting {self._label} using the `{chain_method}` method with "
+            f"`{jax.local_device_count()}` local devices and "
+            f"`{self._num_chains}` chains."
+        )
+
+        start_time = Time.now()
+
+        self._ns = NestedSampler(self._model)
+        self._ns.run(
+            self._rng_key,
+            template=self._template,
+            wave=jnp.asarray(self._wave),
+            flux=jnp.asarray(self._flux),
+            flux_err=jnp.asarray(self._flux_err),
+        )
+
+        delta_time = (Time.now() - start_time).to_datetime()
+
+        logger.info(f"Finished sampling {self._label} in {delta_time}.")
+
+        # self.write_run()
 
 
 class NUTSWithAdaptationSampler(Sampler):

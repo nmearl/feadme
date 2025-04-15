@@ -12,7 +12,7 @@ from numpyro.infer.util import unconstrain_fn, constrain_fn, get_transforms
 
 from .compose import disk_model
 from .parser import Template, Parameter
-from .samplers import NUTSSampler
+from .samplers import NUTSSampler, NSSampler
 
 finfo = np.finfo(float)
 
@@ -101,8 +101,8 @@ def run(
         if "ZTF" not in str(template_path):
             continue
 
-        # if "ZTF18aamfryk" not in str(template_path):
-        #     continue
+        if "ZTF18aamfryk" not in str(template_path):
+            continue
 
         # Load the template
         with open(template_path, "r") as f:
