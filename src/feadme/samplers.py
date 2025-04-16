@@ -245,28 +245,6 @@ class NUTSSampler(Sampler):
             flux_err=self._flux_err,
         )
 
-    def initialize_parameters(self, init_params):
-        model_kwargs = {
-            "template": self._template,
-            "wave": jnp.asarray(self._wave),
-            "flux": jnp.asarray(self._flux),
-            "flux_err": jnp.asarray(self._flux_err),
-        }
-
-        rng_key, init_key = jax.random.split(self._rng_key)
-        init_params, potential_fn_gen, postprocess_fn, *_ = initialize_model(
-            init_key,
-            self._model,
-            model_args=tuple(model_kwargs.values()),
-            dynamic_args=True,
-        )
-
-        # samples_transformed = jax.vmap(
-        #     postprocess_fn(*model_kwargs.values())
-        # )(states.position)
-
-        return
-
     def sample(self, init_strategy=init_to_median, dense_mass=True, **kwargs):
         converged = False
         conv_num = 0
@@ -410,8 +388,6 @@ class NSSampler(Sampler):
         delta_time = (Time.now() - start_time).to_datetime()
 
         logger.info(f"Finished sampling {self._label} in {delta_time}.")
-
-        # self.write_run()
 
 
 class NUTSWithAdaptationSampler(Sampler):
