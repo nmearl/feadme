@@ -98,8 +98,8 @@ def run(
             # Skip the 14li template for now
             continue
 
-        if "ZTF" not in str(template_path):
-            continue
+        # if "ZTF" not in str(template_path):
+        #     continue
 
         # if "ZTF18aaizioy" not in str(template_path):
         #     continue

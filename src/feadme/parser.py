@@ -148,7 +148,7 @@ class Line(Profile):
 class Template(BaseModel):
     name: str
     data_path: Optional[str] = None
-    mjd: Optional[int] = None
+    mjd: Optional[float] = None
     redshift: Optional[float] = 0
     disk_profiles: List[Disk]
     line_profiles: List[Line]
