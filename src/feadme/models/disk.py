@@ -12,7 +12,7 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-fixed_quadgk41 = GaussKronrodRule(order=41).integrate
+fixed_quadgk51 = GaussKronrodRule(order=51).integrate
 fixed_quadgk21 = GaussKronrodRule(order=21).integrate
 
 
@@ -40,7 +40,7 @@ def doppler_factor(
     ) ** -0.5
 
     term_binner = 1 - b_div_r**2 * scale
-    term_binner = jnp.where(term_binner < 0, 0, term_binner)
+    # term_binner = jnp.where(term_binner < 0, 0, term_binner)
 
     # Eracleous et al, eq 15
     inv_dop = gamma * (
@@ -70,7 +70,7 @@ def intensity(
 
     # res = (xi**-q * c_cgs) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
     res = (xi**-q) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
-    res = jnp.where(exponent < -37, 0.0, res)
+    # res = jnp.where(exponent < -37, 0.0, res)
 
     return res
 
@@ -121,7 +121,7 @@ def _inner_quad(
     phi0: float,
     nu0: float,
 ) -> Array:
-    return fixed_quadgk41(
+    return fixed_quadgk51(
         integrand, phi1, phi2, args=(xi, X, inc, sigma, q, e, phi0, nu0)
     )[0]
 
