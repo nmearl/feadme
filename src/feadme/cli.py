@@ -3,16 +3,14 @@ from pathlib import Path
 
 import click
 import jax
-import jax.numpy as jnp
 import numpy as np
 from astropy.table import Table
 from loguru import logger
-from numpyro.infer import init_to_value, init_to_sample, init_to_median, init_to_uniform
-from numpyro.infer.util import unconstrain_fn, constrain_fn, get_transforms
+from numpyro.infer import init_to_median
 
 from .compose import disk_model
-from .parser import Template, Parameter
-from .samplers import NUTSSampler, NSSampler
+from .parser import Template
+from .samplers import NUTSSampler
 
 finfo = np.finfo(float)
 
@@ -159,7 +157,7 @@ def run(
         )
 
         if not nuts_sampler.converged:
-            nuts_sampler.sample(init_strategy=init_to_median(num_samples=1000))
+            nuts_sampler.sample(init_strategy=init_to_median)
             nuts_sampler.write_results()
             nuts_sampler.plot_results()
         else:

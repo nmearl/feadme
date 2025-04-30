@@ -132,22 +132,10 @@ def _inner_quad(
     return fixed_quadgk(
         integrand, phi1, phi2, args=(xi, X, inc, sigma, q, e, phi0, nu0)
     )[0]
-    # return quadgk(
-    #     integrand,
-    #     [phi1, phi2],
-    #     args=(xi, X, inc, sigma, q, e, phi0),
-    #     order=15,
-    # )[0]
-    # return quadcc(
-    #     integrand,
-    #     [phi1, phi2],
-    #     args=(xi, X, inc, sigma, q, e, phi0),
-    #     order=4,
-    # )[0]
 
 
 @jax.jit
-def _jax_integrate(
+def jax_integrate(
     xi1: float,
     xi2: float,
     phi1: float,
@@ -163,22 +151,10 @@ def _jax_integrate(
     return fixed_quadgk(
         _inner_quad, xi1, xi2, args=(phi1, phi2, X, inc, sigma, q, e, phi0, nu0)
     )[0]
-    # return quadgk(
-    #     _inner_quad,
-    #     [xi1, xi2],
-    #     args=(phi1, phi2, X, inc, sigma, q, e, phi0),
-    #     order=15,
-    # )[0]
-    # return quadcc(
-    #     _inner_quad,
-    #     [xi1, xi2],
-    #     args=(phi1, phi2, X, inc, sigma, q, e, phi0),
-    #     order=4,
-    # )[0]
 
 
 @jax.jit
-def jax_integrate(
+def _jax_integrate(
     xi1: float,
     xi2: float,
     phi1: float,
