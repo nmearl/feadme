@@ -1,11 +1,6 @@
 import astropy.constants as const
 import astropy.units as u
 import numpyro
-from typing import NamedTuple
-from functools import partial
-from collections import namedtuple
-
-from .utils import truncnorm_ppf, dict_to_namedtuple, TruncatedAffineTransform
 
 import jax
 import jax.numpy as jnp
@@ -163,10 +158,10 @@ def disk_model(
                         ),
                         dist.transforms.ExpTransform(),
                     ]
-                    norm_param_dist = dist.TransformedDistribution(
+                    log_norm_param_dist = dist.TransformedDistribution(
                         base_dist, transforms
                     )
-                    param_mods[samp_name] = numpyro.sample(samp_name, norm_param_dist)
+                    param_mods[samp_name] = numpyro.sample(samp_name, log_norm_param_dist)
                 else:
                     raise ValueError(
                         f"Invalid distribution: {param.distribution} for parameter {param.name}"

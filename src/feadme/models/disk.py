@@ -127,7 +127,7 @@ def _inner_quad(
 
 
 @jax.jit
-def _jax_integrate(
+def jax_integrate(
     xi1: float,
     xi2: float,
     phi1: float,
@@ -146,7 +146,7 @@ def _jax_integrate(
 
 
 @jax.jit
-def jax_integrate(
+def _jax_integrate(
     xi1: float,
     xi2: float,
     phi1: float,
