@@ -63,11 +63,15 @@ def doppler_factor(
 
 
 @jax.jit
-def intensity(xi: ArrayLike, X: ArrayLike, D: float, sigma: float, q: float) -> Array:
+def intensity(
+    xi: ArrayLike, X: ArrayLike, D: float, sigma: float, q: float, nu0: float
+) -> Array:
     # Eracleous et al, eq 18; returned units are erg / cm^2
-    exponent = -((1 + X - D) ** 2) / (2 * D**2) * (c_cgs / sigma) ** 2
+    # exponent = -((1 + X - D) ** 2) / (2 * D**2) * (c_cgs / sigma) ** 2
+    exponent = -((1 + X - D) ** 2) / (2 * D**2) * (nu0 / sigma) ** 2
 
-    res = (xi**-q * c_cgs) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
+    # res = (xi**-q * c_cgs) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
+    res = (xi**-q) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
     res = jnp.where(exponent < -37, 0.0, res)
     # res[exponent < -37] = 0.0
     # if exponent <= -37:
@@ -94,15 +98,20 @@ def integrand(
     q: float,
     e: float,
     phi0: float,
+    nu0: float,
 ) -> Array:
+    # phi_prime = jnp.arcsin(jnp.sin(theta) * jnp.sin(phi))
+    # theta = jnp.arccos(jnp.sin(inc) * jnp.cos(phi_prime))
+
     # Eracleous et al, eq 10
-    xi = xi_tilde * (1 + e) / (1 - e * jnp.cos(phi - phi0))
+    trans_fac = (1 + e) / (1 - e * jnp.cos(phi - phi0))
+    xi = xi_tilde * trans_fac
 
     D = doppler_factor(xi, phi, inc, e, phi0)
-    I_nu = intensity(xi, X, D, sigma, q)
+    I_nu = intensity(xi, X, D, sigma, q, nu0)
 
     # Eracleous et al, eq 7
-    res = xi * I_nu * D**3 * Psi(xi, phi, inc)
+    res = xi * I_nu * D**3 * Psi(xi, phi, inc) * trans_fac
 
     return res
 
@@ -118,8 +127,11 @@ def _inner_quad(
     q: float,
     e: float,
     phi0: float,
+    nu0: float,
 ) -> Array:
-    return fixed_quadgk(integrand, phi1, phi2, args=(xi, X, inc, sigma, q, e, phi0))[0]
+    return fixed_quadgk(
+        integrand, phi1, phi2, args=(xi, X, inc, sigma, q, e, phi0, nu0)
+    )[0]
     # return quadgk(
     #     integrand,
     #     [phi1, phi2],
@@ -146,9 +158,10 @@ def _jax_integrate(
     q: float,
     e: float,
     phi0: float,
+    nu0: float,
 ) -> Array:
     return fixed_quadgk(
-        _inner_quad, xi1, xi2, args=(phi1, phi2, X, inc, sigma, q, e, phi0)
+        _inner_quad, xi1, xi2, args=(phi1, phi2, X, inc, sigma, q, e, phi0, nu0)
     )[0]
     # return quadgk(
     #     _inner_quad,
@@ -176,6 +189,7 @@ def jax_integrate(
     q: float,
     e: float,
     phi0: float,
+    nu0: float,
 ) -> Array:
     N_xi, N_phi = 50, 50
 
@@ -211,8 +225,8 @@ def jax_integrate(
         indexing="ij",
     )
 
-    res = jax.vmap(integrand, in_axes=(0, 0, None, None, None, None, None, None))(
-        PHI, XI, X[:, None], inc, sigma, q, e, phi0
+    res = jax.vmap(integrand, in_axes=(0, 0, None, None, None, None, None, None, None))(
+        PHI, XI, X[:, None], inc, sigma, q, e, phi0, nu0
     )
 
     inner_integral = jnp.trapezoid(res, x=phi, axis=2)

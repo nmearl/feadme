@@ -32,12 +32,12 @@ def evaluate_disk_model(template, wave, param_mods):
         nu0 = c_cgs / (param_mods[f"{prof.name}_center"] * 1e-8)
         X = nu / nu0 - 1
 
-        local_sigma = param_mods[f"{prof.name}_sigma"] * 1e5
+        local_sigma = param_mods[f"{prof.name}_sigma"] * 1e5 * nu0 / c_cgs
 
         xi1 = param_mods[f"{prof.name}_inner_radius"]
         xi2 = param_mods[f"{prof.name}_outer_radius"]
-        phi1 = -jnp.pi * 0.5
-        phi2 = jnp.pi * 0.5
+        phi1 = 0
+        phi2 = 2 * jnp.pi
 
         res = jax_integrate(
             xi1,
@@ -50,6 +50,7 @@ def evaluate_disk_model(template, wave, param_mods):
             param_mods[f"{prof.name}_q"],
             param_mods[f"{prof.name}_eccentricity"],
             param_mods[f"{prof.name}_apocenter"],
+            nu0,
         )
 
         total_disk_flux += (
