@@ -1,21 +1,19 @@
-from functools import partial
-
 import astropy.constants as const
 import astropy.units as u
 import jax
 import jax.numpy as jnp
 import numpy as np
-from quadax import quadgk, GaussKronrodRule, trapezoid, quadcc
-
 from jax import Array
 from jax.typing import ArrayLike
+from quadax import GaussKronrodRule
 
 FLOAT_EPSILON = float(np.finfo(np.float32).tiny)
 ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-fixed_quadgk = GaussKronrodRule(order=41).integrate
+fixed_quadgk41 = GaussKronrodRule(order=41).integrate
+fixed_quadgk21 = GaussKronrodRule(order=21).integrate
 
 
 @jax.jit
@@ -73,9 +71,6 @@ def intensity(
     # res = (xi**-q * c_cgs) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
     res = (xi**-q) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
     res = jnp.where(exponent < -37, 0.0, res)
-    # res[exponent < -37] = 0.0
-    # if exponent <= -37:
-    #     return 0.0
 
     return res
 
@@ -100,9 +95,6 @@ def integrand(
     phi0: float,
     nu0: float,
 ) -> Array:
-    # phi_prime = jnp.arcsin(jnp.sin(theta) * jnp.sin(phi))
-    # theta = jnp.arccos(jnp.sin(inc) * jnp.cos(phi_prime))
-
     # Eracleous et al, eq 10
     trans_fac = (1 + e) / (1 - e * jnp.cos(phi - phi0))
     xi = xi_tilde * trans_fac
@@ -129,13 +121,13 @@ def _inner_quad(
     phi0: float,
     nu0: float,
 ) -> Array:
-    return fixed_quadgk(
+    return fixed_quadgk41(
         integrand, phi1, phi2, args=(xi, X, inc, sigma, q, e, phi0, nu0)
     )[0]
 
 
 @jax.jit
-def jax_integrate(
+def _jax_integrate(
     xi1: float,
     xi2: float,
     phi1: float,
@@ -148,13 +140,13 @@ def jax_integrate(
     phi0: float,
     nu0: float,
 ) -> Array:
-    return fixed_quadgk(
+    return fixed_quadgk21(
         _inner_quad, xi1, xi2, args=(phi1, phi2, X, inc, sigma, q, e, phi0, nu0)
     )[0]
 
 
 @jax.jit
-def _jax_integrate(
+def jax_integrate(
     xi1: float,
     xi2: float,
     phi1: float,
@@ -179,22 +171,6 @@ def _jax_integrate(
     xi = jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi)
     phi = jnp.linspace(phi1, phi2, N_phi)
 
-    # DISP, XI, PHI = jnp.meshgrid(
-    #     X,
-    #     xi,
-    #     phi,
-    #     indexing="ij",
-    # )
-    #
-    # res = jax.vmap(integrand, in_axes=(0, 0, 0, None, None, None, None, None))(
-    #     PHI, XI, DISP, inc, sigma, q, e, phi0
-    # )
-    #
-    # inner_integral = jnp.trapezoid(res, x=phi, axis=2)
-    # outer_integral = jnp.trapezoid(inner_integral, x=xi, axis=1)
-
-    # jax.debug.print("{}", res.shape)
-
     XI, PHI = jnp.meshgrid(
         xi,
         phi,
@@ -207,23 +183,5 @@ def _jax_integrate(
 
     inner_integral = jnp.trapezoid(res, x=phi, axis=2)
     outer_integral = jnp.trapezoid(inner_integral, x=xi, axis=0)
-
-    # jax.debug.print("{}", res.shape)
-
-    # res = jax.vmap(integrand, in_axes=(None, 0, None, None, None, None, None, None))(
-    #     phi[:, None], xi, X[None, :], inc, sigma, q, e, phi0
-    # )
-    #
-    # inner_integral = jnp.trapezoid(res, x=phi, axis=1)
-    # outer_integral = jnp.trapezoid(inner_integral, x=xi, axis=0)
-
-    # jax.debug.print("{}", res.shape)
-
-    # res = integrand(
-    #     phi[:, None, None], xi[None, :, None], X[None, None, :], inc, sigma, q, e, phi0
-    # )
-    #
-    # inner_integral = jnp.trapezoid(res, x=phi, axis=0)
-    # outer_integral = jnp.trapezoid(inner_integral, x=xi, axis=0)
 
     return outer_integral
