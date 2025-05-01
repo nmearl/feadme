@@ -99,8 +99,8 @@ def run(
         # if "ZTF" not in str(template_path):
         #     continue
 
-        if "ZTF18aacrkse" not in str(template_path):
-            continue
+        # if "ZTF18aacrkse" not in str(template_path):
+        #     continue
 
         # Load the template
         with open(template_path, "r") as f:
