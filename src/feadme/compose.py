@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import numpyro.distributions as dist
 
-from .models.disk import jax_integrate, _jax_integrate
+from .models.disk import jax_integrate, quad_jax_integrate
 from .parser import Distribution, Template
 from numpyro.infer.reparam import TransformReparam, LocScaleReparam
 
@@ -17,7 +17,7 @@ c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
 
-def evaluate_disk_model(template, wave, param_mods):
+def evaluate_disk_model(template, wave, param_mods, use_quad=False):
     total_disk_flux = jnp.zeros_like(wave)
     total_line_flux = jnp.zeros_like(wave)
 
@@ -34,7 +34,9 @@ def evaluate_disk_model(template, wave, param_mods):
         phi1 = 0
         phi2 = 2 * jnp.pi - 1e-6
 
-        res = jax_integrate(
+        integrator = quad_jax_integrate if use_quad else jax_integrate
+
+        res = integrator(
             xi1,
             xi2,
             phi1,

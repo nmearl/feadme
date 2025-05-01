@@ -43,19 +43,16 @@ def doppler_factor(
     term_binner = jnp.where(term_binner < 0, 0, term_binner)
 
     # Eracleous et al, eq 15
-    inv_dop = gamma * (
-        scale**-0.5
-        # - (1 - b_div_r**2 * scale) ** 0.5
-        - term_binner**0.5
-        * e
-        * sinphiphinot
-        / (xi**0.5 * scale ** (3 / 2) * (1 - e * cosphiphinot) ** 0.5)
-        + b_div_r
-        * (1 - e * cosphiphinot) ** 0.5
-        * sini
-        * sinphi
-        / (xi**0.5 * scale**0.5 * (1 - sini**2 * cosphi**2) ** 0.5)
-    )
+    da = scale**-0.5
+    db = term_binner**0.5 * e * sinphiphinot
+    dc = xi**0.5 * scale ** (3 / 2) * (1 - e * cosphiphinot) ** 0.5
+    dd = b_div_r * (1 - e * cosphiphinot) ** 0.5 * sini * sinphi
+    de = xi**0.5 * scale**0.5 * (1 - sini**2 * cosphi**2) ** 0.5
+    de = jnp.where(de == 0.0, FLOAT_EPSILON, de)
+
+    inv_dop = gamma * (da - db / dc + dd / de)
+
+    # jax.debug.print("{}", inv_dop)
 
     return inv_dop**-1
 
@@ -127,7 +124,7 @@ def _inner_quad(
 
 
 @jax.jit
-def jax_integrate(
+def quad_jax_integrate(
     xi1: float,
     xi2: float,
     phi1: float,
@@ -146,7 +143,7 @@ def jax_integrate(
 
 
 @jax.jit
-def _jax_integrate(
+def jax_integrate(
     xi1: float,
     xi2: float,
     phi1: float,
