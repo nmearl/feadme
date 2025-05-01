@@ -13,7 +13,7 @@ c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
 fixed_quadgk51 = GaussKronrodRule(order=51).integrate
-fixed_quadgk21 = GaussKronrodRule(order=21).integrate
+fixed_quadgk21 = GaussKronrodRule(order=31).integrate
 
 
 @jax.jit
