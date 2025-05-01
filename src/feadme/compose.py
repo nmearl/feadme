@@ -32,7 +32,7 @@ def evaluate_disk_model(template, wave, param_mods):
         xi1 = param_mods[f"{prof.name}_inner_radius"]
         xi2 = param_mods[f"{prof.name}_outer_radius"]
         phi1 = 0
-        phi2 = 2 * jnp.pi
+        phi2 = 2 * jnp.pi - 1e-6
 
         res = jax_integrate(
             xi1,
