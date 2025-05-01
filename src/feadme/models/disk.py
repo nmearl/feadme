@@ -13,7 +13,7 @@ c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
 fixed_quadgk51 = GaussKronrodRule(order=51).integrate
-fixed_quadgk21 = GaussKronrodRule(order=31).integrate
+fixed_quadgk31 = GaussKronrodRule(order=31).integrate
 
 
 @jax.jit
@@ -40,7 +40,7 @@ def doppler_factor(
     ) ** -0.5
 
     term_binner = 1 - b_div_r**2 * scale
-    # term_binner = jnp.where(term_binner < 0, 0, term_binner)
+    term_binner = jnp.where(term_binner < 0, 0, term_binner)
 
     # Eracleous et al, eq 15
     inv_dop = gamma * (
@@ -70,7 +70,7 @@ def intensity(
 
     # res = (xi**-q * c_cgs) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
     res = (xi**-q) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
-    # res = jnp.where(exponent < -37, 0.0, res)
+    res = jnp.where(exponent < -37, 0.0, res)
 
     return res
 
@@ -140,7 +140,7 @@ def jax_integrate(
     phi0: float,
     nu0: float,
 ) -> Array:
-    return fixed_quadgk21(
+    return fixed_quadgk31(
         _inner_quad, xi1, xi2, args=(phi1, phi2, X, inc, sigma, q, e, phi0, nu0)
     )[0]
 
@@ -159,7 +159,7 @@ def _jax_integrate(
     phi0: float,
     nu0: float,
 ) -> Array:
-    N_xi, N_phi = 50, 50
+    N_xi, N_phi = 30, 50
 
     # xi = jax.lax.cond(
     #     xi2 / xi1 > 10,
