@@ -37,10 +37,10 @@ def evaluate_disk_model(template, wave, param_mods, use_quad=False):
         integrator = quad_jax_integrate if use_quad else jax_integrate
 
         # Compute posterior for apocenter using circular statistics
-        apocenter_circ_mean = np.arctan2(
-            np.mean(np.sin(param_mods[f"{prof.name}_apocenter"])),
-            np.mean(np.cos(param_mods[f"{prof.name}_apocenter"])),
-        ) % (2 * np.pi)
+        apocenter_circ_mean = jnp.arctan2(
+            jnp.mean(jnp.sin(param_mods[f"{prof.name}_apocenter"])),
+            jnp.mean(jnp.cos(param_mods[f"{prof.name}_apocenter"])),
+        ) % (2 * jnp.pi)
 
         res = integrator(
             xi1,
