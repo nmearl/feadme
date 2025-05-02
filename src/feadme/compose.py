@@ -36,6 +36,12 @@ def evaluate_disk_model(template, wave, param_mods, use_quad=False):
 
         integrator = quad_jax_integrate if use_quad else jax_integrate
 
+        # Compute posterior for apocenter using circular statistics
+        apocenter_circ_mean = np.arctan2(
+            np.mean(np.sin(param_mods[f"{prof.name}_apocenter"])),
+            np.mean(np.cos(param_mods[f"{prof.name}_apocenter"])),
+        ) % (2 * np.pi)
+
         res = integrator(
             xi1,
             xi2,
@@ -46,7 +52,7 @@ def evaluate_disk_model(template, wave, param_mods, use_quad=False):
             local_sigma,
             param_mods[f"{prof.name}_q"],
             param_mods[f"{prof.name}_eccentricity"],
-            param_mods[f"{prof.name}_apocenter"],
+            apocenter_circ_mean,
             nu0,
         )
 
@@ -163,7 +169,9 @@ def disk_model(
                     log_norm_param_dist = dist.TransformedDistribution(
                         base_dist, transforms
                     )
-                    param_mods[samp_name] = numpyro.sample(samp_name, log_norm_param_dist)
+                    param_mods[samp_name] = numpyro.sample(
+                        samp_name, log_norm_param_dist
+                    )
                 else:
                     raise ValueError(
                         f"Invalid distribution: {param.distribution} for parameter {param.name}"
