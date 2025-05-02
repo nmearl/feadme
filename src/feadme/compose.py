@@ -9,7 +9,7 @@ import numpyro.distributions as dist
 
 from .models.disk import jax_integrate, quad_jax_integrate
 from .parser import Distribution, Template
-from numpyro.infer.reparam import TransformReparam, LocScaleReparam
+from numpyro.infer.reparam import TransformReparam, LocScaleReparam, CircularReparam
 
 
 ERR = float(np.finfo(np.float32).tiny)
@@ -17,7 +17,9 @@ c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
 
-def evaluate_disk_model(template, wave, param_mods, use_quad=False):
+def evaluate_disk_model(
+    template: Template, wave: jnp.ndarray, param_mods: dict, use_quad: bool = False
+):
     total_disk_flux = jnp.zeros_like(wave)
     total_line_flux = jnp.zeros_like(wave)
 
@@ -36,12 +38,6 @@ def evaluate_disk_model(template, wave, param_mods, use_quad=False):
 
         integrator = quad_jax_integrate if use_quad else jax_integrate
 
-        # Compute posterior for apocenter using circular statistics
-        apocenter_circ_mean = jnp.arctan2(
-            jnp.mean(jnp.sin(param_mods[f"{prof.name}_apocenter"])),
-            jnp.mean(jnp.cos(param_mods[f"{prof.name}_apocenter"])),
-        ) % (2 * jnp.pi)
-
         res = integrator(
             xi1,
             xi2,
@@ -52,7 +48,7 @@ def evaluate_disk_model(template, wave, param_mods, use_quad=False):
             local_sigma,
             param_mods[f"{prof.name}_q"],
             param_mods[f"{prof.name}_eccentricity"],
-            apocenter_circ_mean,
+            param_mods[f"{prof.name}_apocenter"],
             nu0,
         )
 
@@ -94,6 +90,7 @@ def disk_model(
     wave: jnp.ndarray,
     flux: jnp.ndarray | None = None,
     flux_err: jnp.ndarray | None = None,
+    use_quad: bool = False,
 ):
     param_mods = {}
 
@@ -103,7 +100,12 @@ def disk_model(
     for prof in template.all_profiles:
         for param in prof.independent:
             samp_name = f"{prof.name}_{param.name}"
-            reparam_config[samp_name] = TransformReparam()
+
+            if param.name == "apocenter":
+                # Use circular reparam for apocenter
+                reparam_config[f"{samp_name}_wrap"] = CircularReparam()
+            else:
+                reparam_config[samp_name] = TransformReparam()
 
     # Pre-compute all profiles to iterate over
     with numpyro.handlers.reparam(config=reparam_config):
@@ -111,7 +113,12 @@ def disk_model(
             for param in prof.independent:
                 samp_name = f"{prof.name}_{param.name}"
 
-                if param.distribution == Distribution.uniform:
+                if param.name == "apocenter":
+                    param_mods[f"{samp_name}_wrap"] = numpyro.sample(
+                        f"{samp_name}_wrap",
+                        dist.VonMises(0, 1),
+                    )
+                elif param.distribution == Distribution.uniform:
                     base_dist = dist.Uniform(0, 1)
                     transforms = [
                         dist.transforms.AffineTransform(
@@ -199,14 +206,22 @@ def disk_model(
         ),
     )
 
+    # Define outer radius for each disk profile
     for prof in template.disk_profiles:
         param_name = f"{prof.name}_outer_radius"
         ir = param_mods[f"{prof.name}_inner_radius"]
         dr = param_mods[f"{prof.name}_delta_radius"]
         param_mods[param_name] = numpyro.deterministic(param_name, ir + dr)
 
+    # Unwrap apocenter to the proper range
+    for prof in template.disk_profiles:
+        param_name = f"{prof.name}_apocenter"
+        param_mods[param_name] = numpyro.deterministic(
+            param_name, param_mods[f"{param_name}_wrap"] % (2 * jnp.pi)
+        )
+
     total_flux, total_disk_flux, total_line_flux = evaluate_disk_model(
-        template, wave, param_mods
+        template, wave, param_mods, use_quad
     )
 
     # Construct total error

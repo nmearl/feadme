@@ -7,6 +7,7 @@ import numpy as np
 from astropy.table import Table
 from loguru import logger
 from numpyro.infer import init_to_median
+from functools import partial
 
 from .compose import disk_model
 from .parser import Template
@@ -73,6 +74,12 @@ finfo = np.finfo(float)
     default=False,
     help="Display a progress bar during sampling.",
 )
+@click.option(
+    "--use-quad",
+    is_flag=True,
+    default=False,
+    help="Use quadrature rules in integration.",
+)
 def run(
     template_file: str,
     data_file: str = None,
@@ -83,6 +90,7 @@ def run(
     num_samples: int = 2000,
     num_chains: int = jax.local_device_count(),
     no_progress_bar: bool = True,
+    use_quad: bool = False,
 ):
     template_file = Path(template_file)
 
@@ -99,7 +107,7 @@ def run(
         # if "ZTF" not in str(template_path):
         #     continue
 
-        # if "ZTF18aacrkse" not in str(template_path):
+        # if "ZTF18aacajqc" not in str(template_path):
         #     continue
 
         # Load the template
@@ -142,8 +150,10 @@ def run(
         if not Path(local_output_dir).exists():
             Path(local_output_dir).mkdir(parents=True)
 
+        part_disk_model = partial(disk_model, use_quad=use_quad)
+
         nuts_sampler = NUTSSampler(
-            disk_model,
+            part_disk_model,
             template,
             wave,
             flux,
