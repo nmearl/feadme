@@ -23,6 +23,7 @@ class Distribution(str, Enum):
     normal = "normal"
     log_normal = "log_normal"
     half_normal = "half_normal"
+    circular = "circular"
 
 
 class Parameter(BaseModel):
@@ -48,7 +49,7 @@ class Parameter(BaseModel):
                 raise ValueError(
                     "For 'uniform' distribution, 'low' and 'high' parameters are required."
                 )
-        elif dist == "normal":
+        elif dist in ["normal", "circular"]:
             missing_params = [
                 param for param in ("loc", "scale") if values.get(param) is None
             ]

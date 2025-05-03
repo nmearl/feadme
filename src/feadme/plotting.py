@@ -44,6 +44,7 @@ def plot_results(
         color="C1",
     )
     fig.savefig(f"{output_dir}/hdi_plot.png")
+    plt.close(fig)
 
     fig, ax = plt.subplots()
     ax.errorbar(
@@ -77,7 +78,11 @@ def plot_results(
             continue
 
         var_dist = posterior_predictive_samples_transformed[var]
-        median = np.percentile(var_dist, 50, axis=0)
+
+        if var.endswith('apocenter'):
+            median = np.arctan2(np.mean(np.sin(var_dist)), np.mean(np.cos(var_dist))) % (2 * np.pi)
+        else:
+            median = np.percentile(var_dist, 50, axis=0)
 
         res_pars[var] = median
 
@@ -95,22 +100,25 @@ def plot_results(
 
     ax.legend()
     fig.savefig(f"{output_dir}/model_fit.png")
+    plt.close(fig)
+
+    names = [
+        x
+        for x in idata_transformed.posterior.keys()
+        if "_flux" not in x and "_base" not in x
+    ]
 
     fig = corner.corner(
         idata_transformed,
-        var_names=[
-            x
-            for x in idata_transformed.posterior.keys()
-            if "_flux" not in x and "_base" not in x
-        ],
-        labels=[
-            x
-            for x in idata_transformed.posterior.keys()
-            if "_flux" not in x and "_base" not in x
-        ],
+        var_names=names,
+        labels=names,
         quantiles=[0.16, 0.5, 0.84],
         smooth=1,
         show_titles=True,
+        axes_scale=[
+            "log" if "vel_width" in x or "radius" in x else "linear" for x in names
+        ],
     )
     fig.savefig(f"{output_dir}/corner_plot.png")
+    plt.close(fig)
     plt.close(fig)

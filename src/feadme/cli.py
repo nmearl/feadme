@@ -107,7 +107,7 @@ def run(
         # if "ZTF" not in str(template_path):
         #     continue
 
-        # if "ZTF18aacajqc" not in str(template_path):
+        # if "ZTF18aahfohe" not in str(template_path):  # ZTF18aahfohe
         #     continue
 
         # Load the template
@@ -169,8 +169,9 @@ def run(
         if not nuts_sampler.converged:
             nuts_sampler.sample(init_strategy=init_to_median(num_samples=1000))
             nuts_sampler.write_results()
-            nuts_sampler.plot_results()
         else:
             logger.info(f"{local_label} is already converged. Skipping sampling.")
+
+        nuts_sampler.plot_results()
 
         jax.clear_caches()

@@ -23,8 +23,8 @@ from .utils import dict_to_namedtuple
 finfo = np.finfo(float)
 
 
-def check_convergence(mcmc):
-    prior_summary = summary(mcmc.get_samples(), group_by_chain=False)
+def check_convergence(posterior_samples):
+    prior_summary = summary(posterior_samples, group_by_chain=False)
     pivot_prior_summary = {}
 
     for k, v in prior_summary.items():
@@ -94,13 +94,14 @@ class Sampler(ABC):
         self._progress_bar = progress_bar
 
         self._mcmc = None
+        self._posterior_samples = None
 
         path_exists = Path(f"{output_dir}/{label}.pkl").exists()
 
         if path_exists:
             logger.info(f"Loading existing MCMC sampler from {output_dir}/{label}.pkl")
             with open(f"{output_dir}/{label}.pkl", "rb") as f:
-                self._mcmc = pickle.load(f)
+                self._posterior_samples = pickle.load(f)
 
     @property
     @abstractmethod
@@ -130,10 +131,10 @@ class Sampler(ABC):
 
     @property
     def converged(self):
-        if self._mcmc is None:
+        if self._posterior_samples is None:
             return False
 
-        return check_convergence(self._mcmc)
+        return check_convergence(self._posterior_samples)
 
     @property
     def _idata_transformed(self):
@@ -164,9 +165,19 @@ class Sampler(ABC):
         def summarize_posterior(samples):
             summary = {}
             for param, values in samples.items():
-                median = jnp.median(values)
-                lower_bound = jnp.percentile(values, 16)
-                upper_bound = jnp.percentile(values, 86)
+                if param.endswith("apocenter"):
+                    median = np.arctan2(np.mean(np.sin(values)),
+                                np.mean(np.cos(values))) % (2 * np.pi)
+                    apo_rot = (values - median + np.pi) % (2 * np.pi)
+                    lower_bound_rot = np.percentile(apo_rot, 16)
+                    upper_bound_rot = np.percentile(apo_rot, 84)
+                    lower_bound = (lower_bound_rot - np.pi + median) % (2 * np.pi)
+                    upper_bound = (upper_bound_rot - np.pi + median) % (2 * np.pi)
+                else:
+                    median = jnp.median(values)
+                    lower_bound = jnp.percentile(values, 16)
+                    upper_bound = jnp.percentile(values, 86)
+
                 summary[param] = {
                     "median": median,
                     "16%": lower_bound,
@@ -204,7 +215,7 @@ class Sampler(ABC):
 
     def write_run(self):
         with open(f"{self._output_dir}/{self.label}.pkl", "wb") as f:
-            pickle.dump(self._mcmc, f)
+            pickle.dump(self._posterior_samples, f)
 
     def plot_results(self):
         plot_results(
@@ -224,7 +235,7 @@ class NUTSSampler(Sampler):
     def posterior_samples(self):
         return {
             k: v
-            for k, v in self._mcmc.get_samples().items()
+            for k, v in self._posterior_samples.items()
             if "_flux" not in k
             # and "_base" not in k
             # and "_decentered" not in k
@@ -248,8 +259,8 @@ class NUTSSampler(Sampler):
         converged = False
         conv_num = 0
 
-        if self._mcmc is not None:
-            converged = check_convergence(self._mcmc)
+        if self._posterior_samples is not None:
+            converged = check_convergence(self._posterior_samples)
 
         chain_method = "vectorized" if jax.local_device_count() == 1 else "parallel"
 
@@ -305,8 +316,9 @@ class NUTSSampler(Sampler):
             )
 
             self._mcmc.print_summary()
+            self._posterior_samples = self._mcmc.get_samples()
 
-            converged = check_convergence(self._mcmc)
+            converged = check_convergence(self._posterior_samples)
 
             if not converged:
                 conv_num += 1
