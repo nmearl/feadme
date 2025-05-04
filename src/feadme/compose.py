@@ -101,11 +101,11 @@ def disk_model(
         for param in prof.independent:
             samp_name = f"{prof.name}_{param.name}"
 
-            if param.distribution == Distribution.circular:
-                reparam_config[f"{samp_name}_x"] = LocScaleReparam()
-                reparam_config[f"{samp_name}_y"] = LocScaleReparam()
-            else:
-                reparam_config[samp_name] = TransformReparam()
+            # if param.distribution == Distribution.circular:
+            #     reparam_config[f"{samp_name}_x"] = LocScaleReparam()
+            #     reparam_config[f"{samp_name}_y"] = LocScaleReparam()
+            # else:
+            reparam_config[samp_name] = TransformReparam()
 
     # Pre-compute all profiles to iterate over
     with numpyro.handlers.reparam(config=reparam_config):
@@ -114,19 +114,15 @@ def disk_model(
                 samp_name = f"{prof.name}_{param.name}"
 
                 if param.distribution == Distribution.circular:
-                    # circ_param_dist = dist.VonMises(
-                    #     (param.loc + np.pi) % (2 * np.pi) - np.pi,
-                    #     1 / ((jnp.pi / 2) ** 2),
-                    # )
-                    uniform_x_dist = dist.Normal(0, 1)
+                    circ_x_dist = dist.Normal(0, 1)
                     param_mods[f"{samp_name}_x"] = numpyro.sample(
                         f"{samp_name}_x",
-                        uniform_x_dist,
+                        circ_x_dist,
                     )
-                    uniform_y_dist = dist.Normal(0, 1)
+                    circ_y_dist = dist.Normal(0, 1)
                     param_mods[f"{samp_name}_y"] = numpyro.sample(
                         f"{samp_name}_y",
-                        uniform_y_dist,
+                        circ_y_dist,
                     )
                 elif param.distribution == Distribution.uniform:
                     base_dist = dist.Uniform(0, 1)
