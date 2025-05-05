@@ -123,10 +123,10 @@ def disk_model(
                         # )
                         param_mods[f"{samp_name}_x"] = numpyro.sample(
                             f"{samp_name}_x",
-                            dist.Uniform(-1, 1))
+                            dist.Normal(0, 1))
                         param_mods[f"{samp_name}_y"] = numpyro.sample(
                             f"{samp_name}_y",
-                            dist.Uniform(-1, 1))
+                            dist.Normal(0, 1))
                     else:
                         base_dist = dist.Uniform(0, 1)
                         transforms = [
