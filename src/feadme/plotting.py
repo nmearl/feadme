@@ -7,6 +7,7 @@ import astropy.uncertainty as unc
 import corner
 import arviz as az
 import numpy as np
+from scipy.stats import gaussian_kde
 
 from .compose import evaluate_disk_model
 
@@ -16,7 +17,7 @@ az.rcParams["plot.max_subplots"] = 200
 def plot_results(
     template,
     output_dir,
-    posterior_predictive_samples_transformed,
+    idata,
     idata_transformed,
     wave,
     flux,
@@ -24,8 +25,8 @@ def plot_results(
     label,
 ):
     axes = az.plot_trace(
-        idata_transformed,
-        var_names=list(idata_transformed.posterior.keys()),
+        idata,
+        var_names=[x for x in idata.posterior.keys() if "_flux" not in x],
         compact=True,
         backend_kwargs={"layout": "constrained"},
     )
@@ -60,11 +61,11 @@ def plot_results(
     )
 
     for var in ["disk_flux", "line_flux"]:
-        var_dist = posterior_predictive_samples_transformed[var]
+        var_dist = idata_transformed["posterior_predictive"][var].squeeze()
         median = np.percentile(var_dist, 50, axis=0)
         ax.plot(wave, median, label=f"{var}")
 
-    obs_dist = posterior_predictive_samples_transformed["total_flux"]
+    obs_dist = idata_transformed["posterior_predictive"]["total_flux"].squeeze()
     median = np.percentile(obs_dist, 50, axis=0)
     lower_lim = np.percentile(obs_dist, 16, axis=0)
     upper_lim = np.percentile(obs_dist, 84, axis=0)
@@ -73,14 +74,17 @@ def plot_results(
 
     res_pars = {}
 
-    for var in posterior_predictive_samples_transformed.keys():
+    for var in idata_transformed["posterior_predictive"].keys():
         if "_flux" in var:
             continue
 
-        var_dist = posterior_predictive_samples_transformed[var]
+        var_dist = idata_transformed["posterior_predictive"][var].squeeze()
 
         if var.endswith('apocenter'):
-            median = np.arctan2(np.mean(np.sin(var_dist)), np.mean(np.cos(var_dist))) % (2 * np.pi)
+            # mean = np.arctan2(np.mean(np.sin(var_dist)), np.mean(np.cos(var_dist))) % (2 * np.pi)
+            kde = gaussian_kde(var_dist)
+            x_grid = np.linspace(0, 2 * np.pi, 1000)
+            median = x_grid[np.argmax(kde(x_grid))]
         else:
             median = np.percentile(var_dist, 50, axis=0)
 
@@ -105,7 +109,7 @@ def plot_results(
     names = [
         x
         for x in idata_transformed.posterior.keys()
-        if "_flux" not in x and "_base" not in x
+        if "_flux" not in x and "_base" not in x and "_offset" not in x
     ]
 
     fig = corner.corner(

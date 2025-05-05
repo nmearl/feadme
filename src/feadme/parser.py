@@ -22,8 +22,6 @@ class Distribution(str, Enum):
     log_uniform = "log_uniform"
     normal = "normal"
     log_normal = "log_normal"
-    half_normal = "half_normal"
-    circular = "circular"
 
 
 class Parameter(BaseModel):
@@ -39,17 +37,27 @@ class Parameter(BaseModel):
     high: Optional[float] = None
     loc: Optional[float] = None
     scale: Optional[float] = None
+    circular: Optional[bool] = False
 
     @model_validator(mode="before")
     def validate_parameters(cls, values):
         dist = values.get("distribution")
 
-        if dist in ["uniform", "log_uniform"]:
+        if dist in ["uniform"]:
             if values.get("low") is None or values.get("high") is None:
                 raise ValueError(
                     "For 'uniform' distribution, 'low' and 'high' parameters are required."
                 )
-        elif dist in ["normal", "circular"]:
+        if dist in ["log_uniform"]:
+            if values.get("low") is None or values.get("high") is None:
+                raise ValueError(
+                    "For 'log_uniform' distribution, 'low' and 'high' parameters are required."
+                )
+            if values.get("circular"):
+                raise ValueError(
+                    "'circular' parameter is not supported for 'log_uniform' distribution."
+                )
+        elif dist in ["normal"]:
             missing_params = [
                 param for param in ("loc", "scale") if values.get(param) is None
             ]
@@ -62,10 +70,9 @@ class Parameter(BaseModel):
                 raise ValueError(
                     "For 'lognormal' distribution, 'loc' and 'scale' parameters are required."
                 )
-        elif dist == "half_normal":
-            if values.get("scale") is None:
+            if values.get("circular"):
                 raise ValueError(
-                    "For 'half_normal' distribution, 'scale' parameter is required."
+                    "'circular' parameter is not supported for 'lognormal' distribution."
                 )
 
         return values

@@ -165,8 +165,8 @@ def jax_integrate(
     #     operand=None,
     # )
 
-    xi = jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi)
-    phi = jnp.linspace(phi1, phi2, N_phi)
+    xi = jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi).squeeze()
+    phi = jnp.linspace(phi1, phi2, N_phi).squeeze()
 
     XI, PHI = jnp.meshgrid(
         xi,

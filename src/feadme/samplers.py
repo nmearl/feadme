@@ -1,21 +1,22 @@
 import pickle
+from abc import ABC, abstractmethod
 from datetime import date
 from pathlib import Path
-from abc import ABC, abstractmethod
 
 import arviz as az
 import blackjax
-from blackjax.util import run_inference_algorithm
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from astropy.table import Table
 from astropy.time import Time
+from blackjax.util import run_inference_algorithm
+from loguru import logger
 from numpyro.diagnostics import summary
 from numpyro.infer import MCMC, NUTS, init_to_median
-from numpyro.infer.util import initialize_model, Predictive
-from loguru import logger
+from numpyro.infer.util import Predictive, initialize_model
+from scipy.stats import gaussian_kde
 
 from .plotting import plot_results
 from .utils import dict_to_namedtuple
@@ -23,47 +24,25 @@ from .utils import dict_to_namedtuple
 finfo = np.finfo(float)
 
 
-def check_convergence(posterior_samples):
-    prior_summary = summary(posterior_samples, group_by_chain=False)
-    pivot_prior_summary = {}
-
-    for k, v in prior_summary.items():
-        if "disk_flux" in k or "line_flux" in k or "_base" not in k:
-            continue
-
-        pivot_prior_summary.setdefault("param", []).append(k)
-        pivot_prior_summary.setdefault("mean", []).append(v["mean"])
-        pivot_prior_summary.setdefault("std", []).append(v["std"])
-        pivot_prior_summary.setdefault("n_eff", []).append(v["n_eff"])
-        pivot_prior_summary.setdefault("r_hat", []).append(v["r_hat"])
-
-    pivot_prior_summary = pd.DataFrame(pivot_prior_summary)
-    logger.info(f"Average R_hat values: {pivot_prior_summary['r_hat'].mean()}")
-
-    return 0.99 <= pivot_prior_summary["r_hat"].mean() < 1.01
-
-
 class Sampler(ABC):
     def __init__(
         self,
-        model,
-        template,
-        wave,
-        flux,
-        flux_err,
-        output_dir,
-        label,
-        num_warmup,
-        num_samples,
-        num_chains,
+        model: callable,
+        template: object,
+        wave: np.ndarray,
+        flux: np.ndarray,
+        flux_err: np.ndarray,
+        output_dir: str,
+        label: str,
+        num_warmup: int,
+        num_samples: int,
+        num_chains: int,
         *,
-        rng_key=None,
-        progress_bar=True,
+        rng_key: jax.random.PRNGKey = None,
+        progress_bar: bool = True,
     ):
         self._model = model
-        self._template = (
-            template  # dict_to_namedtuple("NTTemplate", template.model_dump())
-        )
+        self._template = template
 
         # Construct masks
         mask = [
@@ -91,17 +70,16 @@ class Sampler(ABC):
             if rng_key is not None
             else jax.random.key(int(date.today().strftime("%Y%m%d")))
         )
+        self._rng_keys = jax.random.split(self._rng_key, num_chains)
         self._progress_bar = progress_bar
 
-        self._mcmc = None
-        self._posterior_samples = None
+        self._idata = None
 
-        path_exists = Path(f"{output_dir}/{label}.pkl").exists()
+        path_exists = Path(f"{output_dir}/{label}.nc").exists()
 
         if path_exists:
-            logger.info(f"Loading existing MCMC sampler from {output_dir}/{label}.pkl")
-            with open(f"{output_dir}/{label}.pkl", "rb") as f:
-                self._posterior_samples = pickle.load(f)
+            logger.info(f"Loading existing MCMC sampler from {output_dir}/{label}.nc")
+            self._idata = az.from_netcdf(f"{output_dir}/{label}.nc")
 
     @property
     @abstractmethod
@@ -131,10 +109,33 @@ class Sampler(ABC):
 
     @property
     def converged(self):
-        if self._posterior_samples is None:
+        if self._idata is None:
             return False
+        
+        prior_summary = summary(self._idata.to_dict()['posterior'], group_by_chain=True)
+        pivot_prior_summary = {}
 
-        return check_convergence(self._posterior_samples)
+        # true_r_hat = az.rhat(self._idata, method="rank")
+
+        for k, v in prior_summary.items():
+            if "disk_flux" in k or "line_flux" in k or "_base" not in k and "_unwrapped" not in k:
+                continue
+
+            pivot_prior_summary.setdefault("param", []).append(k)
+            pivot_prior_summary.setdefault("mean", []).append(v["mean"])
+            pivot_prior_summary.setdefault("std", []).append(v["std"])
+            pivot_prior_summary.setdefault("n_eff", []).append(v["n_eff"])
+            pivot_prior_summary.setdefault("r_hat", []).append(v["r_hat"])
+            # pivot_prior_summary.setdefault("true_r_hat", []).append(true_r_hat[k])
+
+        pivot_prior_summary = pd.DataFrame(pivot_prior_summary)
+
+        est_r_hat = pivot_prior_summary["r_hat"].mean()
+        # true_r_hat = pivot_prior_summary["true_r_hat"].mean()
+
+        logger.info(f"Average R_hat values: {est_r_hat}")
+
+        return 0.99 <= est_r_hat < 1.01
 
     @property
     def _idata_transformed(self):
@@ -158,6 +159,7 @@ class Sampler(ABC):
         ]
 
     def write_results(self):
+        """Write the results of the MCMC run to a CSV file."""
         fit_summary = summary(self.posterior_samples, group_by_chain=False)
 
         param_dict = {}
@@ -166,13 +168,17 @@ class Sampler(ABC):
             summary = {}
             for param, values in samples.items():
                 if param.endswith("apocenter"):
-                    median = np.arctan2(np.mean(np.sin(values)),
-                                np.mean(np.cos(values))) % (2 * np.pi)
-                    apo_rot = (values - median + np.pi) % (2 * np.pi)
+                    apo_mean = np.arctan2(
+                        np.mean(np.sin(values)), np.mean(np.cos(values))
+                    ) % (2 * np.pi)
+                    apo_rot = (values - apo_mean + np.pi) % (2 * np.pi)
                     lower_bound_rot = np.percentile(apo_rot, 16)
                     upper_bound_rot = np.percentile(apo_rot, 84)
-                    lower_bound = (lower_bound_rot - np.pi + median) % (2 * np.pi)
-                    upper_bound = (upper_bound_rot - np.pi + median) % (2 * np.pi)
+                    lower_bound = (lower_bound_rot - np.pi + apo_mean) % (2 * np.pi)
+                    upper_bound = (upper_bound_rot - np.pi + apo_mean) % (2 * np.pi)
+                    kde = gaussian_kde(values)
+                    x_grid = np.linspace(0, 2 * np.pi, 1000)
+                    median = x_grid[np.argmax(kde(x_grid))]
                 else:
                     median = jnp.median(values)
                     lower_bound = jnp.percentile(values, 16)
@@ -214,14 +220,18 @@ class Sampler(ABC):
         )
 
     def write_run(self):
-        with open(f"{self._output_dir}/{self.label}.pkl", "wb") as f:
-            pickle.dump(self._posterior_samples, f)
+        """Write the MCMC run to a netcdf file."""
+        az.to_netcdf(
+            self._idata,
+            f"{self._output_dir}/{self.label}.nc",
+        )
 
     def plot_results(self):
+        """Plot the results of the MCMC run."""
         plot_results(
             self._template,
             self._output_dir,
-            self.posterior_predictive_samples,
+            self._idata,
             self._idata_transformed,
             self._wave,
             self._flux,
@@ -234,12 +244,10 @@ class NUTSSampler(Sampler):
     @property
     def posterior_samples(self):
         return {
-            k: v
-            for k, v in self._posterior_samples.items()
-            if "_flux" not in k
-            # and "_base" not in k
-            # and "_decentered" not in k
-            and k not in self.fixed_fields
+            var: np.array(self._idata.posterior[var]).reshape(
+                -1, *self._idata.posterior[var].shape[2:]
+            )
+            for var in self._idata.posterior.data_vars
         }
 
     @property
@@ -256,11 +264,12 @@ class NUTSSampler(Sampler):
         )
 
     def sample(self, init_strategy=init_to_median, dense_mass=True, **kwargs):
+        mcmc = None
         converged = False
         conv_num = 0
 
-        if self._posterior_samples is not None:
-            converged = check_convergence(self._posterior_samples)
+        if self._idata is not None:
+            converged = self.converged
 
         chain_method = "vectorized" if jax.local_device_count() == 1 else "parallel"
 
@@ -276,10 +285,10 @@ class NUTSSampler(Sampler):
         num_samples = self._num_samples
 
         while not converged:
-            if self._mcmc is None:
+            if mcmc is None:
                 logger.debug(f"Constructing MCMC for {self._label}.")
 
-                rng_key = self._rng_key
+                rng_keys = self._rng_keys
 
                 nuts_kernel = NUTS(
                     self._model,
@@ -292,7 +301,7 @@ class NUTSSampler(Sampler):
                     **kwargs,
                 )
 
-                self._mcmc = MCMC(
+                mcmc = MCMC(
                     nuts_kernel,
                     num_warmup=num_warmup,
                     num_samples=num_samples,
@@ -304,21 +313,21 @@ class NUTSSampler(Sampler):
                 logger.info(
                     f"R_hat values are not converged. Re-running MCMC ({conv_num})"
                 )
-                self._mcmc.post_warmup_state = self._mcmc.last_state
-                rng_key = self._mcmc.post_warmup_state.rng_key
+                mcmc.post_warmup_state = mcmc.last_state
+                rng_keys = mcmc.post_warmup_state.rng_key
 
-            self._mcmc.run(
-                rng_key,
+            mcmc.run(
+                rng_keys,
                 template=self._template,
                 wave=jnp.asarray(self._wave),
                 flux=jnp.asarray(self._flux),
                 flux_err=jnp.asarray(self._flux_err),
             )
 
-            self._mcmc.print_summary()
-            self._posterior_samples = self._mcmc.get_samples()
+            mcmc.print_summary()
+            self._idata = az.from_numpyro(mcmc)
 
-            converged = check_convergence(self._posterior_samples)
+            converged = self.converged
 
             if not converged:
                 conv_num += 1
@@ -330,7 +339,7 @@ class NUTSSampler(Sampler):
                         f"Convergence failed for {self._label} after {conv_num} attempts. "
                         f"Retrying with double the samples."
                     )
-                    self._mcmc = None
+                    mcmc = None
                     num_warmup *= 2
                     num_samples *= 2
                 elif conv_num >= 3:
@@ -344,86 +353,3 @@ class NUTSSampler(Sampler):
         logger.info(f"Finished sampling {self._label} in {delta_time}.")
 
         self.write_run()
-
-
-class NUTSWithAdaptationSampler(Sampler):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        self._posterior_samples = None
-        self._posterior_samples_transformed = None
-        self._posterior_predictive_samples_transformed = None
-
-    @staticmethod
-    def inference_loop(rng_key, kernel, initial_state, num_samples):
-        @jax.jit
-        def one_step(state, rng_key):
-            state, info = kernel(rng_key, state)
-            return state, (state, info)
-
-        keys = jax.random.split(rng_key, num_samples)
-        _, (states, infos) = jax.lax.scan(one_step, initial_state, keys)
-
-        return states, (
-            infos.acceptance_rate,
-            infos.is_divergent,
-            infos.num_integration_steps,
-        )
-
-    @property
-    def posterior_samples(self):
-        return self._posterior_samples_transformed
-
-    @property
-    def posterior_predictive_samples(self):
-        return self._posterior_predictive_samples_transformed
-
-    def sample(self):
-        model_kwargs = {
-            "template": self._template,
-            "wave": jnp.asarray(self._wave),
-            "flux": jnp.asarray(self._flux),
-            "flux_err": jnp.asarray(self._flux_err),
-        }
-
-        rng_key, init_key = jax.random.split(self._rng_key)
-        init_params, potential_fn_gen, postprocess_fn, *_ = initialize_model(
-            init_key,
-            self._model,
-            model_args=tuple(model_kwargs.values()),
-            dynamic_args=True,
-        )
-
-        logdensity_fn = lambda position: -potential_fn_gen(*model_kwargs.values())(
-            position
-        )
-        initial_position = init_params.z
-
-        adapt = blackjax.window_adaptation(
-            blackjax.nuts, logdensity_fn, target_acceptance_rate=0.8
-        )
-
-        rng_key, warmup_key = jax.random.split(rng_key)
-        (last_state, parameters), _ = adapt.run(
-            warmup_key, initial_position, self._num_warmup
-        )
-        kernel = blackjax.nuts(logdensity_fn, **parameters)
-
-        rng_key, sample_key = jax.random.split(rng_key)
-        states, infos = run_inference_algorithm(
-            sample_key, kernel, self._num_samples, last_state, progress_bar=True
-        )
-
-        _ = states.position["halpha_disk_center_base"].block_until_ready()
-
-        logger.info(f"Average acceptance rate: {infos[0]:.2f}")
-        logger.info(f"There were {100 * infos[1]:.2f}% divergent transitions")
-
-        self._posterior_samples_transformed = jax.vmap(
-            postprocess_fn(*model_kwargs.values())
-        )(states.position)
-
-        self._posterior_predictive_samples_transformed = Predictive(
-            model=self._model,
-            posterior_samples=self._posterior_samples_transformed,
-        )(rng_key, **model_kwargs)
