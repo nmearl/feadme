@@ -107,7 +107,7 @@ def run(
         # if "ZTF" not in str(template_path):
         #     continue
 
-        # if "ZTF18aahfohe" not in str(template_path):  # ZTF18aahfohe
+        # if "ZTF18aaaovpz" not in str(template_path):  # ZTF18aahfohe
         #     continue
 
         # Load the template
@@ -166,7 +166,7 @@ def run(
             progress_bar=not no_progress_bar,
         )
 
-        if not nuts_sampler.converged:
+        if not nuts_sampler.check_convergence():
             nuts_sampler.sample(init_strategy=init_to_median(num_samples=1000))
             nuts_sampler.write_results()
         else:
