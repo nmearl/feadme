@@ -104,8 +104,8 @@ def disk_model(
             if param.circular:
                 # reparam_config[f"{samp_name}_x"] = LocScaleReparam()
                 # reparam_config[f"{samp_name}_y"] = LocScaleReparam()
-                reparam_config[f"{samp_name}_wrap"] = CircularReparam()
-                # pass
+                # reparam_config[f"{samp_name}_wrap"] = CircularReparam()
+                pass
             else:
                 reparam_config[samp_name] = TransformReparam()
 
@@ -117,10 +117,16 @@ def disk_model(
 
                 if param.distribution == Distribution.uniform:
                     if param.circular:
-                        param_mods[f"{samp_name}_wrap"] = numpyro.sample(
-                            f"{samp_name}_wrap",
-                            dist.VonMises(loc=0, concentration=1e-6),
-                        )
+                        # param_mods[f"{samp_name}_wrap"] = numpyro.sample(
+                        #     f"{samp_name}_wrap",
+                        #     dist.VonMises(loc=0, concentration=1e-6),
+                        # )
+                        param_mods[f"{samp_name}_x"] = numpyro.sample(
+                            f"{samp_name}_x",
+                            dist.Uniform(-1, 1))
+                        param_mods[f"{samp_name}_y"] = numpyro.sample(
+                            f"{samp_name}_y",
+                            dist.Uniform(-1, 1))
                     else:
                         base_dist = dist.Uniform(0, 1)
                         transforms = [
@@ -151,13 +157,19 @@ def disk_model(
                     )
                 elif param.distribution == Distribution.normal:
                     if param.circular:
-                        param_mods[f"{samp_name}_wrap"] = numpyro.sample(
-                            f"{samp_name}_wrap",
-                            dist.VonMises(
-                                loc=(param.loc + jnp.pi) % (2 * jnp.pi) - jnp.pi,
-                                concentration=3 / (param.scale**2),
-                            ),
-                        )
+                        # param_mods[f"{samp_name}_wrap"] = numpyro.sample(
+                        #     f"{samp_name}_wrap",
+                        #     dist.VonMises(
+                        #         loc=(param.loc + jnp.pi) % (2 * jnp.pi) - jnp.pi,
+                        #         concentration=3 / (param.scale**2),
+                        #     ),
+                        # )
+                        param_mods[f"{samp_name}_x"] = numpyro.sample(
+                            f"{samp_name}_x",
+                            dist.Normal(0, 1))
+                        param_mods[f"{samp_name}_y"] = numpyro.sample(
+                            f"{samp_name}_y",
+                            dist.Normal(0, 1))
                     else:
                         base_dist = dist.TruncatedNormal(
                             0,
@@ -234,8 +246,13 @@ def disk_model(
         for param in prof.independent:
             if param.circular:
                 param_name = f"{prof.name}_{param.name}"
+                # param_mods[param_name] = numpyro.deterministic(
+                #     param_name, param_mods[f"{param_name}_wrap"] % (2 * jnp.pi)
+                # )
                 param_mods[param_name] = numpyro.deterministic(
-                    param_name, param_mods[f"{param_name}_wrap"] % (2 * jnp.pi)
+                    param_name,
+                    jnp.arctan2(param_mods[f"{param_name}_y"], param_mods[f"{param_name}_x"])
+                    % (2 * jnp.pi),
                 )
 
     total_flux, total_disk_flux, total_line_flux = evaluate_disk_model(

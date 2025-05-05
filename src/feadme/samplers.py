@@ -1,25 +1,22 @@
-import pickle
 from abc import ABC, abstractmethod
 from datetime import date
 from pathlib import Path
 
 import arviz as az
-import blackjax
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from astropy.table import Table
 from astropy.time import Time
-from blackjax.util import run_inference_algorithm
 from loguru import logger
 from numpyro.diagnostics import summary
 from numpyro.infer import MCMC, NUTS, init_to_median
-from numpyro.infer.util import Predictive, initialize_model
+from numpyro.infer.util import Predictive
 from scipy.stats import gaussian_kde
 
 from .plotting import plot_results
-from .utils import dict_to_namedtuple
+from .utils import circular_rhat
 
 finfo = np.finfo(float)
 
@@ -107,60 +104,35 @@ class Sampler(ABC):
     def redshift(self):
         return self._redshift
 
-    @property
-    def converged(self):
+    def _fitting_summary(self):
         if self._idata is None:
-            return False
-        
-        prior_summary = summary(self._idata.to_dict()['posterior'], group_by_chain=True)
+            return None
+
+        prior_summary = summary(self._idata.to_dict()["posterior"], group_by_chain=True)
         pivot_prior_summary = {}
 
-        # true_r_hat = az.rhat(self._idata, method="rank")
-
         for k, v in prior_summary.items():
-            if "disk_flux" in k or "line_flux" in k or "_base" not in k and "_unwrapped" not in k:
+            if "disk_flux" in k or "line_flux" in k or "_base" in k or "_wrap" in k:
                 continue
 
             pivot_prior_summary.setdefault("param", []).append(k)
             pivot_prior_summary.setdefault("mean", []).append(v["mean"])
             pivot_prior_summary.setdefault("std", []).append(v["std"])
             pivot_prior_summary.setdefault("n_eff", []).append(v["n_eff"])
-            pivot_prior_summary.setdefault("r_hat", []).append(v["r_hat"])
-            # pivot_prior_summary.setdefault("true_r_hat", []).append(true_r_hat[k])
+
+            if "apocenter" in k:
+                pivot_prior_summary.setdefault("r_hat", []).append(
+                    circular_rhat(self._idata.posterior[k].values)
+                )
+            else:
+                pivot_prior_summary.setdefault("r_hat", []).append(v["r_hat"])
 
         pivot_prior_summary = pd.DataFrame(pivot_prior_summary)
 
-        est_r_hat = pivot_prior_summary["r_hat"].mean()
-        # true_r_hat = pivot_prior_summary["true_r_hat"].mean()
+        return pivot_prior_summary
 
-        logger.info(f"Average R_hat values: {est_r_hat}")
-
-        return 0.99 <= est_r_hat < 1.01
-
-    @property
-    def _idata_transformed(self):
-        return az.from_dict(
-            posterior={
-                k: np.expand_dims(a=np.asarray(v), axis=0)
-                for k, v in self.posterior_samples.items()
-            },
-            posterior_predictive={
-                k: np.expand_dims(a=np.asarray(v), axis=0)
-                for k, v in self.posterior_predictive_samples.items()
-            },
-        )
-
-    @property
-    def fixed_fields(self):
-        return [
-            f"{prof.name}_{param.name}"
-            for prof in self._template.disk_profiles + self._template.line_profiles
-            for param in prof.fixed
-        ]
-
-    def write_results(self):
-        """Write the results of the MCMC run to a CSV file."""
-        fit_summary = summary(self.posterior_samples, group_by_chain=False)
+    def _results_summary(self):
+        fit_summary = self._fitting_summary().set_index("param").to_dict(orient="index")
 
         param_dict = {}
 
@@ -213,6 +185,48 @@ class Sampler(ABC):
 
         param_tab = Table(param_dict)
 
+        return param_tab
+
+    def check_convergence(self, show=True):
+        pivot_prior_summary = self._fitting_summary()
+
+        if pivot_prior_summary is None:
+            return False
+        
+        if show:
+            print(pivot_prior_summary.to_markdown())
+
+        est_r_hat = pivot_prior_summary["r_hat"].mean()
+
+        logger.info(f"Average R_hat values: {est_r_hat}")
+
+        return 0.99 <= est_r_hat < 1.01
+
+    @property
+    def _idata_transformed(self):
+        return az.from_dict(
+            posterior={
+                k: np.expand_dims(a=np.asarray(v), axis=0)
+                for k, v in self.posterior_samples.items()
+            },
+            posterior_predictive={
+                k: np.expand_dims(a=np.asarray(v), axis=0)
+                for k, v in self.posterior_predictive_samples.items()
+            },
+        )
+
+    @property
+    def fixed_fields(self):
+        return [
+            f"{prof.name}_{param.name}"
+            for prof in self._template.disk_profiles + self._template.line_profiles
+            for param in prof.fixed
+        ]
+
+    def write_results(self):
+        """Write the results of the MCMC run to a CSV file."""
+        param_tab = self._results_summary()
+
         param_tab.write(
             f"{self._output_dir}/disk_param_results.csv",
             format="ascii.csv",
@@ -233,6 +247,7 @@ class Sampler(ABC):
             self._output_dir,
             self._idata,
             self._idata_transformed,
+            self._results_summary(),
             self._wave,
             self._flux,
             self._flux_err,
@@ -269,7 +284,8 @@ class NUTSSampler(Sampler):
         conv_num = 0
 
         if self._idata is not None:
-            converged = self.converged
+            converged = self.check_convergence(show=False)
+            self.plot_results()
 
         chain_method = "vectorized" if jax.local_device_count() == 1 else "parallel"
 
@@ -324,10 +340,10 @@ class NUTSSampler(Sampler):
                 flux_err=jnp.asarray(self._flux_err),
             )
 
-            mcmc.print_summary()
+            # mcmc.print_summary()
             self._idata = az.from_numpyro(mcmc)
 
-            converged = self.converged
+            converged = self.check_convergence()
 
             if not converged:
                 conv_num += 1

@@ -7,7 +7,6 @@ import astropy.uncertainty as unc
 import corner
 import arviz as az
 import numpy as np
-from scipy.stats import gaussian_kde
 
 from .compose import evaluate_disk_model
 
@@ -19,6 +18,7 @@ def plot_results(
     output_dir,
     idata,
     idata_transformed,
+    results_summary,
     wave,
     flux,
     flux_err,
@@ -74,21 +74,11 @@ def plot_results(
 
     res_pars = {}
 
-    for var in idata_transformed["posterior_predictive"].keys():
+    for var in results_summary['param']:
         if "_flux" in var:
             continue
 
-        var_dist = idata_transformed["posterior_predictive"][var].squeeze()
-
-        if var.endswith('apocenter'):
-            # mean = np.arctan2(np.mean(np.sin(var_dist)), np.mean(np.cos(var_dist))) % (2 * np.pi)
-            kde = gaussian_kde(var_dist)
-            x_grid = np.linspace(0, 2 * np.pi, 1000)
-            median = x_grid[np.argmax(kde(x_grid))]
-        else:
-            median = np.percentile(var_dist, 50, axis=0)
-
-        res_pars[var] = median
+        res_pars[var] = results_summary[results_summary['param'] == var]['value'].value[0]
 
     res_flux, res_disk_flux, res_line_flux = evaluate_disk_model(
         template, wave, res_pars

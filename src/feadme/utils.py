@@ -1,6 +1,7 @@
 from jax.scipy.stats import norm
 import jax.numpy as jnp
 from collections import namedtuple
+import numpy as np
 
 from numpyro.distributions import constraints
 from numpyro.distributions.transforms import Transform
@@ -59,7 +60,7 @@ class BaseTenTransform(Transform):
 
     def __call__(self, x):
         # XXX consider to clamp from below for stability if necessary
-        return 10 ** x
+        return 10**x
 
     def _inverse(self, y):
         return jnp.log10(y)
@@ -74,3 +75,32 @@ class BaseTenTransform(Transform):
         if not isinstance(other, BaseTenTransform):
             return False
         return self.domain == other.domain
+
+
+def circular_rhat(theta_chains):
+    """
+    theta_chains: shape (n_chains, n_samples) with values ∈ [0, 2π) or [-π, π)
+    """
+    n_chains, n_samples = theta_chains.shape
+
+    sin_vals = np.sin(theta_chains)
+    cos_vals = np.cos(theta_chains)
+
+    # Mean per chain
+    mean_sin = sin_vals.mean(axis=1)
+    mean_cos = cos_vals.mean(axis=1)
+
+    # Resultant vector length per chain
+    R_chain = np.sqrt(mean_sin**2 + mean_cos**2)
+
+    # Overall mean resultant vector length
+    mean_sin_total = sin_vals.mean()
+    mean_cos_total = cos_vals.mean()
+    R_total = np.sqrt(mean_sin_total**2 + mean_cos_total**2)
+
+    # Between-chain and within-chain analogs
+    B = np.var(R_chain, ddof=1)
+    W = np.mean(1 - R_chain)
+
+    # Circular analog of Gelman-Rubin statistic
+    return np.sqrt((W + B) / W)
