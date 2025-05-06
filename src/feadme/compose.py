@@ -95,15 +95,13 @@ def disk_model(
     param_mods = {}
 
     # Build re-parameterization configuration more efficiently
-    reparam_config = {}
+    reparam_config = {"white_noise": TransformReparam()}
 
     for prof in template.all_profiles:
         for param in prof.independent:
             samp_name = f"{prof.name}_{param.name}"
 
             if param.circular:
-                # reparam_config[f"{samp_name}_x"] = LocScaleReparam()
-                # reparam_config[f"{samp_name}_y"] = LocScaleReparam()
                 # reparam_config[f"{samp_name}_wrap"] = CircularReparam()
                 pass
             else:
@@ -123,10 +121,12 @@ def disk_model(
                         # )
                         param_mods[f"{samp_name}_x"] = numpyro.sample(
                             f"{samp_name}_x",
-                            dist.Normal(0, 1))
+                            dist.Normal(0, 1)
+                        )
                         param_mods[f"{samp_name}_y"] = numpyro.sample(
                             f"{samp_name}_y",
-                            dist.Normal(0, 1))
+                            dist.Normal(0, 1)
+                        )
                     else:
                         base_dist = dist.Uniform(0, 1)
                         transforms = [
@@ -161,15 +161,17 @@ def disk_model(
                         #     f"{samp_name}_wrap",
                         #     dist.VonMises(
                         #         loc=(param.loc + jnp.pi) % (2 * jnp.pi) - jnp.pi,
-                        #         concentration=3 / (param.scale**2),
+                        #         concentration=2 / (param.scale**2),
                         #     ),
                         # )
                         param_mods[f"{samp_name}_x"] = numpyro.sample(
                             f"{samp_name}_x",
-                            dist.Normal(0, 1))
+                            dist.Normal(jnp.cos(param.loc), 1)
+                        )
                         param_mods[f"{samp_name}_y"] = numpyro.sample(
                             f"{samp_name}_y",
-                            dist.Normal(0, 1))
+                            dist.Normal(jnp.sin(param.loc), 1)
+                        )
                     else:
                         base_dist = dist.TruncatedNormal(
                             0,
@@ -212,6 +214,17 @@ def disk_model(
                         f"Invalid distribution: {param.distribution} for parameter {param.name}"
                     )
 
+        # Sample white noise
+        base_dist = dist.Uniform(0, 1)
+        transforms = [
+            dist.transforms.AffineTransform(
+                template.white_noise.low,
+                template.white_noise.high - template.white_noise.low,
+            )
+        ]
+        unif_param_dist = dist.TransformedDistribution(base_dist, transforms)
+        white_noise = numpyro.sample("white_noise", unif_param_dist)
+
     for prof in template.all_profiles:
         # Sample all shared parameters
         for param in prof.shared:
@@ -226,14 +239,6 @@ def disk_model(
                 f"{prof.name}_{param.name}", param.value
             )
 
-    # Sample white noise
-    white_noise = numpyro.sample(
-        "white_noise",
-        numpyro.distributions.Uniform(
-            template.white_noise.low, template.white_noise.high
-        ),
-    )
-
     # Define outer radius for each disk profile
     for prof in template.disk_profiles:
         param_name = f"{prof.name}_outer_radius"
@@ -246,14 +251,15 @@ def disk_model(
         for param in prof.independent:
             if param.circular:
                 param_name = f"{prof.name}_{param.name}"
+                x = param_mods[f"{param_name}_x"]
+                y = param_mods[f"{param_name}_y"]
+                r = jnp.sqrt(x**2 + y**2) + 1e-6
+                param_mods[param_name] = numpyro.deterministic(
+                    param_name, jnp.arctan2(y / r, x / r) % (2 * jnp.pi)
+                )
                 # param_mods[param_name] = numpyro.deterministic(
                 #     param_name, param_mods[f"{param_name}_wrap"] % (2 * jnp.pi)
                 # )
-                param_mods[param_name] = numpyro.deterministic(
-                    param_name,
-                    jnp.arctan2(param_mods[f"{param_name}_y"], param_mods[f"{param_name}_x"])
-                    % (2 * jnp.pi),
-                )
 
     total_flux, total_disk_flux, total_line_flux = evaluate_disk_model(
         template, wave, param_mods, use_quad

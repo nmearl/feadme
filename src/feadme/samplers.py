@@ -112,7 +112,14 @@ class Sampler(ABC):
         pivot_prior_summary = {}
 
         for k, v in prior_summary.items():
-            if "disk_flux" in k or "line_flux" in k or "_base" in k or "_wrap" in k:
+            if (
+                "disk_flux" in k
+                or "line_flux" in k
+                or "_base" in k
+                or "_wrap" in k
+                or k in self.fixed_fields
+                or k.endswith("apocenter")
+            ):
                 continue
 
             pivot_prior_summary.setdefault("param", []).append(k)
@@ -120,12 +127,13 @@ class Sampler(ABC):
             pivot_prior_summary.setdefault("std", []).append(v["std"])
             pivot_prior_summary.setdefault("n_eff", []).append(v["n_eff"])
 
-            if "apocenter" in k:
-                pivot_prior_summary.setdefault("r_hat", []).append(
-                    circular_rhat(self._idata.posterior[k].values)
-                )
-            else:
-                pivot_prior_summary.setdefault("r_hat", []).append(v["r_hat"])
+            # if k.endswith("apocenter"):
+            #     pivot_prior_summary.setdefault("r_hat", []).append(
+            #         circular_rhat(self._idata.posterior[k].values)
+            #     )
+            #     pass
+            # else:
+            pivot_prior_summary.setdefault("r_hat", []).append(v["r_hat"])
 
         pivot_prior_summary = pd.DataFrame(pivot_prior_summary)
 
@@ -148,9 +156,11 @@ class Sampler(ABC):
                     upper_bound_rot = np.percentile(apo_rot, 84)
                     lower_bound = (lower_bound_rot - np.pi + apo_mean) % (2 * np.pi)
                     upper_bound = (upper_bound_rot - np.pi + apo_mean) % (2 * np.pi)
-                    kde = gaussian_kde(values)
-                    x_grid = np.linspace(0, 2 * np.pi, 1000)
-                    median = x_grid[np.argmax(kde(x_grid))]
+                    # kde = gaussian_kde(apo_rot)
+                    # x_grid = np.linspace(0, 2 * np.pi, 1000)
+                    # rot_median = x_grid[np.argmax(kde(x_grid))]
+                    # median = (rot_median - np.pi + apo_mean) % (2 * np.pi)
+                    median = apo_mean
                 else:
                     median = jnp.median(values)
                     lower_bound = jnp.percentile(values, 16)
@@ -192,9 +202,9 @@ class Sampler(ABC):
 
         if pivot_prior_summary is None:
             return False
-        
+
         if show:
-            print(pivot_prior_summary.to_markdown())
+            logger.info(f"Fitting complete: displaying results... \n{pivot_prior_summary.to_markdown()}")
 
         est_r_hat = pivot_prior_summary["r_hat"].mean()
 
@@ -313,7 +323,7 @@ class NUTSSampler(Sampler):
                     dense_mass=dense_mass,
                     # max_tree_depth=20,
                     # adapt_step_size=True,
-                    # target_accept_prob=0.9,
+                    target_accept_prob=0.9,
                     **kwargs,
                 )
 
@@ -349,6 +359,7 @@ class NUTSSampler(Sampler):
                 conv_num += 1
 
                 self.plot_results()
+                self.write_results()
 
                 if conv_num % 2 == 0:
                     logger.warning(
@@ -367,5 +378,3 @@ class NUTSSampler(Sampler):
         delta_time = (Time.now() - start_time).to_datetime()
 
         logger.info(f"Finished sampling {self._label} in {delta_time}.")
-
-        self.write_run()
