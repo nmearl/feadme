@@ -375,6 +375,9 @@ class NUTSSampler(Sampler):
                     )
                     break
 
+        self.plot_results()
+        self.write_results()
+
         delta_time = (Time.now() - start_time).to_datetime()
 
         logger.info(f"Finished sampling {self._label} in {delta_time}.")
