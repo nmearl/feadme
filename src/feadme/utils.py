@@ -6,6 +6,9 @@ import numpy as np
 from numpyro.distributions import constraints
 from numpyro.distributions.transforms import Transform
 
+from numpyro.handlers import trace, seed
+import jax
+
 
 def dict_to_namedtuple(name, d):
     """
@@ -75,32 +78,73 @@ class BaseTenTransform(Transform):
         if not isinstance(other, BaseTenTransform):
             return False
         return self.domain == other.domain
+    
 
-
-def circular_rhat(theta_chains):
+def circular_rhat(samples):
     """
-    theta_chains: shape (n_chains, n_samples) with values ∈ [0, 2π) or [-π, π)
+    Estimate circular R-hat using vector average consistency across chains.
+    
+    Parameters
+    ----------
+    samples : ndarray
+        Shape (chains, draws), in radians.
+
+    Returns
+    -------
+    rhat : float
+        Circular R-hat value.
     """
-    n_chains, n_samples = theta_chains.shape
+    chains, draws = samples.shape
 
-    sin_vals = np.sin(theta_chains)
-    cos_vals = np.cos(theta_chains)
+    # Mean resultant vector per chain
+    cos_means = np.mean(np.cos(samples), axis=1)
+    sin_means = np.mean(np.sin(samples), axis=1)
+    R_means = np.sqrt(cos_means**2 + sin_means**2)
 
-    # Mean per chain
-    mean_sin = sin_vals.mean(axis=1)
-    mean_cos = cos_vals.mean(axis=1)
+    # Mean of mean directions
+    mean_cos = np.mean(cos_means)
+    mean_sin = np.mean(sin_means)
+    R_total = np.sqrt(mean_cos**2 + mean_sin**2)
 
-    # Resultant vector length per chain
-    R_chain = np.sqrt(mean_sin**2 + mean_cos**2)
+    # Between-chain variance (how different the chain means are)
+    B = chains * (1 - R_total)
 
-    # Overall mean resultant vector length
-    mean_sin_total = sin_vals.mean()
-    mean_cos_total = cos_vals.mean()
-    R_total = np.sqrt(mean_sin_total**2 + mean_cos_total**2)
+    # Within-chain variance (how dispersed each chain is)
+    R_within = np.mean([np.sqrt(np.mean(np.cos(samples[c]))**2 + np.mean(np.sin(samples[c]))**2)
+                        for c in range(chains)])
+    W = 1 - R_within
 
-    # Between-chain and within-chain analogs
-    B = np.var(R_chain, ddof=1)
-    W = np.mean(1 - R_chain)
+    # Gelman-style circular Rhat
+    rhat = np.sqrt((W + B) / W)
+    return rhat
 
-    # Circular analog of Gelman-Rubin statistic
-    return np.sqrt((W + B) / W)
+
+def get_sample_sites(model, model_args, model_kwargs, rng_key=jax.random.PRNGKey(0)):
+    tr = trace(seed(model, rng_key)).get_trace(*model_args, **model_kwargs)
+    return {k: site["fn"] for k, site in tr.items() if site["type"] == "sample"}
+
+
+def transform_init_values(init_vals, sites):
+    """
+    Convert user-friendly param values to base values expected by TransformReparam sites.
+    """
+    base_vals = {}
+
+    for site_name, dist_obj in sites.items():
+        if not site_name.endswith("_base"):
+            continue  # We only care about reparam sites
+
+        param_name = site_name.removesuffix("_base")
+        if param_name not in init_vals:
+            continue
+
+        value = init_vals[param_name]
+
+        # Apply inverse of transform to get base value
+        if hasattr(dist_obj, "transforms") and dist_obj.transforms:
+            base_value = dist_obj.transforms[0].inv(value)
+            base_vals[site_name] = base_value
+        else:
+            base_vals[site_name] = value  # fallback if not transformed
+
+    return base_vals

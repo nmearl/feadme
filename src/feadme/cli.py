@@ -13,6 +13,8 @@ from .compose import disk_model
 from .parser import Template
 from .samplers import NUTSSampler
 
+from .models.lsq import lsq_model_fitter
+
 finfo = np.finfo(float)
 
 
@@ -107,7 +109,7 @@ def run(
         # if "ZTF" not in str(template_path):
         #     continue
 
-        # if "ZTF18aaaovpz" not in str(template_path):  # ZTF18aahfohe
+        # if "ZTF18aacdvjp" not in str(template_path):  # ZTF18aacdvjp
         #     continue
 
         # Load the template
@@ -150,6 +152,27 @@ def run(
         if not Path(local_output_dir).exists():
             Path(local_output_dir).mkdir(parents=True)
 
+        # Convert template prior distributions based on LSQ fit
+        starters = lsq_model_fitter(template, wave, flux, flux_err)
+
+        for prof in template.disk_profiles:
+            for param in prof._independent():
+                param.loc = starters[f"{prof.name}_{param.name}"]
+
+                if param.distribution == "log_uniform":
+                    param.distribution = "log_normal"
+                elif param.distribution == "uniform":
+                    param.distribution = "normal"
+
+        for prof in template.line_profiles:
+            for param in prof._independent():
+                param.loc = starters[f"{prof.name}_{param.name}"]
+
+                if param.distribution == "log_uniform":
+                    param.distribution = "log_normal"
+                elif param.distribution == "uniform":
+                    param.distribution = "normal"
+
         part_disk_model = partial(disk_model, use_quad=use_quad)
 
         nuts_sampler = NUTSSampler(
@@ -168,10 +191,8 @@ def run(
 
         if not nuts_sampler.check_convergence():
             nuts_sampler.sample(init_strategy=init_to_median(num_samples=1000))
-            nuts_sampler.write_results()
+            nuts_sampler.write_run()
         else:
             logger.info(f"{local_label} is already converged. Skipping sampling.")
-
-        nuts_sampler.plot_results()
 
         jax.clear_caches()
