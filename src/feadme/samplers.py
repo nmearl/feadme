@@ -254,8 +254,6 @@ class Sampler(ABC):
             prior=predictive_prior,
         )
 
-        print(idata)
-
         return idata
 
     def write_results(self):

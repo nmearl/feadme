@@ -52,8 +52,6 @@ def doppler_factor(
 
     inv_dop = gamma * (da - db / dc + dd / de)
 
-    # jax.debug.print("{}", inv_dop)
-
     return inv_dop**-1
 
 

@@ -95,7 +95,7 @@ def disk_model(
     param_mods = {}
 
     # Build re-parameterization configuration more efficiently
-    reparam_config = {}#"white_noise": TransformReparam()}
+    reparam_config = {}  # "white_noise": TransformReparam()}
 
     for prof in template.all_profiles:
         for param in prof.independent:
@@ -108,125 +108,100 @@ def disk_model(
                 reparam_config[samp_name] = TransformReparam()
 
     # Pre-compute all profiles to iterate over
-    with numpyro.handlers.seed(rng_seed=1):
-        with numpyro.handlers.reparam(config=reparam_config):
-            for prof in template.all_profiles:
-                for param in prof.independent:
-                    samp_name = f"{prof.name}_{param.name}"
+    with numpyro.handlers.reparam(config=reparam_config):
+        for prof in template.all_profiles:
+            for param in prof.independent:
+                samp_name = f"{prof.name}_{param.name}"
 
-                    if param.distribution == Distribution.uniform:
-                        if param.circular:
-                            # param_mods[f"{samp_name}_wrap"] = numpyro.sample(
-                            #     f"{samp_name}_wrap",
-                            #     dist.VonMises(loc=0, concentration=1e-6),
-                            # )
-                            param_mods[f"{samp_name}_x"] = numpyro.sample(
-                                f"{samp_name}_x",
-                                dist.Normal(0, 1)
-                            )
-                            param_mods[f"{samp_name}_y"] = numpyro.sample(
-                                f"{samp_name}_y",
-                                dist.Normal(0, 1)
-                            )
-                        else:
-                            base_dist = dist.Uniform(0, 1)
-                            transforms = [
-                                dist.transforms.AffineTransform(
-                                    param.low, param.high - param.low
-                                )
-                            ]
-                            unif_param_dist = dist.TransformedDistribution(
-                                base_dist, transforms
-                            )
-                            param_mods[samp_name] = numpyro.sample(
-                                samp_name, unif_param_dist
-                            )
-                    elif param.distribution == Distribution.log_uniform:
+                if param.distribution == Distribution.uniform:
+                    if param.circular:
+                        param_mods[f"{samp_name}_x"] = numpyro.sample(
+                            f"{samp_name}_x", dist.Normal(0, 1)
+                        )
+                        param_mods[f"{samp_name}_y"] = numpyro.sample(
+                            f"{samp_name}_y", dist.Normal(0, 1)
+                        )
+                    else:
                         base_dist = dist.Uniform(0, 1)
                         transforms = [
                             dist.transforms.AffineTransform(
-                                jnp.log(param.low),
-                                jnp.log(param.high) - jnp.log(param.low),
-                            ),
-                            dist.transforms.ExpTransform(),
+                                param.low, param.high - param.low
+                            )
                         ]
-                        log_unif_param_dist = dist.TransformedDistribution(
+                        unif_param_dist = dist.TransformedDistribution(
                             base_dist, transforms
                         )
                         param_mods[samp_name] = numpyro.sample(
-                            samp_name, log_unif_param_dist
+                            samp_name, unif_param_dist
                         )
-                    elif param.distribution == Distribution.normal:
-                        if param.circular:
-                            # param_mods[f"{samp_name}_wrap"] = numpyro.sample(
-                            #     f"{samp_name}_wrap",
-                            #     dist.VonMises(
-                            #         loc=(param.loc + jnp.pi) % (2 * jnp.pi) - jnp.pi,
-                            #         concentration=2 / (param.scale**2),
-                            #     ),
-                            # )
-                            param_mods[f"{samp_name}_x"] = numpyro.sample(
-                                f"{samp_name}_x",
-                                dist.Normal(jnp.cos(param.loc), 1)
-                            )
-                            param_mods[f"{samp_name}_y"] = numpyro.sample(
-                                f"{samp_name}_y",
-                                dist.Normal(jnp.sin(param.loc), 1)
-                            )
-                        else:
-                            base_dist = dist.TruncatedNormal(
-                                0,
-                                1,
-                                low=(param.low - param.loc) / param.scale,
-                                high=(param.high - param.loc) / param.scale,
-                            )
-                            transforms = [
-                                dist.transforms.AffineTransform(param.loc, param.scale),
-                            ]
-                            norm_param_dist = dist.TransformedDistribution(
-                                base_dist, transforms
-                            )
-                            param_mods[samp_name] = numpyro.sample(
-                                samp_name, norm_param_dist
-                            )
-                    elif param.distribution == Distribution.log_normal:
+                elif param.distribution == Distribution.log_uniform:
+                    base_dist = dist.Uniform(0, 1)
+                    transforms = [
+                        dist.transforms.AffineTransform(
+                            jnp.log(param.low),
+                            jnp.log(param.high) - jnp.log(param.low),
+                        ),
+                        dist.transforms.ExpTransform(),
+                    ]
+                    log_unif_param_dist = dist.TransformedDistribution(
+                        base_dist, transforms
+                    )
+                    param_mods[samp_name] = numpyro.sample(
+                        samp_name, log_unif_param_dist
+                    )
+                elif param.distribution == Distribution.normal:
+                    if param.circular:
+                        param_mods[f"{samp_name}_x"] = numpyro.sample(
+                            f"{samp_name}_x", dist.Normal(jnp.cos(param.loc), 1)
+                        )
+                        param_mods[f"{samp_name}_y"] = numpyro.sample(
+                            f"{samp_name}_y", dist.Normal(jnp.sin(param.loc), 1)
+                        )
+                    else:
                         base_dist = dist.TruncatedNormal(
                             0,
                             1,
-                            low=(jnp.log(param.low) - jnp.log(param.loc))
-                            / jnp.log(param.scale),
-                            high=(jnp.log(param.high) - jnp.log(param.loc))
-                            / jnp.log(param.scale),
+                            low=(param.low - param.loc) / param.scale,
+                            high=(param.high - param.loc) / param.scale,
                         )
                         transforms = [
-                            dist.transforms.AffineTransform(
-                                jnp.log(param.loc), jnp.log(param.scale)
-                            ),
-                            dist.transforms.ExpTransform(),
+                            dist.transforms.AffineTransform(param.loc, param.scale),
                         ]
-                        log_norm_param_dist = dist.TransformedDistribution(
+                        norm_param_dist = dist.TransformedDistribution(
                             base_dist, transforms
                         )
                         param_mods[samp_name] = numpyro.sample(
-                            samp_name, log_norm_param_dist
+                            samp_name, norm_param_dist
                         )
-                    else:
-                        raise ValueError(
-                            f"Invalid distribution: {param.distribution} for parameter {param.name}"
-                        )
+                elif param.distribution == Distribution.log_normal:
+                    base_dist = dist.TruncatedNormal(
+                        0,
+                        1,
+                        low=(jnp.log(param.low) - jnp.log(param.loc))
+                        / jnp.log(param.scale),
+                        high=(jnp.log(param.high) - jnp.log(param.loc))
+                        / jnp.log(param.scale),
+                    )
+                    transforms = [
+                        dist.transforms.AffineTransform(
+                            jnp.log(param.loc), jnp.log(param.scale)
+                        ),
+                        dist.transforms.ExpTransform(),
+                    ]
+                    log_norm_param_dist = dist.TransformedDistribution(
+                        base_dist, transforms
+                    )
+                    param_mods[samp_name] = numpyro.sample(
+                        samp_name, log_norm_param_dist
+                    )
+                else:
+                    raise ValueError(
+                        f"Invalid distribution: {param.distribution} for parameter {param.name}"
+                    )
 
-            # Sample white noise
-            # base_dist = dist.Uniform(0, 1)
-            # transforms = [
-            #     dist.transforms.AffineTransform(
-            #         template.white_noise.low,
-            #         template.white_noise.high - template.white_noise.low,
-            #     )
-            # ]
-            # unif_param_dist = dist.TransformedDistribution(base_dist, transforms)
-            # white_noise = numpyro.sample("white_noise", unif_param_dist)
-
-        white_noise = numpyro.sample("white_noise", dist.Uniform(template.white_noise.low, template.white_noise.high))
+    white_noise = numpyro.sample(
+        "white_noise", dist.Uniform(template.white_noise.low, template.white_noise.high)
+    )
 
     for prof in template.all_profiles:
         # Sample all shared parameters

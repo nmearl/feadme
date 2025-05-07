@@ -8,6 +8,7 @@ from astropy.table import Table
 from loguru import logger
 from numpyro.infer import init_to_median, init_to_value
 from numpyro.infer.util import unconstrain_fn
+import numpyro
 from functools import partial
 
 from .compose import disk_model
@@ -156,18 +157,18 @@ def run(
         # Convert template prior distributions based on LSQ fit
         starters = lsq_model_fitter(template, wave, flux, flux_err)
 
-        # for prof in template.disk_profiles:
-        #     for param in prof._independent():
-        #         param.loc = starters[f"{prof.name}_{param.name}"]
+        for prof in template.disk_profiles:
+            for param in prof._independent():
+                param.loc = starters[f"{prof.name}_{param.name}"]
 
         #         if param.distribution == "log_uniform":
         #             param.distribution = "log_normal"
         #         elif param.distribution == "uniform":
         #             param.distribution = "normal"
 
-        # for prof in template.line_profiles:
-        #     for param in prof._independent():
-        #         param.loc = starters[f"{prof.name}_{param.name}"]
+        for prof in template.line_profiles:
+            for param in prof._independent():
+                param.loc = starters[f"{prof.name}_{param.name}"]
 
         #         if param.distribution == "log_uniform":
         #             param.distribution = "log_normal"
@@ -176,7 +177,10 @@ def run(
 
         part_disk_model = partial(disk_model, use_quad=use_quad)
         unconstrained_starters = unconstrain_fn(
-            part_disk_model, (template, wave, flux, flux_err), {}, starters
+            numpyro.handlers.seed(part_disk_model, rng_seed=1),
+            (template, wave, flux, flux_err),
+            {},
+            starters,
         )
 
         nuts_sampler = NUTSSampler(
