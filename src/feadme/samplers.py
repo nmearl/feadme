@@ -78,16 +78,6 @@ class Sampler(ABC):
             logger.info(f"Loading existing MCMC sampler from {output_dir}/{label}.nc")
             self._idata = az.from_netcdf(f"{output_dir}/{label}.nc")
 
-    @property
-    @abstractmethod
-    def posterior_samples(self):
-        raise NotImplementedError("Posterior samples not implemented.")
-
-    @property
-    @abstractmethod
-    def posterior_predictive_samples(self):
-        raise NotImplementedError("Posterior predictive samples not implemented.")
-
     @abstractmethod
     def sample(self):
         raise NotImplementedError("Sampling not implemented.")
@@ -173,7 +163,7 @@ class Sampler(ABC):
                 }
             return summary
 
-        posterior_summary = summarize_posterior(self.posterior_samples)
+        posterior_summary = summarize_posterior(self.flat_posterior_samples)
 
         for k, v in posterior_summary.items():
             if "disk_flux" in k or "line_flux" in k or "_base" in k:
@@ -204,7 +194,9 @@ class Sampler(ABC):
             return False
 
         if show:
-            logger.info(f"Fitting complete: displaying results... \n{pivot_prior_summary.to_markdown()}")
+            logger.info(
+                f"Fitting complete: displaying results... \n{pivot_prior_summary.to_markdown()}"
+            )
 
         est_r_hat = pivot_prior_summary["r_hat"].mean()
 
@@ -213,25 +205,58 @@ class Sampler(ABC):
         return 0.99 <= est_r_hat < 1.01
 
     @property
-    def _idata_transformed(self):
-        return az.from_dict(
-            posterior={
-                k: np.expand_dims(a=np.asarray(v), axis=0)
-                for k, v in self.posterior_samples.items()
-            },
-            posterior_predictive={
-                k: np.expand_dims(a=np.asarray(v), axis=0)
-                for k, v in self.posterior_predictive_samples.items()
-            },
-        )
-
-    @property
     def fixed_fields(self):
         return [
             f"{prof.name}_{param.name}"
             for prof in self._template.disk_profiles + self._template.line_profiles
             for param in prof.fixed
         ]
+
+    def _compose_inference_data(self, mcmc):
+        """
+        Create an ArviZ InferenceData object from a NumPyro MCMC run.
+        Includes posterior, posterior predictive, and prior samples.
+        """
+        posterior_samples = {k: v for k, v in mcmc.get_samples().items() if "_flux" not in k}
+        rng_key = jax.random.PRNGKey(0)
+
+        predictive_post = Predictive(
+            self._model,
+            posterior_samples=posterior_samples,
+        )(
+            rng_key,
+            wave=self._wave,
+            flux=None,
+            flux_err=self._flux_err,
+            template=self._template,
+        )
+
+        predictive_prior = Predictive(
+            self._model,
+            num_samples=500,
+        )(
+            rng_key,
+            wave=self._wave,
+            flux=None,
+            flux_err=self._flux_err,
+            template=self._template,
+        )
+
+        def reshape(pred_dict, n_chains, n_draws):
+            reshaped = {}
+            for k, v in pred_dict.items():
+                reshaped[k] = v.reshape((n_chains, n_draws) + v.shape[1:])
+            return reshaped
+
+        idata = az.from_numpyro(
+            mcmc,
+            posterior_predictive=predictive_post,
+            prior=predictive_prior,
+        )
+
+        print(idata)
+
+        return idata
 
     def write_results(self):
         """Write the results of the MCMC run to a CSV file."""
@@ -256,7 +281,6 @@ class Sampler(ABC):
             self._template,
             self._output_dir,
             self._idata,
-            self._idata_transformed,
             self._results_summary(),
             self._wave,
             self._flux,
@@ -267,26 +291,12 @@ class Sampler(ABC):
 
 class NUTSSampler(Sampler):
     @property
-    def posterior_samples(self):
+    def flat_posterior_samples(self):
         return {
-            var: np.array(self._idata.posterior[var]).reshape(
-                -1, *self._idata.posterior[var].shape[2:]
-            )
+            var: self._idata.posterior[var].stack(sample=("chain", "draw")).values
             for var in self._idata.posterior.data_vars
+            if "_flux" not in var
         }
-
-    @property
-    def posterior_predictive_samples(self):
-        return Predictive(
-            model=self._model,
-            posterior_samples=self.posterior_samples,
-        )(
-            jax.random.PRNGKey(0),
-            template=self._template,
-            wave=self._wave,
-            flux=None,
-            flux_err=self._flux_err,
-        )
 
     def sample(self, init_strategy=init_to_median, dense_mass=True, **kwargs):
         mcmc = None
@@ -351,7 +361,7 @@ class NUTSSampler(Sampler):
             )
 
             # mcmc.print_summary()
-            self._idata = az.from_numpyro(mcmc)
+            self._idata = self._compose_inference_data(mcmc)
 
             converged = self.check_convergence()
 

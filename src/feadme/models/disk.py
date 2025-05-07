@@ -48,7 +48,7 @@ def doppler_factor(
     dc = xi**0.5 * scale ** (3 / 2) * (1 - e * cosphiphinot) ** 0.5
     dd = b_div_r * (1 - e * cosphiphinot) ** 0.5 * sini * sinphi
     de = xi**0.5 * scale**0.5 * (1 - sini**2 * cosphi**2) ** 0.5
-    de = jnp.where(de == 0.0, FLOAT_EPSILON, de)
+    # de = jnp.where(de == 0.0, FLOAT_EPSILON, de)
 
     inv_dop = gamma * (da - db / dc + dd / de)
 

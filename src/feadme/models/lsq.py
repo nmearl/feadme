@@ -209,9 +209,10 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err):
             samp_name = f"{sm.name}_{pn}"
 
             if samp_name in indep_params:
-                # if pn in ['apocenter']:
-                #     starters[f"{samp_name}_wrap"] = pv
-                # else:
+                if pn in ['apocenter']:
+                    starters[f"{samp_name}_x"] = np.cos(pv)
+                    starters[f"{samp_name}_y"] = np.sin(pv)
+
                 if pn in ["inner_radius", "delta_radius", "sigma"]:
                     pv = 10**pv
 
