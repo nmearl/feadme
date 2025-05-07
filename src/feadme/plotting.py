@@ -22,16 +22,26 @@ def plot_trace(idata, output_dir):
     plt.close(fig)
 
 
-def plot_hdi(wave, flux, idata_transformed, output_dir):
+def plot_hdi(wave, flux, flux_err, idata, output_dir, hdi_prob=0.9):
     fig, ax = plt.subplots(figsize=(8, 4), layout="constrained")
-    ax.plot(wave, flux)
+
+    # Plot observed data
+    ax.errorbar(wave, flux, yerr=flux_err, fmt='o', alpha=0.6, label="Observed")
+
+    # Plot posterior predictive HDI
     az.plot_hdi(
-        ax=ax,
         x=wave,
-        y=idata_transformed["posterior_predictive"]["total_flux"],
+        y=idata.posterior_predictive["total_flux"],
+        hdi_prob=hdi_prob,
+        ax=ax,
+        color="lightblue",
         fill_kwargs={"alpha": 0.5},
-        color="C1",
     )
+
+    # Optionally add posterior predictive mean
+    mean_flux = idata.posterior_predictive["total_flux"].mean(dim=("chain", "draw")).values
+    ax.plot(wave, mean_flux, label="Posterior Predictive Mean")
+
     fig.savefig(f"{output_dir}/hdi_plot.png")
     plt.close(fig)
 
@@ -40,7 +50,7 @@ def plot_model_fit(
     wave,
     flux,
     flux_err,
-    idata_transformed,
+    idata,
     results_summary,
     template,
     output_dir,
@@ -52,14 +62,14 @@ def plot_model_fit(
     )
 
     for var in ["disk_flux", "line_flux"]:
-        var_dist = idata_transformed["posterior_predictive"][var].squeeze()
+        var_dist = idata.posterior_predictive[var].mean(dim=("chain",)).values
         median = np.percentile(var_dist, 50, axis=0)
         ax.plot(wave, median, label=f"{var}")
 
-    obs_dist = idata_transformed["posterior_predictive"]["total_flux"].squeeze()
-    median = np.percentile(obs_dist, 50, axis=0)
-    lower = np.percentile(obs_dist, 16, axis=0)
-    upper = np.percentile(obs_dist, 84, axis=0)
+    obs_dist = idata.posterior_predictive["total_flux"].stack(sample=("chain", "draw")).values
+    median = np.percentile(obs_dist, 50, axis=1)
+    lower = np.percentile(obs_dist, 16, axis=1)
+    upper = np.percentile(obs_dist, 84, axis=1)
     ax.plot(wave, median, label="Model Fit", color="C3")
     ax.fill_between(wave, lower, upper, alpha=0.5, color="C3")
 
@@ -85,14 +95,14 @@ def plot_model_fit(
     plt.close(fig)
 
 
-def plot_corner(idata_transformed, output_dir):
+def plot_corner(idata, output_dir):
     names = [
         x
-        for x in idata_transformed.posterior.keys()
+        for x in idata.posterior.keys()
         if "_flux" not in x and "_base" not in x and "_offset" not in x
     ]
     fig = corner.corner(
-        idata_transformed,
+        idata.posterior,
         var_names=names,
         labels=names,
         quantiles=[0.16, 0.5, 0.84],
@@ -110,7 +120,6 @@ def plot_results(
     template,
     output_dir,
     idata,
-    idata_transformed,
     results_summary,
     wave,
     flux,
@@ -118,15 +127,15 @@ def plot_results(
     label,
 ):
     plot_trace(idata, output_dir)
-    plot_hdi(wave, flux, idata_transformed, output_dir)
+    plot_hdi(wave, flux, flux_err, idata, output_dir)
     plot_model_fit(
         wave,
         flux,
         flux_err,
-        idata_transformed,
+        idata,
         results_summary,
         template,
         output_dir,
         label,
     )
-    plot_corner(idata_transformed, output_dir)
+    plot_corner(idata, output_dir)

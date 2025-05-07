@@ -6,7 +6,8 @@ import jax
 import numpy as np
 from astropy.table import Table
 from loguru import logger
-from numpyro.infer import init_to_median
+from numpyro.infer import init_to_median, init_to_value
+from numpyro.infer.util import unconstrain_fn
 from functools import partial
 
 from .compose import disk_model
@@ -109,7 +110,7 @@ def run(
         # if "ZTF" not in str(template_path):
         #     continue
 
-        # if "ZTF18aacdvjp" not in str(template_path):  # ZTF18aacdvjp
+        # if "ZTF18aabylvn" not in str(template_path):  # ZTF18aacdvjp
         #     continue
 
         # Load the template
@@ -155,25 +156,28 @@ def run(
         # Convert template prior distributions based on LSQ fit
         starters = lsq_model_fitter(template, wave, flux, flux_err)
 
-        for prof in template.disk_profiles:
-            for param in prof._independent():
-                param.loc = starters[f"{prof.name}_{param.name}"]
+        # for prof in template.disk_profiles:
+        #     for param in prof._independent():
+        #         param.loc = starters[f"{prof.name}_{param.name}"]
 
-                if param.distribution == "log_uniform":
-                    param.distribution = "log_normal"
-                elif param.distribution == "uniform":
-                    param.distribution = "normal"
+        #         if param.distribution == "log_uniform":
+        #             param.distribution = "log_normal"
+        #         elif param.distribution == "uniform":
+        #             param.distribution = "normal"
 
-        for prof in template.line_profiles:
-            for param in prof._independent():
-                param.loc = starters[f"{prof.name}_{param.name}"]
+        # for prof in template.line_profiles:
+        #     for param in prof._independent():
+        #         param.loc = starters[f"{prof.name}_{param.name}"]
 
-                if param.distribution == "log_uniform":
-                    param.distribution = "log_normal"
-                elif param.distribution == "uniform":
-                    param.distribution = "normal"
+        #         if param.distribution == "log_uniform":
+        #             param.distribution = "log_normal"
+        #         elif param.distribution == "uniform":
+        #             param.distribution = "normal"
 
         part_disk_model = partial(disk_model, use_quad=use_quad)
+        unconstrained_starters = unconstrain_fn(
+            part_disk_model, (template, wave, flux, flux_err), {}, starters
+        )
 
         nuts_sampler = NUTSSampler(
             part_disk_model,
@@ -190,7 +194,9 @@ def run(
         )
 
         if not nuts_sampler.check_convergence():
-            nuts_sampler.sample(init_strategy=init_to_median(num_samples=1000))
+            nuts_sampler.sample(
+                init_strategy=init_to_value(values=unconstrained_starters)
+            )  # init_to_median(num_samples=1000))
             nuts_sampler.write_run()
         else:
             logger.info(f"{local_label} is already converged. Skipping sampling.")
