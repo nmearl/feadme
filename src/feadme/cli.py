@@ -155,17 +155,17 @@ def run(
             Path(local_output_dir).mkdir(parents=True)
 
         # Convert template prior distributions based on LSQ fit
-        # starters = lsq_model_fitter(template, wave, flux, flux_err)
+        starters = lsq_model_fitter(template, wave, flux, flux_err)
 
-        # for prof in template.disk_profiles + template.line_profiles:
-        #     for param in prof._independent():
-        #         param.loc = starters[f"{prof.name}_{param.name}"][0]
-        #         param.scale = starters[f"{prof.name}_{param.name}"][1]
+        for prof in template.disk_profiles + template.line_profiles:
+            for param in prof._independent():
+                param.loc = starters[f"{prof.name}_{param.name}"][0]
+                param.scale = starters[f"{prof.name}_{param.name}"][1]
 
-                # if param.distribution == "log_uniform":
-                #     param.distribution = "log_normal"
-                # elif param.distribution == "uniform":
-                #     param.distribution = "normal"
+                if param.distribution == "log_uniform":
+                    param.distribution = "log_normal"
+                elif param.distribution == "uniform":
+                    param.distribution = "normal"
 
         # part_disk_model = partial(disk_model, use_quad=use_quad)
 

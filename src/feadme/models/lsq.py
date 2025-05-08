@@ -261,7 +261,7 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err):
 
             print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
 
-            starters[samp_name] = (pv, pe * 2)
+            starters[samp_name] = (pv, pe * 5)
 
     # for sm in fit_mod:
     #     if sm.name in ["shift", "base"]:
