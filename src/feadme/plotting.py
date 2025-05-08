@@ -26,7 +26,7 @@ def plot_hdi(wave, flux, flux_err, idata, output_dir, hdi_prob=0.9):
     fig, ax = plt.subplots(figsize=(8, 4), layout="constrained")
 
     # Plot observed data
-    ax.errorbar(wave, flux, yerr=flux_err, fmt='o', alpha=0.6, label="Observed")
+    ax.errorbar(wave, flux, yerr=flux_err, fmt="o", alpha=0.6, label="Observed")
 
     # Plot posterior predictive HDI
     az.plot_hdi(
@@ -39,7 +39,9 @@ def plot_hdi(wave, flux, flux_err, idata, output_dir, hdi_prob=0.9):
     )
 
     # Optionally add posterior predictive mean
-    mean_flux = idata.posterior_predictive["total_flux"].mean(dim=("chain", "draw")).values
+    mean_flux = (
+        idata.posterior_predictive["total_flux"].mean(dim=("chain", "draw")).values
+    )
     ax.plot(wave, mean_flux, label="Posterior Predictive Mean")
 
     fig.savefig(f"{output_dir}/hdi_plot.png")
@@ -66,7 +68,9 @@ def plot_model_fit(
         median = np.percentile(var_dist, 50, axis=0)
         ax.plot(wave, median, label=f"{var}")
 
-    obs_dist = idata.posterior_predictive["total_flux"].stack(sample=("chain", "draw")).values
+    obs_dist = (
+        idata.posterior_predictive["total_flux"].stack(sample=("chain", "draw")).values
+    )
     median = np.percentile(obs_dist, 50, axis=1)
     lower = np.percentile(obs_dist, 16, axis=1)
     upper = np.percentile(obs_dist, 84, axis=1)
@@ -109,10 +113,33 @@ def plot_corner(idata, output_dir):
         smooth=1,
         show_titles=True,
         axes_scale=[
-            "log" if "vel_width" in x or "radius" in x else "linear" for x in names
+            "log" if "vel_width" in x or "radius" in x or "sigma" in x else "linear"
+            for x in names
         ],
     )
     fig.savefig(f"{output_dir}/corner_plot.png")
+    plt.close(fig)
+
+
+def plot_corner_priors(idata, output_dir):
+    names = [
+        x
+        for x in idata.prior.keys()
+        if "_flux" not in x and "_base" not in x and "_offset" not in x
+    ]
+    fig = corner.corner(
+        idata.prior,
+        var_names=names,
+        labels=names,
+        quantiles=[0.16, 0.5, 0.84],
+        smooth=1,
+        show_titles=True,
+        axes_scale=[
+            "log" if "vel_width" in x or "radius" in x or "sigma" in x else "linear"
+            for x in names
+        ],
+    )
+    fig.savefig(f"{output_dir}/corner_plot_prior.png")
     plt.close(fig)
 
 
@@ -139,3 +166,4 @@ def plot_results(
         label,
     )
     plot_corner(idata, output_dir)
+    plot_corner_priors(idata, output_dir)

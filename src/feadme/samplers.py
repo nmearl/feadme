@@ -37,6 +37,7 @@ class Sampler(ABC):
         *,
         rng_key: jax.random.PRNGKey = None,
         progress_bar: bool = True,
+        use_quad: bool = False,
     ):
         self._model = model
         self._template = template
@@ -69,6 +70,7 @@ class Sampler(ABC):
         )
         self._rng_keys = jax.random.split(self._rng_key, num_chains)
         self._progress_bar = progress_bar
+        self._use_quad = use_quad
 
         self._idata = None
 
@@ -77,6 +79,10 @@ class Sampler(ABC):
         if path_exists:
             logger.info(f"Loading existing MCMC sampler from {output_dir}/{label}.nc")
             self._idata = az.from_netcdf(f"{output_dir}/{label}.nc")
+
+    @abstractmethod
+    def flat_posterior_samples(self):
+        raise NotImplementedError("Flat posterior samples not implemented.")
 
     @abstractmethod
     def sample(self):
@@ -115,7 +121,7 @@ class Sampler(ABC):
             pivot_prior_summary.setdefault("param", []).append(k)
             pivot_prior_summary.setdefault("mean", []).append(v["mean"])
             pivot_prior_summary.setdefault("std", []).append(v["std"])
-            pivot_prior_summary.setdefault("n_eff", []).append(v["n_eff"])
+            pivot_prior_summary.setdefault("n_eff", []).append(np.mean(v["n_eff"]))
 
             # if k.endswith("apocenter"):
             #     pivot_prior_summary.setdefault("r_hat", []).append(
@@ -123,7 +129,7 @@ class Sampler(ABC):
             #     )
             #     pass
             # else:
-            pivot_prior_summary.setdefault("r_hat", []).append(v["r_hat"])
+            pivot_prior_summary.setdefault("r_hat", []).append(np.mean(v["r_hat"]))
 
         pivot_prior_summary = pd.DataFrame(pivot_prior_summary)
 
@@ -206,18 +212,25 @@ class Sampler(ABC):
 
     @property
     def fixed_fields(self):
-        return [
+        ff = [
             f"{prof.name}_{param.name}"
             for prof in self._template.disk_profiles + self._template.line_profiles
             for param in prof.fixed
         ]
+
+        if self._template.white_noise.fixed:
+            ff += [self._template.white_noise]
+
+        return ff
 
     def _compose_inference_data(self, mcmc):
         """
         Create an ArviZ InferenceData object from a NumPyro MCMC run.
         Includes posterior, posterior predictive, and prior samples.
         """
-        posterior_samples = {k: v for k, v in mcmc.get_samples().items() if "_flux" not in k}
+        posterior_samples = {
+            k: v for k, v in mcmc.get_samples().items() if "_flux" not in k
+        }
         rng_key = jax.random.PRNGKey(0)
 
         predictive_post = Predictive(
@@ -233,7 +246,7 @@ class Sampler(ABC):
 
         predictive_prior = Predictive(
             self._model,
-            num_samples=500,
+            num_samples=1000,
         )(
             rng_key,
             wave=self._wave,
@@ -356,6 +369,7 @@ class NUTSSampler(Sampler):
                 wave=jnp.asarray(self._wave),
                 flux=jnp.asarray(self._flux),
                 flux_err=jnp.asarray(self._flux_err),
+                use_quad=self._use_quad,
             )
 
             # mcmc.print_summary()
@@ -366,8 +380,8 @@ class NUTSSampler(Sampler):
             if not converged:
                 conv_num += 1
 
-                self.plot_results()
                 self.write_results()
+                self.plot_results()
 
                 if conv_num % 2 == 0:
                     logger.warning(
@@ -383,8 +397,8 @@ class NUTSSampler(Sampler):
                     )
                     break
 
-        self.plot_results()
         self.write_results()
+        self.plot_results()
 
         delta_time = (Time.now() - start_time).to_datetime()
 

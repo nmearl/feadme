@@ -18,6 +18,8 @@ from ..compose import evaluate_disk_model  # , jax_evaluate_disk_model
 from collections import namedtuple
 from itertools import product
 from ..utils import dict_to_namedtuple
+import astropy.uncertainty as unc
+import uncertainties.unumpy as unp
 
 
 class DiskProfileModel(Fittable1DModel):
@@ -188,8 +190,32 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err):
 
     _, indices, _ = model_to_fit_params(full_model)
 
-    fitter = TRFLSQFitter()
+    fitter = TRFLSQFitter(calc_uncertainties=True)
     fit_mod = fitter(full_model, rest_wave, flux, weights=1 / flux_err, maxiter=10000)
+    cov = fitter.fit_info["param_cov"]
+
+    # Parameter uncertainties = sqrt of diagonal
+    param_uncerts = np.sqrt(np.diag(cov))
+
+    # fig, ax = plt.subplots()
+
+    # ax.errorbar(
+    #     rest_wave,
+    #     flux,
+    #     yerr=flux_err,
+    #     fmt="o",
+    #     color="grey",
+    #     zorder=-10,
+    #     alpha=0.25,
+    # )
+    # ax.plot(
+    #     rest_wave,
+    #     fit_mod(rest_wave),
+    #     label="Model Fit",
+    #     color="C3",
+    # )
+
+    # fig.savefig("/Users/nmearl/Downloads/lsq_fit.png")
 
     starters = {}
 
@@ -199,23 +225,61 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err):
         for param in prof._independent()
     ]
 
-    for sm in fit_mod:
+    _, inds, _ = model_to_fit_params(fit_mod)
+
+    for pn, pv, pe in zip(np.array(fit_mod.param_names)[inds], fit_mod.parameters[inds], param_uncerts):
+        sm_idx = int(pn.split("_")[-1])
+        pn = "_".join(pn.split("_")[:-1])
+        sm = fit_mod[sm_idx]
+
         if sm.name in ["shift", "base"]:
             continue
 
-        _, inds, _ = model_to_fit_params(sm)
+        upv = unp.uarray(pv, pe)
 
-        for pn, pv in zip(np.array(sm.param_names)[inds], sm.parameters[inds]):
-            samp_name = f"{sm.name}_{pn}"
+        samp_name = f"{sm.name}_{pn}"
 
-            if samp_name in indep_params:
-                if pn in ['apocenter']:
-                    starters[f"{samp_name}_x"] = np.cos(pv)
-                    starters[f"{samp_name}_y"] = np.sin(pv)
+        print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
 
-                if pn in ["inner_radius", "delta_radius", "sigma"]:
-                    pv = 10**pv
+        if samp_name in indep_params:
+            if pn in ['apocenter']:
+                ux = unp.cos(upv)
+                x = unp.nominal_values(ux)
+                xe = unp.std_devs(ux)
 
-                starters[samp_name] = pv
+                uy = unp.sin(upv)
+                y = unp.nominal_values(uy)
+                ye = unp.std_devs(uy)
+
+                starters[f"{samp_name}_x"] = (x, 2 * xe)
+                starters[f"{samp_name}_y"] = (y, 2 * ye)
+
+            if pn in ["inner_radius", "delta_radius", "sigma"]:
+                upv = 10**upv
+                pv = unp.nominal_values(upv)
+                pe = unp.std_devs(upv)
+
+            print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
+
+            starters[samp_name] = (pv, pe * 2)
+
+    # for sm in fit_mod:
+    #     if sm.name in ["shift", "base"]:
+    #         continue
+
+    #     _, inds, _ = model_to_fit_params(sm)
+
+    #     for pn, pv in zip(np.array(sm.param_names)[inds], sm.parameters[inds]):
+    #         samp_name = f"{sm.name}_{pn}"
+
+    #         if samp_name in indep_params:
+    #             if pn in ['apocenter']:
+    #                 starters[f"{samp_name}_x"] = np.cos(pv)
+    #                 starters[f"{samp_name}_y"] = np.sin(pv)
+
+    #             if pn in ["inner_radius", "delta_radius", "sigma"]:
+    #                 pv = 10**pv
+
+    #             starters[samp_name] = pv
 
     return starters

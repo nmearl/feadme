@@ -235,9 +235,6 @@ def disk_model(
                 param_mods[param_name] = numpyro.deterministic(
                     param_name, jnp.arctan2(y / r, x / r) % (2 * jnp.pi)
                 )
-                # param_mods[param_name] = numpyro.deterministic(
-                #     param_name, param_mods[f"{param_name}_wrap"] % (2 * jnp.pi)
-                # )
 
     total_flux, total_disk_flux, total_line_flux = evaluate_disk_model(
         template, wave, param_mods, use_quad

@@ -163,10 +163,11 @@ class Template(BaseModel):
     white_noise: Optional[Parameter] = Parameter(
         name="white_noise",
         distribution=Distribution.normal,
-        low=0,
-        high=0.5,
-        loc=0,
+        low=-10.0,
+        high=1.0,
+        loc=-7.0,
         scale=0.1,
+        values=-7.0
     )
     mask: Optional[List[Mask]] = []
 

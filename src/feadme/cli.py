@@ -7,7 +7,7 @@ import numpy as np
 from astropy.table import Table
 from loguru import logger
 from numpyro.infer import init_to_median, init_to_value
-from numpyro.infer.util import unconstrain_fn
+from numpyro.infer.util import unconstrain_fn, constrain_fn
 import numpyro
 from functools import partial
 
@@ -155,36 +155,38 @@ def run(
             Path(local_output_dir).mkdir(parents=True)
 
         # Convert template prior distributions based on LSQ fit
-        starters = lsq_model_fitter(template, wave, flux, flux_err)
+        # starters = lsq_model_fitter(template, wave, flux, flux_err)
 
-        for prof in template.disk_profiles:
-            for param in prof._independent():
-                param.loc = starters[f"{prof.name}_{param.name}"]
+        # for prof in template.disk_profiles + template.line_profiles:
+        #     for param in prof._independent():
+        #         param.loc = starters[f"{prof.name}_{param.name}"][0]
+        #         param.scale = starters[f"{prof.name}_{param.name}"][1]
 
-        #         if param.distribution == "log_uniform":
-        #             param.distribution = "log_normal"
-        #         elif param.distribution == "uniform":
-        #             param.distribution = "normal"
+                # if param.distribution == "log_uniform":
+                #     param.distribution = "log_normal"
+                # elif param.distribution == "uniform":
+                #     param.distribution = "normal"
 
-        for prof in template.line_profiles:
-            for param in prof._independent():
-                param.loc = starters[f"{prof.name}_{param.name}"]
+        # part_disk_model = partial(disk_model, use_quad=use_quad)
 
-        #         if param.distribution == "log_uniform":
-        #             param.distribution = "log_normal"
-        #         elif param.distribution == "uniform":
-        #             param.distribution = "normal"
-
-        part_disk_model = partial(disk_model, use_quad=use_quad)
-        unconstrained_starters = unconstrain_fn(
-            numpyro.handlers.seed(part_disk_model, rng_seed=1),
-            (template, wave, flux, flux_err),
-            {},
-            starters,
-        )
+        # print(starters)
+        # unconstrained_starters = unconstrain_fn(
+        #     numpyro.handlers.seed(disk_model, rng_seed=1),
+        #     (template, wave, flux, flux_err),
+        #     {},
+        #     starters,
+        # )
+        # print(unconstrained_starters)
+        # constrained_starters = constrain_fn(
+        #     numpyro.handlers.seed(part_disk_model, rng_seed=1),
+        #     (template, wave, flux, flux_err),
+        #     {},
+        #     unconstrained_starters,
+        # )
+        # print(constrained_starters)
 
         nuts_sampler = NUTSSampler(
-            part_disk_model,
+            disk_model,
             template,
             wave,
             flux,
@@ -195,12 +197,14 @@ def run(
             num_samples,
             num_chains,
             progress_bar=not no_progress_bar,
+            use_quad=use_quad,
         )
 
         if not nuts_sampler.check_convergence():
             nuts_sampler.sample(
-                init_strategy=init_to_value(values=unconstrained_starters)
-            )  # init_to_median(num_samples=1000))
+                # init_strategy=init_to_value(values=unconstrained_starters)
+                init_strategy=init_to_median(num_samples=1000)
+            )
             nuts_sampler.write_run()
         else:
             logger.info(f"{local_label} is already converged. Skipping sampling.")

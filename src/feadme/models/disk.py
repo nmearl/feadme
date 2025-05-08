@@ -62,10 +62,11 @@ def intensity(
     # Eracleous et al, eq 18; returned units are erg / cm^2
     # exponent = -((1 + X - D) ** 2) / (2 * D**2) * (c_cgs / sigma) ** 2
     exponent = -((1 + X - D) ** 2) / (2 * D**2) * (nu0 / sigma) ** 2
-    exponent = jnp.where(exponent < -37, -37, exponent)
+    # exponent = jnp.where(exponent < -37, -37, exponent)
 
     # res = (xi**-q * c_cgs) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
     res = (xi**-q) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
+    res = jnp.where(exponent < -37, 0, res)
 
     return res
 
