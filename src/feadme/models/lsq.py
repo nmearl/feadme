@@ -5,6 +5,7 @@ from astropy.modeling.models import Gaussian1D, Const1D, Shift
 from astropy.modeling.fitting import (
     LMLSQFitter,
     TRFLSQFitter,
+    DogBoxLSQFitter,
     model_to_fit_params,
     LevMarLSQFitter,
 )
@@ -52,12 +53,8 @@ class DiskProfileModel(Fittable1DModel):
         )
         del pars[f"{self.name}_delta_radius"]
 
-        # pars = dict_to_namedtuple("NTParamMods", pars)
-        # print(pars)
-
         res = evaluate_disk_model(self._template, x, pars)[0]
-        if np.any(np.isnan(res)) or np.any(np.isinf(res)):
-            print(pars)
+        
         return res
 
 
@@ -77,11 +74,11 @@ class LineProfileModel(Fittable1DModel):
         for i, pn in enumerate(self.param_names):
             pars[f"{self.name}_{pn}"] = args[i].squeeze()
 
-        # pars = dict_to_namedtuple("NTParamMods", pars)
-        # print(pars)
+            if pn in ["vel_width"]:
+                pars[f"{self._name}_{pn}"] = 10 ** pars[f"{self._name}_{pn}"]
 
         res = evaluate_disk_model(self._template, x, pars)[0]
-        # print(res)
+        
         return res
 
 
@@ -153,19 +150,33 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err):
         line_temp.line_profiles = [prof]
 
         for param in prof._independent():
+            param_low = param.low
+            param_high = param.high
+
+            if param.name in ["vel_width"]:
+                param_low = np.log10(param_low)
+                param_high = np.log10(param_high)
+
             in_par_bounds[param.name] = (
-                param.low,
-                param.high,
+                param_low,
+                param_high,
             )
 
-            in_par_values[param.name] = (param.high + param.low) / 2
+            in_par_values[param.name] = (param_high + param_low) / 2
 
         for param in prof._fixed():
             in_par_values[param.name] = param.value
             in_par_fixed[param.name] = True
 
         for param in prof._shared():
-            in_par_values[param.name] = (param.high + param.low) / 2
+            param_low = param.low
+            param_high = param.high
+
+            if param.name in ["vel_width"]:
+                param_low = np.log10(param_low)
+                param_high = np.log10(param_high)
+
+            in_par_values[param.name] = (param_high + param_low) / 2
             in_par_tied[param.name] = lambda m, mn=param.shared, pn=param.name: getattr(
                 m[mn], pn
             )
@@ -191,6 +202,7 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err):
     _, indices, _ = model_to_fit_params(full_model)
 
     fitter = TRFLSQFitter(calc_uncertainties=True)
+
     fit_mod = fitter(full_model, rest_wave, flux, weights=1 / flux_err, maxiter=10000)
     cov = fitter.fit_info["param_cov"]
 
@@ -215,6 +227,13 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err):
     #     color="C3",
     # )
 
+    # for sm in fit_mod:
+    #     if sm.name in ["shift", "base"]:
+    #         continue
+
+    #     ax.plot(rest_wave, sm(rest_wave), label=f"{sm.name}")
+
+    # ax.legend()
     # fig.savefig("/Users/nmearl/Downloads/lsq_fit.png")
 
     starters = {}
@@ -227,7 +246,9 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err):
 
     _, inds, _ = model_to_fit_params(fit_mod)
 
-    for pn, pv, pe in zip(np.array(fit_mod.param_names)[inds], fit_mod.parameters[inds], param_uncerts):
+    for pn, pv, pe in zip(
+        np.array(fit_mod.param_names)[inds], fit_mod.parameters[inds], param_uncerts
+    ):
         sm_idx = int(pn.split("_")[-1])
         pn = "_".join(pn.split("_")[:-1])
         sm = fit_mod[sm_idx]
@@ -242,7 +263,7 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err):
         print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
 
         if samp_name in indep_params:
-            if pn in ['apocenter']:
+            if pn in ["apocenter"]:
                 ux = unp.cos(upv)
                 x = unp.nominal_values(ux)
                 xe = unp.std_devs(ux)
@@ -254,7 +275,7 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err):
                 starters[f"{samp_name}_x"] = (x, 2 * xe)
                 starters[f"{samp_name}_y"] = (y, 2 * ye)
 
-            if pn in ["inner_radius", "delta_radius", "sigma"]:
+            if pn in ["inner_radius", "delta_radius", "sigma", "vel_width"]:
                 upv = 10**upv
                 pv = unp.nominal_values(upv)
                 pe = unp.std_devs(upv)
@@ -262,24 +283,5 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err):
             print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
 
             starters[samp_name] = (pv, pe * 5)
-
-    # for sm in fit_mod:
-    #     if sm.name in ["shift", "base"]:
-    #         continue
-
-    #     _, inds, _ = model_to_fit_params(sm)
-
-    #     for pn, pv in zip(np.array(sm.param_names)[inds], sm.parameters[inds]):
-    #         samp_name = f"{sm.name}_{pn}"
-
-    #         if samp_name in indep_params:
-    #             if pn in ['apocenter']:
-    #                 starters[f"{samp_name}_x"] = np.cos(pv)
-    #                 starters[f"{samp_name}_y"] = np.sin(pv)
-
-    #             if pn in ["inner_radius", "delta_radius", "sigma"]:
-    #                 pv = 10**pv
-
-    #             starters[samp_name] = pv
 
     return starters
