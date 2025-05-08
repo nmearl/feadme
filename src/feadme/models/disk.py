@@ -48,9 +48,11 @@ def doppler_factor(
     dc = xi**0.5 * scale ** (3 / 2) * (1 - e * cosphiphinot) ** 0.5
     dd = b_div_r * (1 - e * cosphiphinot) ** 0.5 * sini * sinphi
     de = xi**0.5 * scale**0.5 * (1 - sini**2 * cosphi**2) ** 0.5
-    # de = jnp.where(de == 0.0, FLOAT_EPSILON, de)
+    de = jnp.where(de == 0.0, FLOAT_EPSILON, de)
 
     inv_dop = gamma * (da - db / dc + dd / de)
+
+    # jax.debug.print("{}", inv_dop)
 
     return inv_dop**-1
 
@@ -62,11 +64,10 @@ def intensity(
     # Eracleous et al, eq 18; returned units are erg / cm^2
     # exponent = -((1 + X - D) ** 2) / (2 * D**2) * (c_cgs / sigma) ** 2
     exponent = -((1 + X - D) ** 2) / (2 * D**2) * (nu0 / sigma) ** 2
-    # exponent = jnp.where(exponent < -37, -37, exponent)
+    exponent = jnp.where(exponent < -37, -37, exponent)
 
     # res = (xi**-q * c_cgs) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
     res = (xi**-q) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
-    res = jnp.where(exponent < -37, 0, res)
 
     return res
 
