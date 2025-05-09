@@ -22,6 +22,8 @@ from ..utils import dict_to_namedtuple
 import astropy.uncertainty as unc
 import uncertainties.unumpy as unp
 
+FLOAT_EPSILON = 1e-6
+
 
 class DiskProfileModel(Fittable1DModel):
     center = Parameter()
@@ -279,6 +281,9 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err):
                 upv = 10**upv
                 pv = unp.nominal_values(upv)
                 pe = unp.std_devs(upv)
+
+            if pe < FLOAT_EPSILON:
+                pe = 1
 
             print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
 
