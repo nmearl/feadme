@@ -153,17 +153,38 @@ def plot_results(
     flux_err,
     label,
 ):
-    plot_trace(idata, output_dir)
-    plot_hdi(wave, flux, flux_err, idata, output_dir)
-    plot_model_fit(
-        wave,
-        flux,
-        flux_err,
-        idata,
-        results_summary,
-        template,
-        output_dir,
-        label,
-    )
-    plot_corner(idata, output_dir)
-    plot_corner_priors(idata, output_dir)
+    # Wrap each plotting function in a try-except block
+    # to handle potential errors
+    try:
+        plot_trace(idata, output_dir)
+    except Exception as e:
+        print(f"Error plotting trace: {e}")
+    
+    try:
+        plot_hdi(wave, flux, flux_err, idata, output_dir)
+    except Exception as e:
+        print(f"Error plotting HDI: {e}")
+
+    try:
+        plot_model_fit(
+            wave,
+            flux,
+            flux_err,
+            idata,
+            results_summary,
+            template,
+            output_dir,
+            label,
+        )
+    except Exception as e:
+        print(f"Error plotting model fit: {e}")
+
+    try:
+        plot_corner(idata, output_dir)
+    except Exception as e:
+        print(f"Error plotting corner: {e}")
+
+    try:
+        plot_corner_priors(idata, output_dir)
+    except Exception as e:
+        print(f"Error plotting corner priors: {e}")
