@@ -37,8 +37,9 @@ class DiskProfileModel(Fittable1DModel):
     scale = Parameter()
     offset = Parameter()
 
-    def __init__(self, template, *args, **kwargs):
+    def __init__(self, template, use_quad=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._use_quad = use_quad
 
         self._template = dict_to_namedtuple("NTemplate", template.model_dump())
 
@@ -55,7 +56,7 @@ class DiskProfileModel(Fittable1DModel):
         )
         del pars[f"{self.name}_delta_radius"]
 
-        res = evaluate_disk_model(self._template, x, pars)[0]
+        res = evaluate_disk_model(self._template, x, pars, use_quad=self._use_quad)[0]
         
         return res
 
@@ -84,7 +85,7 @@ class LineProfileModel(Fittable1DModel):
         return res
 
 
-def lsq_model_fitter(template, rest_wave, flux, flux_err):
+def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False):
     # Construct masks
     mask = [
         np.bitwise_and(rest_wave > m.lower_limit, rest_wave < m.upper_limit)
@@ -137,6 +138,7 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err):
             name=prof.name,
             bounds=in_par_bounds,
             fixed=in_par_fixed,
+            use_quad=use_quad,
         )
 
         full_model += disk_mod
@@ -205,7 +207,7 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err):
 
     fitter = TRFLSQFitter(calc_uncertainties=True)
 
-    fit_mod = fitter(full_model, rest_wave, flux, weights=1 / flux_err, maxiter=10000)
+    fit_mod = fitter(full_model, rest_wave, flux, maxiter=10000)
     cov = fitter.fit_info["param_cov"]
 
     # Parameter uncertainties = sqrt of diagonal
@@ -236,7 +238,7 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err):
     #     ax.plot(rest_wave, sm(rest_wave), label=f"{sm.name}")
 
     # ax.legend()
-    # fig.savefig("/Users/nmearl/Downloads/lsq_fit.png")
+    # fig.savefig(f"/Users/nmearl/Downloads/lsq_fit_{template.name}_{template.mjd}.png")
 
     starters = {}
 

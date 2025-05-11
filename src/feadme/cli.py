@@ -111,7 +111,7 @@ def run(
         # if "ZTF" not in str(template_path):
         #     continue
 
-        # if "ZTF18aabylvn" not in str(template_path):  # ZTF18aacdvjp
+        # if "ZTF18aaylbyr" not in str(template_path):  # ZTF18aacdvjp
         #     continue
 
         # Load the template
@@ -155,7 +155,7 @@ def run(
             Path(local_output_dir).mkdir(parents=True)
 
         # Convert template prior distributions based on LSQ fit
-        starters = lsq_model_fitter(template, wave, flux, flux_err)
+        starters = lsq_model_fitter(template, wave, flux, flux_err, use_quad=use_quad)
 
         for prof in template.disk_profiles + template.line_profiles:
             for param in prof._independent():
