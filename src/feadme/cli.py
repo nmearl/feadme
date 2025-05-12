@@ -155,9 +155,9 @@ def run(
             Path(local_output_dir).mkdir(parents=True)
 
         # Check if the output file already exists
-        previous_run = Path(f"{local_output_dir}/{label}.nc").exists()
+        previous_run_exists = Path(f"{local_output_dir}/{local_label}.nc").exists()
 
-        if previous_run:
+        if previous_run_exists:
             logger.info(f"Output file already exists. Skipping sampling.")
             continue
 
