@@ -154,6 +154,13 @@ def run(
         if not Path(local_output_dir).exists():
             Path(local_output_dir).mkdir(parents=True)
 
+        # Check if the output file already exists
+        previous_run = Path(f"{local_output_dir}/{label}.nc").exists()
+
+        if previous_run:
+            logger.info(f"Output file already exists. Skipping sampling.")
+            continue
+
         # Convert template prior distributions based on LSQ fit
         starters = lsq_model_fitter(template, wave, flux, flux_err, use_quad=use_quad)
 
