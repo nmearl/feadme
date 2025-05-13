@@ -207,7 +207,7 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False):
 
     fitter = TRFLSQFitter(calc_uncertainties=True)
 
-    fit_mod = fitter(full_model, rest_wave, flux, maxiter=10000)
+    fit_mod = fitter(full_model, rest_wave, flux, weights=1 / flux_err, maxiter=10000)
     cov = fitter.fit_info["param_cov"]
 
     # Parameter uncertainties = sqrt of diagonal
@@ -276,8 +276,8 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False):
                 y = unp.nominal_values(uy)
                 ye = unp.std_devs(uy)
 
-                starters[f"{samp_name}_x"] = (x, 2 * xe)
-                starters[f"{samp_name}_y"] = (y, 2 * ye)
+                starters[f"{samp_name}_x"] = (x, 5 * xe)
+                starters[f"{samp_name}_y"] = (y, 5 * ye)
 
             if pn in ["inner_radius", "delta_radius", "sigma", "vel_width"]:
                 upv = 10**upv
