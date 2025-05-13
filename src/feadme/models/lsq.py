@@ -153,7 +153,14 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False):
         line_temp.disk_profiles = []
         line_temp.line_profiles = [prof]
 
-        for param in prof._independent():
+        # Find shared profiles whose parent doesn't exist; make them independent
+        _shared_orphans = [
+            param
+            for param in prof._shared()
+            if param.shared not in [p.name for p in template.all_profiles]
+        ]
+
+        for param in prof._independent() + _shared_orphans:
             param_low = param.low
             param_high = param.high
 
@@ -172,7 +179,7 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False):
             in_par_values[param.name] = param.value
             in_par_fixed[param.name] = True
 
-        for param in prof._shared():
+        for param in [x for x in prof._shared() if x not in _shared_orphans]:
             param_low = param.low
             param_high = param.high
 

@@ -107,10 +107,20 @@ def disk_model(
             else:
                 reparam_config[samp_name] = TransformReparam()
 
+    # Find shared profiles whose parent doesn't exist; make them independent
+    _shared_orphans = {
+        prof.name: [
+            param
+            for param in prof._shared()
+            if param.shared not in [p.name for p in template.all_profiles]
+        ]
+        for prof in template.all_profiles
+    }
+
     # Pre-compute all profiles to iterate over
     with numpyro.handlers.reparam(config=reparam_config):
         for prof in template.all_profiles:
-            for param in prof.independent:
+            for param in prof.independent + _shared_orphans[prof.name]:
                 samp_name = f"{prof.name}_{param.name}"
 
                 if param.distribution == Distribution.uniform:
@@ -205,7 +215,7 @@ def disk_model(
 
     for prof in template.all_profiles:
         # Sample all shared parameters
-        for param in prof.shared:
+        for param in [x for x in prof.shared if x not in _shared_orphans[prof.name]]:
             samp_name = f"{prof.name}_{param.name}"
             param_mods[samp_name] = numpyro.deterministic(
                 samp_name, param_mods[f"{param.shared}_{param.name}"]
