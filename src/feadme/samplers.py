@@ -49,7 +49,7 @@ class Sampler(ABC):
         ]
 
         if len(mask) > 1:
-            mask = np.bitwise_or(*mask)
+            mask = np.bitwise_or.reduce(mask)
         else:
             mask = mask[0]
 

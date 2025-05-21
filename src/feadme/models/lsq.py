@@ -93,7 +93,7 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False):
     ]
 
     if len(mask) > 1:
-        mask = np.bitwise_or(*mask)
+        mask = np.bitwise_or.reduce(mask)
     else:
         mask = mask[0]
 
@@ -236,6 +236,10 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False):
     #     fit_mod(rest_wave),
     #     label="Model Fit",
     #     color="C3",
+    # )
+
+    # ax.set_title(
+    #     f"LSQ Fit to {template.name} {template.mjd} ({uuid4()})"
     # )
 
     # for sm in fit_mod:
