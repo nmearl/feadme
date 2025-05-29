@@ -239,7 +239,7 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False):
     # )
 
     # ax.set_title(
-    #     f"LSQ Fit to {template.name} {template.mjd} ({uuid4()})"
+    #     f"LSQ Fit to {template.name} {template.mjd} ({template.redshift})"
     # )
 
     # for sm in fit_mod:
@@ -295,10 +295,10 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False):
                 pv = unp.nominal_values(upv)
                 pe = unp.std_devs(upv)
 
+                print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
+
             if pe < FLOAT_EPSILON:
                 pe = 1
-
-            print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
 
             starters[samp_name] = (pv, pe * 5)
 

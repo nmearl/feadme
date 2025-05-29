@@ -213,18 +213,19 @@ def disk_model(
         "white_noise", dist.Uniform(template.white_noise.low, template.white_noise.high)
     )
 
+    # Include fixed fields
     for prof in template.all_profiles:
-        # Sample all shared parameters
+        for param in prof.fixed:
+            param_mods[f"{prof.name}_{param.name}"] = numpyro.deterministic(
+                f"{prof.name}_{param.name}", param.value
+            )
+
+    # Sample all shared parameters
+    for prof in template.all_profiles:
         for param in [x for x in prof.shared if x not in _shared_orphans[prof.name]]:
             samp_name = f"{prof.name}_{param.name}"
             param_mods[samp_name] = numpyro.deterministic(
                 samp_name, param_mods[f"{param.shared}_{param.name}"]
-            )
-
-        # Include fixed fields
-        for param in prof.fixed:
-            param_mods[f"{prof.name}_{param.name}"] = numpyro.deterministic(
-                f"{prof.name}_{param.name}", param.value
             )
 
     # Define outer radius for each disk profile

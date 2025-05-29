@@ -111,7 +111,7 @@ def run(
         # if "ZTF" not in str(template_path):
         #     continue
 
-        # if "ZTF19aapkuvx" not in str(template_path):  # ZTF18aacdvjp
+        # if "ZTF19aadgigp" not in str(template_path):  # ZTF18aacdvjp
         #     continue
 
         # Load the template
@@ -174,24 +174,6 @@ def run(
                 elif param.distribution == "uniform":
                     param.distribution = "normal"
 
-        # part_disk_model = partial(disk_model, use_quad=use_quad)
-
-        # print(starters)
-        # unconstrained_starters = unconstrain_fn(
-        #     numpyro.handlers.seed(disk_model, rng_seed=1),
-        #     (template, wave, flux, flux_err),
-        #     {},
-        #     starters,
-        # )
-        # print(unconstrained_starters)
-        # constrained_starters = constrain_fn(
-        #     numpyro.handlers.seed(part_disk_model, rng_seed=1),
-        #     (template, wave, flux, flux_err),
-        #     {},
-        #     unconstrained_starters,
-        # )
-        # print(constrained_starters)
-
         nuts_sampler = NUTSSampler(
             disk_model,
             template,
@@ -209,7 +191,6 @@ def run(
 
         if not nuts_sampler.check_convergence():
             nuts_sampler.sample(
-                # init_strategy=init_to_value(values=unconstrained_starters)
                 init_strategy=init_to_median(num_samples=1000)
             )
             nuts_sampler.write_run()

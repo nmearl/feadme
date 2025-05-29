@@ -216,6 +216,14 @@ class Sampler(ABC):
             f"{prof.name}_{param.name}"
             for prof in self._template.disk_profiles + self._template.line_profiles
             for param in prof.fixed
+        ] 
+        
+        # Add parameters whose shared parameter model is fixed
+        ff += [
+            f"{prof.name}_{param.name}"
+            for prof in self._template.disk_profiles + self._template.line_profiles
+            for param in prof.shared
+            if f"{param.shared}_{param.name}" in ff
         ]
 
         if self._template.white_noise.fixed:
@@ -297,6 +305,7 @@ class Sampler(ABC):
             self._flux,
             self._flux_err,
             self.label,
+            self.fixed_fields
         )
 
 

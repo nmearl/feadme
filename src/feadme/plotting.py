@@ -10,10 +10,16 @@ from .compose import evaluate_disk_model
 az.rcParams["plot.max_subplots"] = 200
 
 
-def plot_trace(idata, output_dir):
+def plot_trace(idata, output_dir, fixed_fields=None):
+    fixed_fields = fixed_fields or []
+
     axes = az.plot_trace(
         idata,
-        var_names=[x for x in idata.posterior.keys() if "_flux" not in x],
+        var_names=[
+            x
+            for x in idata.posterior.keys()
+            if "_flux" not in x and x not in fixed_fields
+        ],
         compact=True,
         backend_kwargs={"layout": "constrained"},
     )
@@ -99,11 +105,13 @@ def plot_model_fit(
     plt.close(fig)
 
 
-def plot_corner(idata, output_dir):
+def plot_corner(idata, output_dir, fixed_fields=None):
+    fixed_fields = fixed_fields or []
+
     names = [
         x
         for x in idata.posterior.keys()
-        if "_flux" not in x and "_base" not in x and "_offset" not in x
+        if "_flux" not in x and "_base" not in x and x not in fixed_fields
     ]
     fig = corner.corner(
         idata.posterior,
@@ -121,11 +129,13 @@ def plot_corner(idata, output_dir):
     plt.close(fig)
 
 
-def plot_corner_priors(idata, output_dir):
+def plot_corner_priors(idata, output_dir, fixed_fields=None):
+    fixed_fields = fixed_fields or []
+
     names = [
         x
         for x in idata.prior.keys()
-        if "_flux" not in x and "_base" not in x and "_offset" not in x
+        if "_flux" not in x and "_base" not in x and x not in fixed_fields
     ]
     fig = corner.corner(
         idata.prior,
@@ -152,6 +162,7 @@ def plot_results(
     flux,
     flux_err,
     label,
+    fixed_fields=None,
 ):
     # Wrap each plotting function in a try-except block
     # to handle potential errors
@@ -159,7 +170,7 @@ def plot_results(
         plot_trace(idata, output_dir)
     except Exception as e:
         print(f"Error plotting trace: {e}")
-    
+
     try:
         plot_hdi(wave, flux, flux_err, idata, output_dir)
     except Exception as e:
@@ -167,24 +178,17 @@ def plot_results(
 
     try:
         plot_model_fit(
-            wave,
-            flux,
-            flux_err,
-            idata,
-            results_summary,
-            template,
-            output_dir,
-            label,
+            wave, flux, flux_err, idata, results_summary, template, output_dir, label
         )
     except Exception as e:
         print(f"Error plotting model fit: {e}")
 
     try:
-        plot_corner(idata, output_dir)
+        plot_corner(idata, output_dir, fixed_fields=fixed_fields)
     except Exception as e:
         print(f"Error plotting corner: {e}")
 
     try:
-        plot_corner_priors(idata, output_dir)
+        plot_corner_priors(idata, output_dir, fixed_fields=fixed_fields)
     except Exception as e:
         print(f"Error plotting corner priors: {e}")
