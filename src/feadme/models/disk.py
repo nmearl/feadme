@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from quadax import GaussKronrodRule
+from quadax import GaussKronrodRule, quadgk
 
 FLOAT_EPSILON = float(np.finfo(np.float32).tiny)
 ERR = 1e-5
@@ -63,7 +63,7 @@ def intensity(
 ) -> Array:
     # Eracleous et al, eq 18; returned units are erg / cm^2
     # exponent = -((1 + X - D) ** 2) / (2 * D**2) * (c_cgs / sigma) ** 2
-    exponent = -((1 + X - D) ** 2) / (2 * D**2) * (nu0 / sigma) ** 2
+    exponent = -((1 + X - D) ** 2 * nu0**2) / (2 * D**2 * sigma**2)
     exponent = jnp.where(exponent < -37, -37, exponent)
 
     # res = (xi**-q * c_cgs) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
@@ -158,14 +158,14 @@ def jax_integrate(
 ) -> Array:
     N_xi, N_phi = 30, 50
 
-    # xi = jax.lax.cond(
-    #     xi2 / xi1 > 10,
-    #     lambda _: jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi),
-    #     lambda _: jnp.linspace(xi1, xi2, N_xi),
-    #     operand=None,
-    # )
+    xi = jax.lax.cond(
+        xi2 / xi1 > 100,
+        lambda _: jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi).squeeze(),
+        lambda _: jnp.linspace(xi1, xi2, N_xi).squeeze(),
+        operand=None,
+    )
 
-    xi = jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi).squeeze()
+    # xi = jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi).squeeze()
     phi = jnp.linspace(phi1, phi2, N_phi).squeeze()
 
     XI, PHI = jnp.meshgrid(

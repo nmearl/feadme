@@ -6,10 +6,7 @@ import jax
 import numpy as np
 from astropy.table import Table
 from loguru import logger
-from numpyro.infer import init_to_median, init_to_value
-from numpyro.infer.util import unconstrain_fn, constrain_fn
-import numpyro
-from functools import partial
+from numpyro.infer import init_to_median
 
 from .compose import disk_model
 from .parser import Template
@@ -104,16 +101,6 @@ def run(
         template_files = sorted(template_file.glob("*.json"))
 
     for template_path in template_files:
-        if "14li" in str(template_path):
-            # Skip the 14li template for now
-            continue
-
-        # if "ZTF" not in str(template_path):
-        #     continue
-
-        # if "ZTF19aadgigp" not in str(template_path):  # ZTF18aacdvjp
-        #     continue
-
         # Load the template
         with open(template_path, "r") as f:
             loaded_data = json.load(f)
@@ -158,7 +145,7 @@ def run(
         previous_run_exists = Path(f"{local_output_dir}/{local_label}.nc").exists()
 
         if previous_run_exists:
-            logger.info(f"Output file already exists. Skipping sampling.")
+            logger.info("Output file already exists. Skipping sampling.")
             continue
 
         # Convert template prior distributions based on LSQ fit
@@ -167,7 +154,13 @@ def run(
         for prof in template.disk_profiles + template.line_profiles:
             for param in prof._independent():
                 param.loc = starters[f"{prof.name}_{param.name}"][0]
-                param.scale = starters[f"{prof.name}_{param.name}"][1]
+                param.scale = (param.high - param.low) / np.sqrt(2 * np.pi)
+
+                if "log" in param.distribution:
+                    # param.scale = np.log(param.scale)
+                    param.scale = (
+                        np.log10(param.high) - np.log10(param.low)
+                    ) / np.sqrt(2 * np.pi)
 
                 if param.distribution == "log_uniform":
                     param.distribution = "log_normal"
