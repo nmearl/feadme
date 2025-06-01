@@ -157,10 +157,9 @@ def run(
                 param.scale = (param.high - param.low) / np.sqrt(2 * np.pi)
 
                 if "log" in param.distribution:
-                    # param.scale = np.log(param.scale)
-                    param.scale = (
+                    param.scale = 10 ** ((
                         np.log10(param.high) - np.log10(param.low)
-                    ) / np.sqrt(2 * np.pi)
+                    ) / np.sqrt(2 * np.pi))
 
                 if param.distribution == "log_uniform":
                     param.distribution = "log_normal"
