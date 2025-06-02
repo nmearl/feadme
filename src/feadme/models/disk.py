@@ -158,14 +158,15 @@ def jax_integrate(
 ) -> Array:
     N_xi, N_phi = 30, 50
 
-    xi = jax.lax.cond(
-        xi2 / xi1 > 100,
-        lambda _: jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi).squeeze(),
-        lambda _: jnp.linspace(xi1, xi2, N_xi).squeeze(),
-        operand=None,
-    )
+    # xi = jax.lax.cond(
+    #     xi2 / xi1 > 100,
+    #     lambda _: jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi).squeeze(),
+    #     lambda _: jnp.linspace(xi1, xi2, N_xi).squeeze(),
+    #     operand=None,
+    # )
 
-    # xi = jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi).squeeze()
+    xi = jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi).squeeze()
+    # xi = jnp.linspace(xi1, xi2, N_xi).squeeze()
     phi = jnp.linspace(phi1, phi2, N_phi).squeeze()
 
     XI, PHI = jnp.meshgrid(
