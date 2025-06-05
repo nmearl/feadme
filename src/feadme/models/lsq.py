@@ -1,7 +1,7 @@
 from uuid import uuid4
 
 from astropy.modeling import Fittable1DModel, Parameter
-from astropy.modeling.models import Gaussian1D, Const1D, Shift
+from astropy.modeling.models import Gaussian1D, Const1D, Shift, Polynomial1D
 from astropy.modeling.fitting import (
     LMLSQFitter,
     TRFLSQFitter,
@@ -57,7 +57,7 @@ class DiskProfileModel(Fittable1DModel):
         del pars[f"{self.name}_delta_radius"]
 
         res = evaluate_disk_model(self._template, x, pars, use_quad=self._use_quad)[0]
-        
+
         return res
 
 
@@ -81,11 +81,11 @@ class LineProfileModel(Fittable1DModel):
                 pars[f"{self._name}_{pn}"] = 10 ** pars[f"{self._name}_{pn}"]
 
         res = evaluate_disk_model(self._template, x, pars)[0]
-        
+
         return res
 
 
-def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False):
+def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False, force_values=None, show_plot=False):
     # Construct masks
     mask = [
         np.bitwise_and(rest_wave > m.lower_limit, rest_wave < m.upper_limit)
@@ -126,7 +126,12 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False):
                 param_high,
             )
 
-            in_par_values[param.name] = (param_high + param_low) / 2
+            if force_values is not None and f"{prof.name}_{param.name}" in force_values:
+                param_val = force_values[f"{prof.name}_{param.name}"]
+                param_val = np.log10(param_val) if param.name in ["inner_radius", "delta_radius", "sigma"] else param_val
+                in_par_values[param.name] = param_val
+            else:
+                in_par_values[param.name] = (param_high + param_low) / 2
 
         for param in prof._fixed():
             in_par_values[param.name] = param.value
@@ -173,7 +178,12 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False):
                 param_high,
             )
 
-            in_par_values[param.name] = (param_high + param_low) / 2
+            if force_values is not None and f"{prof.name}_{param.name}" in force_values:
+                param_val = force_values[f"{prof.name}_{param.name}"]
+                param_val = np.log10(param_val) if param.name in ["vel_width"] else param_val
+                in_par_values[param.name] = param_val
+            else:
+                in_par_values[param.name] = (param_high + param_low) / 2
 
         for param in prof._fixed():
             in_par_values[param.name] = param.value
@@ -220,36 +230,60 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False):
     # Parameter uncertainties = sqrt of diagonal
     param_uncerts = np.sqrt(np.diag(cov))
 
-    # fig, ax = plt.subplots()
+    if show_plot:
+        fig, ax = plt.subplots()
 
-    # ax.errorbar(
-    #     rest_wave,
-    #     flux,
-    #     yerr=flux_err,
-    #     fmt="o",
-    #     color="grey",
-    #     zorder=-10,
-    #     alpha=0.25,
-    # )
-    # ax.plot(
-    #     rest_wave,
-    #     fit_mod(rest_wave),
-    #     label="Model Fit",
-    #     color="C3",
-    # )
+        new_rest = np.linspace(
+            rest_wave.min(),
+            rest_wave.max(),
+            1000,
+        )
 
-    # ax.set_title(
-    #     f"LSQ Fit to {template.name} {template.mjd} ({template.redshift})"
-    # )
+        ax.errorbar(
+            rest_wave,
+            flux,
+            yerr=flux_err,
+            fmt="o",
+            color="grey",
+            zorder=-10,
+            alpha=0.25,
+        )
+        ax.plot(
+            new_rest,
+            fit_mod(new_rest),
+            label="Model Fit",
+            color="C3",
+        )
 
-    # for sm in fit_mod:
-    #     if sm.name in ["shift", "base"]:
-    #         continue
+        ax.set_title(f"LSQ Fit to {template.name} {template.mjd} ({template.redshift})")
 
-    #     ax.plot(rest_wave, sm(rest_wave), label=f"{sm.name}")
+        for sm in fit_mod:
+            if sm.name in ["shift", "base"]:
+                continue
 
-    # ax.legend()
-    # fig.savefig(f"/Users/nmearl/Downloads/lsq_fit_{template.name}_{template.mjd}.png")
+            ax.plot(new_rest, sm(new_rest), label=f"{sm.name}")
+
+        txt = ""
+        for pn, pv, pe in zip(
+            np.array(fit_mod.param_names)[indices],
+            fit_mod.parameters[indices],
+            param_uncerts,
+        ):
+            txt += f"{pn:15}: {pv:.3f}\n"# ± {pe:.3f}\n"
+
+        ax.text(
+            0.05,
+            0.95,
+            txt,
+            transform=ax.transAxes,
+            fontsize=8,
+            family="monospace",
+            verticalalignment="top",
+            bbox=dict(facecolor="white", alpha=0.5, edgecolor="black"),
+        )
+
+        ax.legend()
+        # fig.savefig(f"/Users/nmearl/Downloads/lsq_fit_{template.name}_{template.mjd}.png")
 
     starters = {}
 

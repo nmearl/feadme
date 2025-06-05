@@ -6,6 +6,7 @@ import arviz as az
 import numpy as np
 
 from .compose import evaluate_disk_model
+from .parser import Template
 
 az.rcParams["plot.max_subplots"] = 200
 
@@ -60,11 +61,11 @@ def plot_model_fit(
     flux_err,
     idata,
     results_summary,
-    template,
+    template: Template,
     output_dir,
     label,
 ):
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(layout='constrained')
     ax.errorbar(
         wave, flux, yerr=flux_err, fmt="o", color="grey", zorder=-10, alpha=0.25
     )
@@ -89,16 +90,20 @@ def plot_model_fit(
         if "_flux" not in var
     }
 
-    res_flux, res_disk_flux, res_line_flux = evaluate_disk_model(
-        template, wave, res_pars
+    new_wave = np.linspace(
+        wave.min(), wave.max(), num=1000
     )
-    ax.plot(wave, res_flux, label="R. Model Fit", color="C3")
-    ax.plot(wave, res_disk_flux, label="R. Disk Model", color="C4")
-    ax.plot(wave, res_line_flux, label="R. Line Model", color="C5")
+
+    res_flux, res_disk_flux, res_line_flux = evaluate_disk_model(
+        template, new_wave, res_pars
+    )
+    ax.plot(new_wave, res_flux, label="R. Model Fit", color="C3")
+    ax.plot(new_wave, res_disk_flux, label="R. Disk Model", color="C4")
+    ax.plot(new_wave, res_line_flux, label="R. Line Model", color="C5")
 
     ax.set_ylabel("Flux [mJy]")
     ax.set_xlabel("Wavelength [AA]")
-    ax.set_title(f"{label} Model Fit")
+    ax.set_title(f"{label} {template.mjd} Model Fit")
     ax.legend()
 
     fig.savefig(f"{output_dir}/model_fit.png")
