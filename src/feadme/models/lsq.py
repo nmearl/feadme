@@ -40,8 +40,7 @@ class DiskProfileModel(Fittable1DModel):
     def __init__(self, template, use_quad=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._use_quad = use_quad
-
-        self._template = dict_to_namedtuple("NTemplate", template.model_dump())
+        self._template = template
 
     def evaluate(self, x, *args):
         pars = {}
@@ -68,8 +67,7 @@ class LineProfileModel(Fittable1DModel):
 
     def __init__(self, template, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-        self._template = dict_to_namedtuple("NTemplate", template.model_dump())
+        self._template = template
 
     def evaluate(self, x, *args):
         pars = {}
