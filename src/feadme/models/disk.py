@@ -15,8 +15,12 @@ c_kms = const.c.to(u.km / u.s).value
 fixed_quadgk51 = GaussKronrodRule(order=51).integrate
 fixed_quadgk31 = GaussKronrodRule(order=31).integrate
 
+N_xi, N_phi = 30, 50
+unit_xi = jnp.linspace(0.0, 1.0, N_xi)
+unit_phi = jnp.linspace(0.0, 1.0, N_phi)
+XI_u, PHI_u = jnp.meshgrid(unit_xi, unit_phi, indexing="ij")
 
-@jax.jit
+
 def doppler_factor(
     xi: ArrayLike, phi: ArrayLike, inc: float, e: float, phi0: float
 ) -> Array:
@@ -57,14 +61,13 @@ def doppler_factor(
     return inv_dop**-1
 
 
-@jax.jit
 def intensity(
     xi: ArrayLike, X: ArrayLike, D: float, sigma: float, q: float, nu0: float
 ) -> Array:
     # Eracleous et al, eq 18; returned units are erg / cm^2
     # exponent = -((1 + X - D) ** 2) / (2 * D**2) * (c_cgs / sigma) ** 2
     exponent = -((1 + X - D) ** 2 * nu0**2) / (2 * D**2 * sigma**2)
-    exponent = jnp.where(exponent < -37, -37, exponent)
+    exponent = jnp.clip(exponent, min=-37)
 
     # res = (xi**-q * c_cgs) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
     res = (xi**-q) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
@@ -72,7 +75,6 @@ def intensity(
     return res
 
 
-@jax.jit
 def Psi(xi: ArrayLike, phi: ArrayLike, inc: float) -> Array:
     # Eracleous et al, eq 8
     return 1 + (1 / xi) * (
@@ -80,7 +82,6 @@ def Psi(xi: ArrayLike, phi: ArrayLike, inc: float) -> Array:
     )
 
 
-@jax.jit
 def integrand(
     phi: ArrayLike,
     xi_tilde: ArrayLike,
@@ -105,7 +106,6 @@ def integrand(
     return res
 
 
-@jax.jit
 def _inner_quad(
     xi: ArrayLike,
     phi1: float,
@@ -156,30 +156,17 @@ def jax_integrate(
     phi0: float,
     nu0: float,
 ) -> Array:
-    N_xi, N_phi = 30, 50
+    xi = jnp.exp(jnp.log(xi1) + (jnp.log(xi2) - jnp.log(xi1)) * XI_u)
+    phi = phi1 + (phi2 - phi1) * PHI_u
 
-    # xi = jax.lax.cond(
-    #     xi2 / xi1 > 100,
-    #     lambda _: jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi).squeeze(),
-    #     lambda _: jnp.linspace(xi1, xi2, N_xi).squeeze(),
-    #     operand=None,
-    # )
+    res = jax.vmap(
+        lambda phi_arr, xi_arr: integrand(
+            phi_arr, xi_arr, X[:, None], inc, sigma, q, e, phi0, nu0
+        ),
+        in_axes=(0, 0),
+    )(phi, xi)
 
-    xi = jnp.logspace(jnp.log10(xi1), jnp.log10(xi2), N_xi).squeeze()
-    # xi = jnp.linspace(xi1, xi2, N_xi).squeeze()
-    phi = jnp.linspace(phi1, phi2, N_phi).squeeze()
-
-    XI, PHI = jnp.meshgrid(
-        xi,
-        phi,
-        indexing="ij",
-    )
-
-    res = jax.vmap(integrand, in_axes=(0, 0, None, None, None, None, None, None, None))(
-        PHI, XI, X[:, None], inc, sigma, q, e, phi0, nu0
-    )
-
-    inner_integral = jnp.trapezoid(res, x=phi, axis=2)
-    outer_integral = jnp.trapezoid(inner_integral, x=xi, axis=0)
+    inner_integral = jnp.trapezoid(res, x=phi[0], axis=2)
+    outer_integral = jnp.trapezoid(inner_integral, x=xi[:,0], axis=0)
 
     return outer_integral
