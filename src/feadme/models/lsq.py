@@ -55,7 +55,7 @@ class DiskProfileModel(Fittable1DModel):
         )
         del pars[f"{self.name}_delta_radius"]
 
-        res = evaluate_disk_model(self._template, x, pars, use_quad=self._use_quad)[0]
+        res = evaluate_disk_model(self._template, x, pars)[0]
 
         return res
 
@@ -83,7 +83,15 @@ class LineProfileModel(Fittable1DModel):
         return res
 
 
-def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False, force_values=None, show_plot=False):
+def lsq_model_fitter(
+    template,
+    rest_wave,
+    flux,
+    flux_err,
+    use_quad=False,
+    force_values=None,
+    show_plot=False,
+):
     # Construct masks
     mask = [
         np.bitwise_and(rest_wave > m.lower_limit, rest_wave < m.upper_limit)
@@ -126,7 +134,11 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False, force_
 
             if force_values is not None and f"{prof.name}_{param.name}" in force_values:
                 param_val = force_values[f"{prof.name}_{param.name}"]
-                param_val = np.log10(param_val) if param.name in ["inner_radius", "delta_radius", "sigma"] else param_val
+                param_val = (
+                    np.log10(param_val)
+                    if param.name in ["inner_radius", "delta_radius", "sigma"]
+                    else param_val
+                )
                 in_par_values[param.name] = param_val
             else:
                 in_par_values[param.name] = (param_high + param_low) / 2
@@ -178,7 +190,9 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False, force_
 
             if force_values is not None and f"{prof.name}_{param.name}" in force_values:
                 param_val = force_values[f"{prof.name}_{param.name}"]
-                param_val = np.log10(param_val) if param.name in ["vel_width"] else param_val
+                param_val = (
+                    np.log10(param_val) if param.name in ["vel_width"] else param_val
+                )
                 in_par_values[param.name] = param_val
             else:
                 in_par_values[param.name] = (param_high + param_low) / 2
@@ -267,7 +281,7 @@ def lsq_model_fitter(template, rest_wave, flux, flux_err, use_quad=False, force_
             fit_mod.parameters[indices],
             param_uncerts,
         ):
-            txt += f"{pn:15}: {pv:.3f}\n"# ± {pe:.3f}\n"
+            txt += f"{pn:15}: {pv:.3f}\n"  # ± {pe:.3f}\n"
 
         ax.text(
             0.05,

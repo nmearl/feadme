@@ -47,7 +47,6 @@ def _compute_disk_flux(
     apocenter: float,
     scale: float = 1.0,
     offset: float = 0.0,
-    use_quad: bool = False,
 ) -> jnp.ndarray:
     nu = c_cgs / (wave * 1e-8)
     nu0 = c_cgs / (center * 1e-8)
@@ -55,7 +54,7 @@ def _compute_disk_flux(
 
     local_sigma = sigma * 1e5 * nu0 / c_cgs
 
-    res = quad_jax_integrate(
+    res = jax_integrate(
         inner_radius,
         outer_radius,
         0,
@@ -73,89 +72,96 @@ def _compute_disk_flux(
 
 
 @jax.jit
-def _evaluate_disk_model(
-    wave: jnp.ndarray, param_mods: dict, use_quad: bool = False
-):
-    total_disk_flux = jnp.zeros_like(wave)
-    total_line_flux = jnp.zeros_like(wave)
-
+def _evaluate_disk_model(wave: jnp.ndarray, disk_params: dict, line_params: dict):
     # Compute disk flux
-    if "disk_profiles" in param_mods:
-        centers = jnp.array(param_mods["disk_profiles"]["centers"])
-        inner_radii = jnp.array(param_mods["disk_profiles"]["inner_radii"])
-        outer_radii = jnp.array(param_mods["disk_profiles"]["outer_radii"])
-        sigmas = jnp.array(param_mods["disk_profiles"]["sigmas"])
-        inclinations = jnp.array(param_mods["disk_profiles"]["inclinations"])
-        qs = jnp.array(param_mods["disk_profiles"]["qs"])
-        eccentricities = jnp.array(param_mods["disk_profiles"]["eccentricities"])
-        apocenters = jnp.array(param_mods["disk_profiles"]["apocenters"])
-        scales = jnp.array(param_mods["disk_profiles"]["scales"])
-        offsets = jnp.array(param_mods["disk_profiles"]["offsets"])
+    prof_disk_flux = jax.vmap(
+        _compute_disk_flux,
+        in_axes=(None, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+    )(
+        wave,
+        disk_params["centers"],
+        disk_params["inner_radii"],
+        disk_params["outer_radii"],
+        disk_params["sigmas"],
+        disk_params["inclinations"],
+        disk_params["qs"],
+        disk_params["eccentricities"],
+        disk_params["apocenters"],
+        disk_params["scales"],
+        disk_params["offsets"],
+    )
 
-        prof_disk_flux = jax.vmap(
-            _compute_disk_flux,
-            in_axes=(None, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
-        )(wave, centers, inner_radii, outer_radii, sigmas, inclinations, qs,
-            eccentricities, apocenters, scales, offsets)
-        
-        total_disk_flux = jnp.sum(prof_disk_flux, axis=0)
+    total_disk_flux = jnp.sum(prof_disk_flux, axis=0)
 
     # Compute line flux
-    if "line_profiles" in param_mods:
-        centers = jnp.array(param_mods["line_profiles"]["centers"])
-        vel_widths = jnp.array(param_mods["line_profiles"]["vel_widths"])
-        amplitudes = jnp.array(param_mods["line_profiles"]["amplitudes"])
-        is_gauss = jnp.array(param_mods["line_profiles"]["shapes"])
+    prof_line_flux = jax.vmap(
+        _compute_line_flux,
+        in_axes=(None, 0, 0, 0, 0),
+    )(
+        wave,
+        line_params["centers"],
+        line_params["vel_widths"],
+        line_params["amplitudes"],
+        line_params["shapes"],
+    )
 
-        prof_line_flux = jax.vmap(
-            _compute_line_flux,
-            in_axes=(None, 0, 0, 0, 0),
-        )(wave, centers, vel_widths, amplitudes, is_gauss)
-
-        total_line_flux = jnp.sum(prof_line_flux, axis=0)
+    total_line_flux = jnp.sum(prof_line_flux, axis=0)
 
     total_flux = total_disk_flux + total_line_flux
 
     return total_flux, total_disk_flux, total_line_flux
 
 
-def evaluate_disk_model(
-    template: Template,
-    wave: jnp.ndarray,
-    param_mods: dict,
-    use_quad: bool = False
-):
-    
-    disk_profile_mods = {}
-    line_profile_mods = {}
+def evaluate_disk_model(template: Template, wave: jnp.ndarray, param_mods: dict):
+    disk_params = {
+        "centers": jnp.array(
+            [param_mods[f"{prof.name}_center"] for prof in template.disk_profiles]
+        ),
+        "inner_radii": jnp.array(
+            [param_mods[f"{prof.name}_inner_radius"] for prof in template.disk_profiles]
+        ),
+        "outer_radii": jnp.array(
+            [param_mods[f"{prof.name}_outer_radius"] for prof in template.disk_profiles]
+        ),
+        "sigmas": jnp.array(
+            [param_mods[f"{prof.name}_sigma"] for prof in template.disk_profiles]
+        ),
+        "inclinations": jnp.array(
+            [param_mods[f"{prof.name}_inclination"] for prof in template.disk_profiles]
+        ),
+        "qs": jnp.array(
+            [param_mods[f"{prof.name}_q"] for prof in template.disk_profiles]
+        ),
+        "eccentricities": jnp.array(
+            [param_mods[f"{prof.name}_eccentricity"] for prof in template.disk_profiles]
+        ),
+        "apocenters": jnp.array(
+            [param_mods[f"{prof.name}_apocenter"] for prof in template.disk_profiles]
+        ),
+        "scales": jnp.array(
+            [param_mods[f"{prof.name}_scale"] for prof in template.disk_profiles]
+        ),
+        "offsets": jnp.array(
+            [param_mods[f"{prof.name}_offset"] for prof in template.disk_profiles]
+        ),
+    }
 
-    for prof in template.disk_profiles:
-        disk_profile_mods.setdefault("centers", []).append(param_mods[f"{prof.name}_center"])
-        disk_profile_mods.setdefault("inner_radii", []).append(param_mods[f"{prof.name}_inner_radius"])
-        disk_profile_mods.setdefault("outer_radii", []).append(param_mods[f"{prof.name}_outer_radius"])
-        disk_profile_mods.setdefault("sigmas", []).append(param_mods[f"{prof.name}_sigma"])
-        disk_profile_mods.setdefault("inclinations", []).append(param_mods[f"{prof.name}_inclination"])
-        disk_profile_mods.setdefault("qs", []).append(param_mods[f"{prof.name}_q"])
-        disk_profile_mods.setdefault("eccentricities", []).append(param_mods[f"{prof.name}_eccentricity"])
-        disk_profile_mods.setdefault("apocenters", []).append(param_mods[f"{prof.name}_apocenter"])
-        disk_profile_mods.setdefault("scales", []).append(param_mods.get(f"{prof.name}_scale", 1.0))
-        disk_profile_mods.setdefault("offsets", []).append(param_mods.get(f"{prof.name}_offset", 0.0))
+    line_params = {
+        "centers": jnp.array(
+            [param_mods[f"{prof.name}_center"] for prof in template.line_profiles]
+        ),
+        "vel_widths": jnp.array(
+            [param_mods[f"{prof.name}_vel_width"] for prof in template.line_profiles]
+        ),
+        "amplitudes": jnp.array(
+            [param_mods[f"{prof.name}_amplitude"] for prof in template.line_profiles]
+        ),
+        "shapes": jnp.array(
+            [prof.shape == "gaussian" for prof in template.line_profiles]
+        ),
+    }
 
-    for prof in template.line_profiles:
-        line_profile_mods.setdefault("centers", []).append(param_mods[f"{prof.name}_center"])
-        line_profile_mods.setdefault("vel_widths", []).append(param_mods[f"{prof.name}_vel_width"])
-        line_profile_mods.setdefault("amplitudes", []).append(param_mods[f"{prof.name}_amplitude"])
-        line_profile_mods.setdefault("shapes", []).append(prof.shape == 'gaussian')
-
-    trans_param_mods = {}
-
-    if len(disk_profile_mods) > 0:
-        trans_param_mods["disk_profiles"] = disk_profile_mods
-
-    if len(line_profile_mods) > 0:
-        trans_param_mods["line_profiles"] = line_profile_mods
-    
-    return _evaluate_disk_model(wave, trans_param_mods, use_quad)
+    return _evaluate_disk_model(wave, disk_params, line_params)
 
 
 def disk_model(
@@ -163,22 +169,8 @@ def disk_model(
     wave: jnp.ndarray,
     flux: jnp.ndarray | None = None,
     flux_err: jnp.ndarray | None = None,
-    use_quad: bool = False,
 ):
     param_mods = {}
-
-    # Build re-parameterization configuration more efficiently
-    # reparam_config = {}  # "white_noise": TransformReparam()}
-
-    # for prof in template.all_profiles:
-    #     for param in prof.independent:
-    #         samp_name = f"{prof.name}_{param.name}"
-
-    #         if param.circular:
-    #             # reparam_config[f"{samp_name}_wrap"] = CircularReparam()
-    #             pass
-    #         else:
-    #             reparam_config[samp_name] = TransformReparam()
 
     # Find shared profiles whose parent doesn't exist; make them independent
     _shared_orphans = {
@@ -285,7 +277,8 @@ def disk_model(
                 f"{prof.name}_{param.name}", param.value
             )
 
-        # Sample all shared parameters
+    # Sample all shared parameters
+    for prof in template.all_profiles:
         for param in [x for x in prof.shared if x not in _shared_orphans[prof.name]]:
             samp_name = f"{prof.name}_{param.name}"
             param_mods[samp_name] = numpyro.deterministic(
@@ -312,7 +305,7 @@ def disk_model(
                 )
 
     total_flux, total_disk_flux, total_line_flux = evaluate_disk_model(
-        template, wave, param_mods, use_quad
+        template, wave, param_mods
     )
 
     # Construct total error
