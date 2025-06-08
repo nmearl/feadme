@@ -306,7 +306,9 @@ class Sampler(ABC):
     def _calculate_rhat(self, param: str, stats: Dict) -> float:
         """Calculate R-hat statistic for parameter."""
         if param.endswith("apocenter"):
-            return circular_rhat(self._idata.posterior[param].values)
+            return circular_rhat(
+                self._idata.posterior[param].stack(sample=("chain", "draw")).values
+            )
         return np.mean(stats["r_hat"])
 
     def _get_results_summary(self) -> Table:

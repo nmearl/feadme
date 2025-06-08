@@ -65,7 +65,7 @@ def plot_model_fit(
     output_dir,
     label,
 ):
-    fig, ax = plt.subplots(layout='constrained')
+    fig, ax = plt.subplots(layout="constrained")
     ax.errorbar(
         wave, flux, yerr=flux_err, fmt="o", color="grey", zorder=-10, alpha=0.25
     )
@@ -90,9 +90,11 @@ def plot_model_fit(
         if "_flux" not in var
     }
 
-    new_wave = np.linspace(
-        wave.min(), wave.max(), num=1000
-    )
+    for prof in template.all_profiles:
+        for param in prof._fixed():
+            res_pars[f"{prof.name}_{param.name}"] = param.value
+
+    new_wave = np.linspace(wave.min(), wave.max(), num=1000)
 
     res_flux, res_disk_flux, res_line_flux = evaluate_disk_model(
         template, new_wave, res_pars

@@ -72,7 +72,6 @@ class NUTSSampler(Sampler):
             wave=jnp.asarray(self._data.wave),
             flux=jnp.asarray(self._data.flux),
             flux_err=jnp.asarray(self._data.flux_err),
-            use_quad=self._config.use_quad,
         )
         return mcmc
 
