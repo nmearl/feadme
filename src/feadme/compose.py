@@ -55,17 +55,17 @@ def _compute_disk_flux(
     local_sigma = sigma * 1e5 * nu0 / c_cgs
 
     res = jax_integrate(
-        inner_radius,
-        outer_radius,
-        0,
+        inner_radius.squeeze(),
+        outer_radius.squeeze(),
+        0.0,
         2 * jnp.pi - 1e-6,
         jnp.asarray(X),
-        inclination,
-        local_sigma,
-        q,
-        eccentricity,
-        apocenter,
-        nu0,
+        inclination.squeeze(),
+        local_sigma.squeeze(),
+        q.squeeze(),
+        eccentricity.squeeze(),
+        apocenter.squeeze(),
+        nu0.squeeze(),
     )
 
     return res / jnp.max(res) * scale + offset  # Normalize and apply scale/offset

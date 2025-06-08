@@ -1,6 +1,5 @@
 import json
 from pathlib import Path
-from typing import Optional
 
 import click
 import jax
@@ -11,238 +10,183 @@ from numpyro.infer import init_to_median
 
 from .compose import disk_model
 from .parser import Template
-from .samplers import create_sampler
+from .samplers import NUTSSampler
+
 from .models.lsq import lsq_model_fitter
 
 finfo = np.finfo(float)
 
 
-def load_template(path: Path) -> Template:
-    """Load and parse a JSON template file."""
-    with path.open("r") as f:
-        data = json.load(f)
-    return Template(**data)
-
-
-def load_data(data_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Read an ASCII CSV with columns (wave, flux, flux_err)."""
-    tbl = Table.read(data_path, format="ascii.csv", names=("wave", "flux", "flux_err"))
-    return (
-        np.asarray(tbl["wave"], float),
-        np.asarray(tbl["flux"], float),
-        np.asarray(tbl["flux_err"], float),
-    )
-
-
-def fit_initial_priors(
-    template: Template,
-    wave: np.ndarray,
-    flux: np.ndarray,
-    flux_err: np.ndarray,
-    use_quad: bool,
-) -> None:
-    """
-    Run the least‐squares fitter to get starter values, then
-    adjust each profile parameter’s loc/scale/distribution.
-    """
-    starters = lsq_model_fitter(template, wave, flux, flux_err, use_quad=use_quad)
-
-    for profile in template.disk_profiles + template.line_profiles:
-        for param in profile._independent():
-            key = f"{profile.name}_{param.name}"
-            loc_val = starters.get(key, (param.loc,))[0]
-            param.loc = loc_val
-
-            # default linear‐space scale
-            linear_scale = (param.high - param.low) / np.sqrt(2 * np.pi)
-            if "log" in param.distribution:
-                param.scale = 10 ** (
-                    (np.log10(param.high) - np.log10(param.low)) / np.sqrt(2 * np.pi)
-                )
-            else:
-                param.scale = linear_scale
-
-            # canonicalize distributions
-            if param.distribution == "log_uniform":
-                param.distribution = "log_normal"
-            elif param.distribution == "uniform":
-                param.distribution = "normal"
-
-
-def run_sampling_for_template(
-    template_path: Path,
-    data_file: Path,
-    output_dir: Path,
-    label: Optional[str],
-    num_warmup: int,
-    num_samples: int,
-    num_chains: int,
-    show_progress: bool,
-    use_quad: bool,
-) -> None:
-    """
-    Process one template: load it, load data, fit priors, run NUTS
-    and write the .nc file.
-    """
-    tpl = load_template(template_path)
-    obj_label = label or tpl.name
-    out_dir = output_dir / obj_label
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    out_file = out_dir / f"{obj_label}.nc"
-    if out_file.exists():
-        logger.info(f"[{obj_label}] output already exists at {out_file}, skipping.")
-        return
-
-    wave, flux, flux_err = load_data(data_file)
-    logger.info(f"[{obj_label}] loaded data ({len(wave)} points).")
-
-    fit_initial_priors(tpl, wave, flux, flux_err, use_quad)
-
-    sampler = create_sampler(
-        sampler_type="nuts",
-        model=disk_model,
-        template=tpl,
-        wave=wave,
-        flux=flux,
-        flux_err=flux_err,
-        output_dir=str(out_dir),
-        label=obj_label,
-        num_warmup=num_warmup,
-        num_samples=num_samples,
-        num_chains=num_chains,
-        progress_bar=show_progress,
-    )
-
-    if not sampler.check_convergence():
-        sampler.sample(init_strategy=init_to_median(num_samples=1000))
-        sampler.write_run()
-        logger.success(f"[{obj_label}] sampling complete, results written.")
-    else:
-        logger.info(f"[{obj_label}] already converged, skipping sampling.")
-
-    # If you find you still need to clear JAX caches to keep memory usage down,
-    # you can uncomment the next line:
-    # jax.clear_caches()
-
-
-@click.command(context_settings=dict(help_option_names=["-h", "--help"]))
-@click.argument("template_path", type=click.Path(exists=True, path_type=Path))
+@click.command()
 @click.argument(
-    "data_file", type=click.Path(exists=True, path_type=Path), required=False
+    "template-file",
+    type=click.Path(exists=True),
+    required=True,
+    # help="Path to the template file, or a directory containing template "
+    #      "files.",
+)
+@click.argument(
+    "data-file",
+    type=click.Path(exists=True),
+    required=False,
+    # help="Overrides the data file given in the template. Path to the data "
+    #      "file. Data files should have three columns: wavelengths "
+    #      "(in Angstrom), fluxes, and flux uncertainties in (in mJy).",
 )
 @click.option(
     "--override-data-dir",
-    "override_dir",
-    type=click.Path(path_type=Path),
-    help="If set, use this directory for data files instead of what's in the template.",
-)
-@click.option(
-    "--pattern",
-    type=str,
-    default=None,
-    help="Only process templates whose filename contains this substring.",
+    type=click.Path(),
+    help="Overrides the data directory read from template file.",
 )
 @click.option(
     "--output-dir",
-    type=click.Path(path_type=Path),
+    type=click.Path(),
     default="output",
-    show_default=True,
-    help="Base directory to save all outputs.",
+    help="Directory to which the output files and plots will be saved. "
+    "Defaults to current directory.",
 )
 @click.option(
     "--label",
     type=str,
-    default=None,
-    help="Override the label used for naming outputs (defaults to template.name).",
+    help="Optional label for the object. Overrides the name given in the "
+    "template file.",
 )
 @click.option(
     "--num-warmup",
     type=int,
     default=1000,
-    show_default=True,
-    help="Number of warmup steps for NUTS.",
+    help="Number of warmup steps for the MCMC sampler.",
 )
 @click.option(
     "--num-samples",
     type=int,
     default=2000,
-    show_default=True,
-    help="Number of posterior samples to draw.",
+    help="Number of samples to draw from the posterior.",
 )
 @click.option(
     "--num-chains",
     type=int,
-    default=lambda: jax.local_device_count(),
-    show_default="jax.local_device_count()",
-    help="How many chains to run in parallel.",
+    default=jax.local_device_count(),
+    help="Number of chains to run in parallel.",
 )
 @click.option(
-    "--progress/--no-progress",
-    default=True,
-    show_default=True,
-    help="Show a progress bar during sampling.",
-)
-@click.option(
-    "--use-quad/--no-use-quad",
+    "--no-progress-bar",
+    is_flag=True,
     default=False,
-    show_default=True,
-    help="Use quadrature rules in the least‐squares fit.",
+    help="Display a progress bar during sampling.",
+)
+@click.option(
+    "--use-quad",
+    is_flag=True,
+    default=False,
+    help="Use quadrature rules in integration.",
 )
 def run(
-    template_path: Path,
-    data_file: Optional[Path],
-    override_dir: Optional[Path],
-    pattern: Optional[str],
-    output_dir: Path,
-    label: Optional[str],
-    num_warmup: int,
-    num_samples: int,
-    num_chains: int,
-    progress: bool,
-    use_quad: bool,
+    template_file: str,
+    data_file: str = None,
+    override_data_dir: str = None,
+    output_dir: str = None,
+    label: str = None,
+    num_warmup: int = 2000,
+    num_samples: int = 2000,
+    num_chains: int = jax.local_device_count(),
+    no_progress_bar: bool = True,
+    use_quad: bool = False,
 ):
-    # Resolve data directory
-    if override_dir:
-        base_data_dir = override_dir
-    else:
-        base_data_dir = None
+    template_file = Path(template_file)
 
-    # Collect all templates
-    if template_path.is_dir():
-        all_tpls = sorted(template_path.glob("*.json"))
+    if not template_file.is_dir():
+        template_files = [template_file]
     else:
-        all_tpls = [template_path]
+        template_files = sorted(template_file.glob("*.json"))
 
-    for tpl_file in all_tpls:
-        if pattern and pattern not in tpl_file.name:
-            logger.debug(
-                f"Skipping {tpl_file.name} (does not match pattern `{pattern}`)."
-            )
+    for template_path in template_files:
+        # Load the template
+        with open(template_path, "r") as f:
+            loaded_data = json.load(f)
+            template = Template(**loaded_data)
+
+        local_label = label or template.name
+        base_name = template_path.stem
+
+        logger.info(f"Starting sampling for `{local_label}`.")
+
+        if data_file is None:
+            local_data_file = template.data_path
+        else:
+            local_data_file = data_file
+
+        if override_data_dir is not None:
+            local_data_file = Path(override_data_dir) / Path(local_data_file).name
+
+        if not Path(local_data_file).exists():
+            logger.warning(f"Data file {local_data_file} does not exist.")
             continue
 
-        # decide data file for this template
-        if data_file:
-            df = data_file
-        else:
-            tpl = load_template(tpl_file)
-            df = Path(tpl.data_path)
-            if base_data_dir:
-                df = base_data_dir / df.name
+        logger.info(f"Reading data file from template: `{local_data_file}`")
 
-        try:
-            run_sampling_for_template(
-                tpl_file,
-                df,
-                output_dir,
-                label,
-                num_warmup,
-                num_samples,
-                num_chains,
-                show_progress=progress,
-                use_quad=use_quad,
+        data = Table.read(
+            local_data_file, format="ascii.csv", names=("wave", "flux", "flux_err")
+        )
+
+        local_output_dir = Path(output_dir) / base_name
+
+        if not local_output_dir.exists():
+            local_output_dir.mkdir(parents=True)
+
+        wave = (data["wave"] / (1 + template.redshift)).value
+        flux = data["flux"].value
+        flux_err = data["flux_err"].value
+
+        if not Path(local_output_dir).exists():
+            Path(local_output_dir).mkdir(parents=True)
+
+        # Check if the output file already exists
+        previous_run_exists = Path(f"{local_output_dir}/{local_label}.nc").exists()
+
+        if previous_run_exists:
+            logger.info("Output file already exists. Skipping sampling.")
+            continue
+
+        # Convert template prior distributions based on LSQ fit
+        starters = lsq_model_fitter(template, wave, flux, flux_err, use_quad=use_quad)
+
+        for prof in template.disk_profiles + template.line_profiles:
+            for param in prof._independent():
+                param.loc = starters[f"{prof.name}_{param.name}"][0]
+                param.scale = (param.high - param.low) / np.sqrt(2 * np.pi)
+
+                if "log" in param.distribution:
+                    param.scale = 10 ** ((
+                        np.log10(param.high) - np.log10(param.low)
+                    ) / np.sqrt(2 * np.pi))
+
+                if param.distribution == "log_uniform":
+                    param.distribution = "log_normal"
+                elif param.distribution == "uniform":
+                    param.distribution = "normal"
+
+        nuts_sampler = NUTSSampler(
+            disk_model,
+            template,
+            wave,
+            flux,
+            flux_err,
+            local_output_dir,
+            local_label,
+            num_warmup,
+            num_samples,
+            num_chains,
+            progress_bar=not no_progress_bar,
+            use_quad=use_quad,
+        )
+
+        if not nuts_sampler.check_convergence():
+            nuts_sampler.sample(
+                init_strategy=init_to_median(num_samples=1000)
             )
-        except Exception:
-            logger.exception(
-                f"Error processing template {tpl_file.name}, continuing to next one."
-            )
+            nuts_sampler.write_run()
+        else:
+            logger.info(f"{local_label} is already converged. Skipping sampling.")
+
+        jax.clear_caches()
