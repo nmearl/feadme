@@ -54,7 +54,7 @@ def _compute_disk_flux(
 
     local_sigma = sigma * 1e5 * nu0 / c_cgs
 
-    res = jax_integrate(
+    res = quad_jax_integrate(
         inner_radius.squeeze(),
         outer_radius.squeeze(),
         0.0,
@@ -113,48 +113,39 @@ def _evaluate_disk_model(wave: jnp.ndarray, disk_params: dict, line_params: dict
 
 
 def evaluate_disk_model(template: Template, wave: jnp.ndarray, param_mods: dict):
+    disk_names = template.disk_names
+    line_names = template.line_names
+
     disk_params = {
-        "centers": jnp.array(
-            [param_mods[f"{prof.name}_center"] for prof in template.disk_profiles]
-        ),
+        "centers": jnp.array([param_mods[f"{name}_center"] for name in disk_names]),
         "inner_radii": jnp.array(
-            [param_mods[f"{prof.name}_inner_radius"] for prof in template.disk_profiles]
+            [param_mods[f"{name}_inner_radius"] for name in disk_names]
         ),
         "outer_radii": jnp.array(
-            [param_mods[f"{prof.name}_outer_radius"] for prof in template.disk_profiles]
+            [param_mods[f"{name}_outer_radius"] for name in disk_names]
         ),
-        "sigmas": jnp.array(
-            [param_mods[f"{prof.name}_sigma"] for prof in template.disk_profiles]
-        ),
+        "sigmas": jnp.array([param_mods[f"{name}_sigma"] for name in disk_names]),
         "inclinations": jnp.array(
-            [param_mods[f"{prof.name}_inclination"] for prof in template.disk_profiles]
+            [param_mods[f"{name}_inclination"] for name in disk_names]
         ),
-        "qs": jnp.array(
-            [param_mods[f"{prof.name}_q"] for prof in template.disk_profiles]
-        ),
+        "qs": jnp.array([param_mods[f"{name}_q"] for name in disk_names]),
         "eccentricities": jnp.array(
-            [param_mods[f"{prof.name}_eccentricity"] for prof in template.disk_profiles]
+            [param_mods[f"{name}_eccentricity"] for name in disk_names]
         ),
         "apocenters": jnp.array(
-            [param_mods[f"{prof.name}_apocenter"] for prof in template.disk_profiles]
+            [param_mods[f"{name}_apocenter"] for name in disk_names]
         ),
-        "scales": jnp.array(
-            [param_mods[f"{prof.name}_scale"] for prof in template.disk_profiles]
-        ),
-        "offsets": jnp.array(
-            [param_mods[f"{prof.name}_offset"] for prof in template.disk_profiles]
-        ),
+        "scales": jnp.array([param_mods[f"{name}_scale"] for name in disk_names]),
+        "offsets": jnp.array([param_mods[f"{name}_offset"] for name in disk_names]),
     }
 
     line_params = {
-        "centers": jnp.array(
-            [param_mods[f"{prof.name}_center"] for prof in template.line_profiles]
-        ),
+        "centers": jnp.array([param_mods[f"{name}_center"] for name in line_names]),
         "vel_widths": jnp.array(
-            [param_mods[f"{prof.name}_vel_width"] for prof in template.line_profiles]
+            [param_mods[f"{name}_vel_width"] for name in line_names]
         ),
         "amplitudes": jnp.array(
-            [param_mods[f"{prof.name}_amplitude"] for prof in template.line_profiles]
+            [param_mods[f"{name}_amplitude"] for name in line_names]
         ),
         "shapes": jnp.array(
             [prof.shape == "gaussian" for prof in template.line_profiles]

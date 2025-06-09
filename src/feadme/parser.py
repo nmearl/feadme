@@ -174,6 +174,14 @@ class Template(BaseModel):
     @cached_property
     def all_profiles(self) -> List[Profile]:
         return self.disk_profiles + self.line_profiles
+    
+    @cached_property
+    def disk_names(self) -> List[str]:
+        return [disk.name for disk in self.disk_profiles]
+    
+    @cached_property
+    def line_names(self) -> List[str]:
+        return [line.name for line in self.line_profiles]
 
     @field_validator("disk_profiles", mode="after")
     @classmethod
