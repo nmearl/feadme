@@ -14,6 +14,8 @@ dependencies = [
     "blackjax>=1.2.5",
     "click>=8.1.8",
     "corner>=2.2.3",
+    "dacite>=1.9.2",
+    "flax>=0.10.6",
     "loguru>=0.7.3",
     "notebook>=7.3.3",
     "numpyro>=0.18.0",
@@ -26,7 +28,7 @@ dependencies = [
 ]
 
 [project.scripts]
-feadme = "feadme.cli:run"
+feadme = "feadme.cli:cli"
 
 [build-system]
 requires = ["hatchling"]

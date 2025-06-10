@@ -78,12 +78,12 @@ class BaseTenTransform(Transform):
         if not isinstance(other, BaseTenTransform):
             return False
         return self.domain == other.domain
-    
+
 
 def circular_rhat(samples):
     """
     Estimate circular R-hat using vector average consistency across chains.
-    
+
     Parameters
     ----------
     samples : ndarray
@@ -110,8 +110,12 @@ def circular_rhat(samples):
     B = chains * (1 - R_total)
 
     # Within-chain variance (how dispersed each chain is)
-    R_within = np.mean([np.sqrt(np.mean(np.cos(samples[c]))**2 + np.mean(np.sin(samples[c]))**2)
-                        for c in range(chains)])
+    R_within = np.mean(
+        [
+            np.sqrt(np.mean(np.cos(samples[c])) ** 2 + np.mean(np.sin(samples[c])) ** 2)
+            for c in range(chains)
+        ]
+    )
     W = 1 - R_within
 
     # Gelman-style circular Rhat

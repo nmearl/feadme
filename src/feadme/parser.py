@@ -1,37 +1,97 @@
-import numpy as np
-import numpyro
-from pydantic import (
-    BaseModel,
-    root_validator,
-    model_validator,
-    field_validator,
-    ConfigDict,
-    computed_field,
-)
-from enum import Enum, auto
-from typing import Optional, List, Callable, NamedTuple
+from typing import Optional
+
+import flax
+from enum import Enum
+import flax.struct
 import jax.numpy as jnp
-from collections import namedtuple
-from jax.scipy import stats
-from .utils import truncnorm_ppf
-from functools import cached_property
+import jax
+import json
+from jax.tree_util import tree_map
+from dacite import from_dict, Config as DaciteConfig
+from pathlib import Path
 
 
-class Distribution(str, Enum):
-    uniform = "uniform"
-    log_uniform = "log_uniform"
-    normal = "normal"
-    log_normal = "log_normal"
+def jax_array_hook(value, target_type):
+    # If dacite sees a list for a field typed as jnp.ndarray, convert it
+    if issubclass(target_type, jnp.ndarray) and isinstance(value, list):
+        return jnp.array(value)
+    return value
 
 
-class Parameter(BaseModel):
-    model_config = ConfigDict(use_enum_values=True)
+class Writable:
+    def to_json(self, path: str):
+        raw = flax.struct.dataclasses.asdict(self)
 
+        serializable = tree_map(
+            lambda v: v.tolist() if hasattr(v, "tolist") else v,
+            raw,
+        )
+
+        with open(path, "w") as f:
+            json.dump(serializable, f)
+
+    @classmethod
+    def from_json(cls, path: str | Path):
+        with open(path, "r") as f:
+            raw = json.load(f)
+
+        instance = from_dict(
+            data_class=cls,
+            data=raw,
+            config=DaciteConfig(
+                type_hooks={
+                    jnp.ndarray: lambda v: jnp.array(v),
+                    Distribution: lambda v: Distribution(v),
+                    Shape: lambda v: Shape(v),
+                }
+            ),
+        )
+
+        # Process the instance to populate parameter lists
+        return cls._process_profiles(instance)
+
+    @classmethod
+    def _process_profiles(cls, instance):
+        """Process all Profile instances in the object tree"""
+        if isinstance(instance, Profile):
+            return instance.populate_param_lists()
+        elif hasattr(instance, "__dataclass_fields__"):
+            # Handle dataclass instances
+            updates = {}
+            for field_name, field in instance.__dataclass_fields__.items():
+                field_value = getattr(instance, field_name)
+                if isinstance(field_value, list):
+                    # Process lists of profiles
+                    processed_list = [
+                        cls._process_profiles(item) for item in field_value
+                    ]
+                    if processed_list != field_value:
+                        updates[field_name] = processed_list
+                elif isinstance(field_value, Profile):
+                    # Process single profile
+                    processed_profile = cls._process_profiles(field_value)
+                    if processed_profile != field_value:
+                        updates[field_name] = processed_profile
+
+            if updates:
+                return instance.replace(**updates)
+
+        return instance
+
+
+class Distribution(Enum):
+    UNIFORM = "uniform"
+    NORMAL = "normal"
+    LOG_UNIFORM = "log_uniform"
+    LOG_NORMAL = "log_normal"
+
+
+@flax.struct.dataclass
+class Parameter:
     name: str
-    distribution: Distribution = Distribution.uniform
+    distribution: Distribution = Distribution.UNIFORM
     value: Optional[float] = None
     fixed: Optional[bool] = False
-    tied: Optional[Callable] = None
     shared: Optional[str] = None
     low: Optional[float] = None
     high: Optional[float] = None
@@ -39,162 +99,212 @@ class Parameter(BaseModel):
     scale: Optional[float] = None
     circular: Optional[bool] = False
 
-    @model_validator(mode="before")
-    def validate_parameters(cls, values):
-        dist = values.get("distribution")
 
-        if dist in ["uniform"]:
-            if values.get("low") is None or values.get("high") is None:
-                raise ValueError(
-                    "For 'uniform' distribution, 'low' and 'high' parameters are required."
-                )
-        if dist in ["log_uniform"]:
-            if values.get("low") is None or values.get("high") is None:
-                raise ValueError(
-                    "For 'log_uniform' distribution, 'low' and 'high' parameters are required."
-                )
-            if values.get("circular"):
-                raise ValueError(
-                    "'circular' parameter is not supported for 'log_uniform' distribution."
-                )
-        elif dist in ["normal"]:
-            missing_params = [
-                param for param in ("loc", "scale") if values.get(param) is None
-            ]
-            if missing_params:
-                raise ValueError(
-                    f"For 'normal' distribution, {', '.join(missing_params)} are required."
-                )
-        elif dist == "log_normal":
-            if values.get("loc") is None or values.get("scale") is None:
-                raise ValueError(
-                    "For 'lognormal' distribution, 'loc' and 'scale' parameters are required."
-                )
-            if values.get("circular"):
-                raise ValueError(
-                    "'circular' parameter is not supported for 'lognormal' distribution."
-                )
+@flax.struct.dataclass
+class Profile:
+    name: Optional[str] = None
 
-        return values
+    # Computed parameter lists
+    _independent_params: list[Parameter] = flax.struct.field(default_factory=list)
+    _shared_params: list[Parameter] = flax.struct.field(default_factory=list)
+    _fixed_params: list[Parameter] = flax.struct.field(default_factory=list)
+
+    def populate_param_lists(self):
+        """
+        Populate parameter lists - returns a new instance with populated lists.
+        This should be called immediately after deserialization.
+        """
+        if self._independent_params or self._shared_params or self._fixed_params:
+            return self  # Already populated
+
+        # Get all Parameter fields from this instance
+        param_kwargs = {}
+        for field_name in self.__dataclass_fields__:
+            if not field_name.startswith("_") and field_name != "name":
+                field_value = getattr(self, field_name)
+                if isinstance(field_value, Parameter):
+                    param_kwargs[field_name] = field_value
+
+        independent = []
+        shared = []
+        fixed = []
+
+        # First pass: categorize fixed vs non-fixed parameters
+        for field_name, field_value in param_kwargs.items():
+            if field_value.fixed:
+                fixed.append(field_value)
+            else:
+                independent.append(field_value)
+
+        # Second pass: handle shared parameters
+        shared_candidates = []
+        for field_name, field_value in param_kwargs.items():
+            if field_value.shared is not None:
+                shared_candidates.append(field_value)
+
+        for shared_param in shared_candidates:
+            if shared_param.shared in [p.name for p in independent]:
+                if shared_param in independent:
+                    independent.remove(shared_param)
+                shared.append(shared_param)
+
+        return self.replace(
+            _independent_params=independent, _shared_params=shared, _fixed_params=fixed
+        )
+
+    @classmethod
+    def create(cls, name, **kwargs):
+        param_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
+
+        independent = []
+        shared = []
+        fixed = []
+
+        for field_name, field_value in param_kwargs.items():
+            if isinstance(field_value, Parameter):
+                if field_value.fixed:
+                    fixed.append(field_value)
+                else:
+                    independent.append(field_value)
+
+        for field_name, field_value in param_kwargs.items():
+            if isinstance(field_value, Parameter):
+                if field_value.shared is not None:
+                    if field_value.shared in [p.name for p in independent]:
+                        shared.append(field_value)
+                    else:
+                        independent.append(field_value)
+
+        return cls(
+            name=name,
+            _independent_params=independent,
+            _shared_params=shared,
+            _fixed_params=fixed,
+            **param_kwargs,
+        )
+
+    @property
+    def independent(self) -> list[Parameter]:
+        return self._independent_params
+
+    @property
+    def shared(self) -> list[Parameter]:
+        return self._shared_params
+
+    @property
+    def fixed(self) -> list[Parameter]:
+        return self._fixed_params
 
 
-class Profile(BaseModel):
-    name: str
-
-    @cached_property
-    def _parameter_fields(self):
-        return [
-            getattr(self, field_name)
-            for field_name in self.model_fields
-            if isinstance(getattr(self, field_name), Parameter)
-        ]
-
-    def _shared(self):
-        return [
-            field
-            for field in self._parameter_fields
-            if field.shared is not None and not field.fixed
-        ]
-
-    @cached_property
-    def shared(self) -> List[Parameter]:
-        return self._shared()
-
-    def _independent(self):
-        return [
-            field
-            for field in self._parameter_fields
-            if field.shared is None and not field.fixed
-        ]
-
-    @cached_property
-    def independent(self) -> List[Parameter]:
-        return self._independent()
-
-    def _fixed(self):
-        return [field for field in self._parameter_fields if field.fixed]
-
-    @cached_property
-    def fixed(self) -> List[Parameter]:
-        return self._fixed()
-
-
-class Mask(BaseModel):
-    lower_limit: float
-    upper_limit: float
-
-
-class Disk(Profile):
-    center: Parameter
-    inner_radius: Parameter
-    delta_radius: Parameter
-    inclination: Parameter
-    sigma: Parameter
-    q: Parameter
-    eccentricity: Parameter
-    apocenter: Parameter
-    scale: Optional[Parameter] = Parameter(
-        name="scale", distribution=Distribution.uniform, low=0, high=2
+@flax.struct.dataclass
+class Disk(Profile, Writable):
+    center: Optional[Parameter] = None
+    inner_radius: Optional[Parameter] = None
+    delta_radius: Optional[Parameter] = None
+    inclination: Optional[Parameter] = None
+    sigma: Optional[Parameter] = None
+    q: Optional[Parameter] = None
+    eccentricity: Optional[Parameter] = None
+    apocenter: Optional[Parameter] = None
+    scale: Parameter = Parameter(
+        name="scale", distribution=Distribution.UNIFORM, low=0, high=2
     )
-    offset: Optional[Parameter] = Parameter(
-        name="offset", distribution=Distribution.uniform, low=0, high=0.1
+    offset: Parameter = Parameter(
+        name="offset", distribution=Distribution.UNIFORM, low=0, high=2
     )
 
 
 class Shape(str, Enum):
-    gaussian = "gaussian"
-    lorentzian = "lorentzian"
+    GAUSSIAN = "gaussian"
+    LORENTZIAN = "lorentzian"
 
 
+@flax.struct.dataclass
 class Line(Profile):
-    shape: Optional[Shape] = Shape.gaussian
-    center: Parameter
-    amplitude: Parameter
-    vel_width: Parameter
+    center: Optional[Parameter] = None
+    amplitude: Optional[Parameter] = None
+    vel_width: Optional[Parameter] = None
+    shape: Shape = Shape.GAUSSIAN
 
 
-class Template(BaseModel):
-    name: str
-    data_path: Optional[str] = None
-    mjd: Optional[float] = None
-    redshift: Optional[float] = 0
-    disk_profiles: List[Disk]
-    line_profiles: List[Line]
-    white_noise: Optional[Parameter] = Parameter(
-        name="white_noise",
-        distribution=Distribution.normal,
-        low=-10.0,
-        high=1.0,
-        loc=-7.0,
-        scale=0.1,
-        values=-7.0
+@flax.struct.dataclass
+class Mask:
+    lower_limit: float
+    upper_limit: float
+
+
+@flax.struct.dataclass
+class Template(Writable):
+    name: str = "default_template"
+    disk_profiles: list[Disk] = flax.struct.field(default_factory=list)
+    line_profiles: list[Line] = flax.struct.field(default_factory=list)
+    redshift: float = 0.0
+    white_noise: Parameter = Parameter(
+        name="white_noise", distribution=Distribution.UNIFORM, low=0, high=0.1
     )
-    mask: Optional[List[Mask]] = []
+    mask: list[Mask] | None = None
 
-    @cached_property
-    def all_profiles(self) -> List[Profile]:
-        return self.disk_profiles + self.line_profiles
-    
-    @cached_property
-    def disk_names(self) -> List[str]:
-        return [disk.name for disk in self.disk_profiles]
-    
-    @cached_property
-    def line_names(self) -> List[str]:
-        return [line.name for line in self.line_profiles]
 
-    @field_validator("disk_profiles", mode="after")
+@flax.struct.dataclass
+class Data(Writable):
+    wave: jnp.ndarray
+    flux: jnp.ndarray
+    flux_err: jnp.ndarray
+    mask: jnp.ndarray
+    masked_wave: jnp.ndarray
+    masked_flux: jnp.ndarray
+    masked_flux_err: jnp.ndarray
+
     @classmethod
-    def validate_disk_profiles(cls, value):
-        disk_names = [disk.name for disk in value]
-        if len(disk_names) != len(set(disk_names)):
-            raise ValueError("Disk profile names must be unique.")
-        return value
+    def create(cls, wave, flux, flux_err, mask=list[Mask] | None):
+        mask_array = jnp.ones(len(wave), dtype=bool)
 
-    @field_validator("line_profiles", mode="after")
-    @classmethod
-    def validate_line_profiles(cls, value):
-        line_names = [line.name for line in value]
-        if len(line_names) != len(set(line_names)):
-            raise ValueError("Line profile names must be unique.")
-        return value
+        if mask is not None:
+            lower_limits = jnp.array([m.lower_limit for m in mask])
+            upper_limits = jnp.array([m.upper_limit for m in mask])
+
+            wave_expanded = wave[:, None]
+            individual_masks = (wave_expanded >= lower_limits) & (
+                wave_expanded <= upper_limits
+            )
+            mask_array = jnp.any(individual_masks, axis=1)
+
+        return cls(
+            wave=jnp.asarray(wave),
+            flux=jnp.asarray(flux),
+            flux_err=jnp.asarray(flux_err),
+            mask=mask_array,
+            masked_wave=jnp.asarray(wave)[mask_array],
+            masked_flux=jnp.asarray(flux)[mask_array],
+            masked_flux_err=jnp.asarray(flux_err)[mask_array],
+        )
+
+
+@flax.struct.dataclass
+class Sampler(Writable):
+    sampler_type: str
+    num_warmup: int = 1000
+    num_samples: int = 1000
+    num_chains: int = 1
+    progress_bar: bool = True
+    target_accept_prob: float = 0.8
+    max_tree_depth: int = 10
+    dense_mass: bool = True
+
+    @property
+    def chain_method(self) -> str:
+        return (
+            "vectorized"
+            if jax.local_device_count() == 1 and self.num_chains == 1
+            else "parallel"
+        )
+
+
+@flax.struct.dataclass
+class Config(Writable):
+    template: Template
+    data: Data
+    sampler: Sampler
+    output_path: str
+    template_path: str
+    data_path: str

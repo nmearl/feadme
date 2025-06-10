@@ -1,55 +1,39 @@
-import json
-from pathlib import Path
-
 import click
-import jax
-import numpy as np
+import loguru
+from pathlib import Path
+import json
 from astropy.table import Table
-from loguru import logger
-from numpyro.infer import init_to_median
+import flax.serialization
 
 from .compose import disk_model
-from .parser import Template
-from .samplers import NUTSSampler
-
-from .models.lsq import lsq_model_fitter
-
-finfo = np.finfo(float)
+from .parser import Config, Template, Data, Sampler
+from .samplers.nuts_sampler import NUTSSampler
 
 
 @click.command()
 @click.argument(
-    "template-file",
+    "template-path",
     type=click.Path(exists=True),
     required=True,
-    # help="Path to the template file, or a directory containing template "
-    #      "files.",
+    # help="Path to the template file.",
 )
 @click.argument(
-    "data-file",
+    "data-path",
     type=click.Path(exists=True),
     required=False,
-    # help="Overrides the data file given in the template. Path to the data "
-    #      "file. Data files should have three columns: wavelengths "
-    #      "(in Angstrom), fluxes, and flux uncertainties in (in mJy).",
+    # help="Path to the data file.",
 )
 @click.option(
-    "--override-data-dir",
-    type=click.Path(),
-    help="Overrides the data directory read from template file.",
-)
-@click.option(
-    "--output-dir",
+    "--output-path",
     type=click.Path(),
     default="output",
-    help="Directory to which the output files and plots will be saved. "
-    "Defaults to current directory.",
+    help="Directory to save output files and plots. Defaults to './output'.",
 )
 @click.option(
-    "--label",
-    type=str,
-    help="Optional label for the object. Overrides the name given in the "
-    "template file.",
+    "--sampler-type",
+    type=click.Choice(["nuts"], case_sensitive=False),
+    default="nuts",
+    help="Type of NumPyro sampler to use.",
 )
 @click.option(
     "--num-warmup",
@@ -60,133 +44,77 @@ finfo = np.finfo(float)
 @click.option(
     "--num-samples",
     type=int,
-    default=2000,
-    help="Number of samples to draw from the posterior.",
+    default=1000,
+    help="Number of samples to draw from the posterior distribution.",
 )
 @click.option(
     "--num-chains",
     type=int,
-    default=jax.local_device_count(),
-    help="Number of chains to run in parallel.",
+    default=1,
+    help="Number of MCMC chains to run.",
 )
 @click.option(
-    "--no-progress-bar",
+    "--progress-bar",
     is_flag=True,
-    default=False,
+    default=True,
     help="Display a progress bar during sampling.",
 )
-@click.option(
-    "--use-quad",
-    is_flag=True,
-    default=False,
-    help="Use quadrature rules in integration.",
-)
-def run(
-    template_file: str,
-    data_file: str = None,
-    override_data_dir: str = None,
-    output_dir: str = None,
-    label: str = None,
-    num_warmup: int = 2000,
-    num_samples: int = 2000,
-    num_chains: int = jax.local_device_count(),
-    no_progress_bar: bool = True,
-    use_quad: bool = False,
+def cli(
+    template_path: str,
+    data_path: str,
+    output_path: str,
+    sampler_type: str,
+    num_warmup: int,
+    num_samples: int,
+    num_chains: int,
+    progress_bar: bool,
 ):
-    template_file = Path(template_file)
+    loguru.logger.info("Starting FEADME CLI...")
 
-    if not template_file.is_dir():
-        template_files = [template_file]
-    else:
-        template_files = sorted(template_file.glob("*.json"))
+    # Load template
+    # if Path(template_path).is_dir():
+    #     template_files = list(Path(template_path).glob("*.json"))
+    #     if not template_files:
+    #         raise ValueError(f"No template files found in directory {template_path}.")
+    #     templates = [
+    #         Template(**json.loads(file.read_text())) for file in template_files
+    #     ]
+    # else:
+    #     templates = [Template(**json.loads(Path(template_path).read_text()))]
 
-    for template_path in template_files:
-        # Load the template
-        with open(template_path, "r") as f:
-            loaded_data = json.load(f)
-            template = Template(**loaded_data)
+    template = Template.from_json(Path(template_path))
 
-        local_label = label or template.name
-        base_name = template_path.stem
+    print(template)
 
-        logger.info(f"Starting sampling for `{local_label}`.")
+    # Load data
+    data_tab = Table.read(
+        data_path, format="ascii.csv", names=["wave", "flux", "flux_err"]
+    )
 
-        if data_file is None:
-            local_data_file = template.data_path
-        else:
-            local_data_file = data_file
+    data = Data.create(
+        wave=data_tab["wave"],
+        flux=data_tab["flux"],
+        flux_err=data_tab["flux_err"],
+        mask=template.mask,
+    )
 
-        if override_data_dir is not None:
-            local_data_file = Path(override_data_dir) / Path(local_data_file).name
+    # Create config
+    config = Config(
+        template=template,  # Assuming single template for simplicity
+        data=data,
+        sampler=Sampler(
+            sampler_type=sampler_type,
+            num_warmup=num_warmup,
+            num_samples=num_samples,
+            num_chains=num_chains,
+            progress_bar=progress_bar,
+        ),
+        output_path=output_path,
+        template_path=template_path,
+        data_path=data_path,
+    )
 
-        if not Path(local_data_file).exists():
-            logger.warning(f"Data file {local_data_file} does not exist.")
-            continue
+    loguru.logger.info("Configuration created successfully.")
 
-        logger.info(f"Reading data file from template: `{local_data_file}`")
-
-        data = Table.read(
-            local_data_file, format="ascii.csv", names=("wave", "flux", "flux_err")
-        )
-
-        local_output_dir = Path(output_dir) / base_name
-
-        if not local_output_dir.exists():
-            local_output_dir.mkdir(parents=True)
-
-        wave = (data["wave"] / (1 + template.redshift)).value
-        flux = data["flux"].value
-        flux_err = data["flux_err"].value
-
-        if not Path(local_output_dir).exists():
-            Path(local_output_dir).mkdir(parents=True)
-
-        # Check if the output file already exists
-        previous_run_exists = Path(f"{local_output_dir}/{local_label}.nc").exists()
-
-        if previous_run_exists:
-            logger.info("Output file already exists. Skipping sampling.")
-            continue
-
-        # Convert template prior distributions based on LSQ fit
-        starters = lsq_model_fitter(template, wave, flux, flux_err, use_quad=use_quad)
-
-        for prof in template.disk_profiles + template.line_profiles:
-            for param in prof._independent():
-                param.loc = starters[f"{prof.name}_{param.name}"][0]
-                param.scale = (param.high - param.low) / np.sqrt(2 * np.pi)
-
-                if "log" in param.distribution:
-                    param.scale = 10 ** ((
-                        np.log10(param.high) - np.log10(param.low)
-                    ) / np.sqrt(2 * np.pi))
-
-                if param.distribution == "log_uniform":
-                    param.distribution = "log_normal"
-                elif param.distribution == "uniform":
-                    param.distribution = "normal"
-
-        nuts_sampler = NUTSSampler(
-            disk_model,
-            template,
-            wave,
-            flux,
-            flux_err,
-            local_output_dir,
-            local_label,
-            num_warmup,
-            num_samples,
-            num_chains,
-            progress_bar=not no_progress_bar,
-            use_quad=use_quad,
-        )
-
-        if not nuts_sampler.check_convergence():
-            nuts_sampler.sample(
-                init_strategy=init_to_median(num_samples=1000)
-            )
-            nuts_sampler.write_run()
-        else:
-            logger.info(f"{local_label} is already converged. Skipping sampling.")
-
-        jax.clear_caches()
+    sampler = NUTSSampler(model=disk_model, config=config)
+    sampler.sample()
