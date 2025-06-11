@@ -22,8 +22,11 @@ XI_u, PHI_u = jnp.meshgrid(unit_xi, unit_phi, indexing="ij")
 
 
 def doppler_factor(
-    xi: ArrayLike, phi: ArrayLike, inc: float, e: float, phi0: float
-) -> Array:
+    xi: float, phi: float, inc: float, e: float, phi0: float
+) -> jnp.ndarray:
+    """
+    Calculate the Doppler factor for a given `xi`, `phi`, `inc`, `e`, and `phi0`.
+    """
     sini = jnp.sin(inc)
     sinphi = jnp.sin(phi)
     cosphi = jnp.cos(phi)
@@ -62,8 +65,11 @@ def doppler_factor(
 
 
 def intensity(
-    xi: ArrayLike, X: ArrayLike, D: float, sigma: float, q: float, nu0: float
-) -> Array:
+    xi: float, X: ArrayLike, D: float, sigma: float, q: float, nu0: float
+) -> jnp.ndarray:
+    """
+    `I_nu` function for the disk model, as defined in Eracleous et al. (1995).
+    """
     # Eracleous et al, eq 18; returned units are erg / cm^2
     # exponent = -((1 + X - D) ** 2) / (2 * D**2) * (c_cgs / sigma) ** 2
     exponent = -((1 + X - D) ** 2 * nu0**2) / (2 * D**2 * sigma**2)
@@ -75,7 +81,10 @@ def intensity(
     return res
 
 
-def Psi(xi: ArrayLike, phi: ArrayLike, inc: float) -> Array:
+def Psi(xi: float, phi: float, inc: float) -> jnp.ndarray:
+    """
+    `Psi` function for the disk model, as defined in Eracleous et al. (1995).
+    """
     # Eracleous et al, eq 8
     return 1 + (1 / xi) * (
         (1 - jnp.sin(inc) * jnp.cos(phi)) / (1 + jnp.sin(inc) * jnp.cos(phi))
@@ -83,16 +92,19 @@ def Psi(xi: ArrayLike, phi: ArrayLike, inc: float) -> Array:
 
 
 def integrand(
-    phi: ArrayLike,
-    xi_tilde: ArrayLike,
-    X: ArrayLike,
+    phi: float,
+    xi_tilde: float,
+    X: jnp.ndarray | np.ndarray,
     inc: float,
     sigma: float,
     q: float,
     e: float,
     phi0: float,
     nu0: float,
-) -> Array:
+) -> jnp.ndarray:
+    """
+    Integrand for the double integral over `xi` and `phi`.
+    """
     # Eracleous et al, eq 10
     trans_fac = (1 + e) / (1 - e * jnp.cos(phi - phi0))
     xi = xi_tilde * trans_fac
@@ -107,17 +119,20 @@ def integrand(
 
 
 def _inner_quad(
-    xi: ArrayLike,
+    xi: float,
     phi1: float,
     phi2: float,
-    X: ArrayLike,
+    X: jnp.ndarray | np.ndarray,
     inc: float,
     sigma: float,
     q: float,
     e: float,
     phi0: float,
     nu0: float,
-) -> Array:
+) -> jnp.ndarray:
+    """
+    Inner integral over `phi` for a fixed `xi`.
+    """
     return fixed_quadgk51(
         integrand, phi1, phi2, args=(xi, X, inc, sigma, q, e, phi0, nu0)
     )[0]
@@ -129,14 +144,17 @@ def quad_jax_integrate(
     xi2: float,
     phi1: float,
     phi2: float,
-    X: ArrayLike,
+    X: jnp.ndarray | np.ndarray,
     inc: float,
     sigma: float,
     q: float,
     e: float,
     phi0: float,
     nu0: float,
-) -> Array:
+) -> jnp.ndarray:
+    """
+    Perform a double integral over `xi` and `phi` using Gauss-Kronrod quadrature.
+    """
     return fixed_quadgk31(
         _inner_quad, xi1, xi2, args=(phi1, phi2, X, inc, sigma, q, e, phi0, nu0)
     )[0]
@@ -148,14 +166,17 @@ def jax_integrate(
     xi2: float,
     phi1: float,
     phi2: float,
-    X: ArrayLike,
+    X: jnp.ndarray | np.ndarray,
     inc: float,
     sigma: float,
     q: float,
     e: float,
     phi0: float,
     nu0: float,
-) -> Array:
+) -> jnp.ndarray:
+    """
+    Perform a double integral over `xi` and `phi` using trapezoidal rule.
+    """
     xi = jnp.exp(jnp.log(xi1) + (jnp.log(xi2) - jnp.log(xi1)) * XI_u)
     phi = phi1 + (phi2 - phi1) * PHI_u
 
@@ -167,6 +188,6 @@ def jax_integrate(
     )(phi, xi)
 
     inner_integral = jnp.trapezoid(res, x=phi[0], axis=2)
-    outer_integral = jnp.trapezoid(inner_integral, x=xi[:,0], axis=0)
+    outer_integral = jnp.trapezoid(inner_integral, x=xi[:, 0], axis=0)
 
     return outer_integral

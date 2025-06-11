@@ -1,14 +1,14 @@
+import json
+from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 import flax
-from enum import Enum
 import flax.struct
-import jax.numpy as jnp
 import jax
-import json
-from jax.tree_util import tree_map
+import jax.numpy as jnp
 from dacite import from_dict, Config as DaciteConfig
-from pathlib import Path
+from jax.tree_util import tree_map
 
 
 def jax_array_hook(value, target_type):

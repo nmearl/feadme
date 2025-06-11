@@ -20,7 +20,7 @@ logger.add(
     "<level>{message}</level>",
 )
 
-numpyro.set_host_device_count(1)
+numpyro.set_host_device_count(2)
 numpyro.enable_x64()
 
 import jax

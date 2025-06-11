@@ -1,13 +1,21 @@
-import matplotlib.pyplot as plt
-import arviz as az
-from arviz import InferenceData
-import numpy as np
-from .parser import Template
 from pathlib import Path
+
+import arviz as az
+import jax.numpy as jnp
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from arviz import InferenceData
+import corner
 
 
 def plot_hdi(
-    idata: InferenceData, wave, flux, flux_err, output_path: str | Path, hdi_prob=0.9
+    idata: InferenceData,
+    wave: jnp.ndarray | np.ndarray,
+    flux: jnp.ndarray | np.ndarray,
+    flux_err: jnp.ndarray | np.ndarray,
+    output_path: str | Path,
+    hdi_prob: float = 0.9,
 ):
     fig, ax = plt.subplots(figsize=(8, 4), layout="constrained")
 
@@ -35,12 +43,13 @@ def plot_hdi(
 
 
 def plot_model_fit(
-    idata,
-    wave,
-    flux,
-    flux_err,
+    idata: InferenceData,
+    summary: pd.DataFrame,
+    wave: jnp.ndarray | np.ndarray,
+    flux: jnp.ndarray | np.ndarray,
+    flux_err: jnp.ndarray | np.ndarray,
     output_path: str | Path,
-    label,
+    label: str,
 ):
     fig, ax = plt.subplots(layout="constrained")
 
@@ -48,6 +57,7 @@ def plot_model_fit(
         wave, flux, yerr=flux_err, fmt="o", color="grey", zorder=-10, alpha=0.25
     )
 
+    # Plot the posterior distributions for disk and line flux
     for var in ["disk_flux", "line_flux"]:
         var_dist = idata.posterior_predictive[var].mean(dim=("chain",)).values
         median = np.percentile(var_dist, 50, axis=0)
@@ -59,6 +69,7 @@ def plot_model_fit(
     median = np.percentile(obs_dist, 50, axis=1)
     lower = np.percentile(obs_dist, 16, axis=1)
     upper = np.percentile(obs_dist, 84, axis=1)
+
     ax.plot(wave, median, label="Model Fit", color="C3")
     ax.fill_between(wave, lower, upper, alpha=0.5, color="C3")
 
@@ -68,4 +79,40 @@ def plot_model_fit(
     ax.legend()
 
     fig.savefig(f"{output_path}/model_fit.png")
+    plt.close(fig)
+
+
+def plot_corner(
+    idata: InferenceData,
+    output_path: str | Path,
+    label: str,
+    ignored_vars: list[str] = None,
+):
+    if ignored_vars is None:
+        ignored_vars = []
+
+    # Filter out ignored variables
+    var_names = [var for var in idata.posterior.data_vars if var not in ignored_vars]
+
+    samples_ds = az.extract(idata, var_names=var_names, combined=True)
+    samples = np.vstack([samples_ds[var].values for var in var_names]).T
+
+    # Compute quantiles
+    quantiles = [0.16, 0.5, 0.84]
+
+    # Create the corner plot
+    fig = corner.corner(
+        samples,
+        labels=var_names,
+        quantiles=quantiles,
+        show_titles=True,
+        title_fmt=".2f",
+        title_kwargs={"fontsize": 12},
+        label_kwargs={"fontsize": 14},
+        plot_density=True,
+        plot_contours=True,
+        fill_contours=True,
+    )
+
+    fig.savefig(f"{output_path}/corner_plot.png")
     plt.close(fig)

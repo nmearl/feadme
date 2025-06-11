@@ -33,11 +33,7 @@ class NUTSSampler(BaseSampler):
             wave=self.wave,
             flux=self.flux,
             flux_err=self.flux_err,
-            template=self.template,
+            # template=self.template,
         )
 
-        mcmc.print_summary()
-
         self._idata = self._compose_inference_data(mcmc)
-
-        az.summary(self._idata)

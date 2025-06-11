@@ -1,11 +1,12 @@
+from pathlib import Path
+
 import click
 import loguru
-from pathlib import Path
-import json
 from astropy.table import Table
-import flax.serialization
+import arviz as az
+import time
 
-from .compose import disk_model
+from .compose import create_optimized_model
 from .parser import Config, Template, Data, Sampler
 from .samplers.nuts_sampler import NUTSSampler
 
@@ -84,15 +85,13 @@ def cli(
 
     template = Template.from_json(Path(template_path))
 
-    print(template)
-
     # Load data
     data_tab = Table.read(
         data_path, format="ascii.csv", names=["wave", "flux", "flux_err"]
     )
 
     data = Data.create(
-        wave=data_tab["wave"],
+        wave=data_tab["wave"] / (1 + template.redshift),
         flux=data_tab["flux"],
         flux_err=data_tab["flux_err"],
         mask=template.mask,
@@ -100,7 +99,7 @@ def cli(
 
     # Create config
     config = Config(
-        template=template,  # Assuming single template for simplicity
+        template=template,
         data=data,
         sampler=Sampler(
             sampler_type=sampler_type,
@@ -114,7 +113,31 @@ def cli(
         data_path=data_path,
     )
 
-    loguru.logger.info("Configuration created successfully.")
+    loguru.logger.info(
+        f"Starting fit of `{template.name}` using method "
+        f"`{config.sampler.chain_method}` with `{config.sampler.num_chains}` "
+        f"chains and `{config.sampler.num_samples}` samples."
+    )
 
-    sampler = NUTSSampler(model=disk_model, config=config)
-    sampler.sample()
+    model = create_optimized_model(template)
+    sampler = NUTSSampler(model=model, config=config)
+
+    if (Path(output_path) / "results.nc").exists():
+        loguru.logger.info(
+            f"Sampler results already exist at "
+            f"`{output_path}/sampler_results.nc`. Loading existing results."
+        )
+        sampler._idata = az.from_netcdf(
+            f"{output_path}/results.nc",
+        )
+    else:
+        start_time = time.time()
+        sampler.run()
+        run_time = time.time() - start_time
+        loguru.logger.info(
+            f"Sampling completed for `{template.name}` in `{run_time}s`."
+        )
+
+    loguru.logger.info(sampler.summary)
+    sampler.write_results()
+    sampler.plot_results()
