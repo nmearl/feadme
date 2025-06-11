@@ -1,4 +1,4 @@
-# FEADME
+![](https://raw.githubusercontent.com/nmearl/feadme/main/images/feadme_logo_wide.png)
 
 A fast elliptical accretion disk modeling engine written with NumPyro and Jax.
 
@@ -28,6 +28,23 @@ installation instructions based on available resources of your platform.
 | CPU      | `pip install feadme` |
 | GPU      | `pip install feadme[gpu]` |
 | TPU      | `pip install feadme[tpu]` |
+
+Or, to install directly from the GitHub repository, you can use:
+
+```bash
+$ pip install git+https://github.com/nmearl/feadme.git
+````
+
+### Developer Installation
+
+For developers who want to contribute to the `feadme` codebase, you can install
+the package in editable mode with all optional dependencies:
+
+```bash
+$ git clone https://github.com/nmearl/feadme.git
+$ cd feadme
+$ pip install -e .[dev,gpu]  # or [tpu] for TPU support
+```
 
 ## Usage
 
@@ -91,16 +108,16 @@ the prior distributions for the sampling. All model parameters (e.g. `center`,
 
 ```jsonc
 {
-  "name": <string>, // unique name for the parameter
-  "distribution": <string>, // distribution type: "uniform", "log_uniform", "normal", or "log_normal"
-  "value": <null | float>, // null for sampling, float for fixed value
-  "fixed": <true | false>, // true if the parameter is fixed at "value"
-  "shared": <null | string>, // name of another **profile** that contains the same **parameter name** to link to
-  "low": <float>, // lower bound
-  "high": <float>, // upper bound
-  "loc": <float>, // center of the prior (used in normal distributions)
-  "scale": <float>,  // width of the prior (used in normal distributions)
-  "circular": <true | false> // true if the parameter is circular (e.g., angles)
+  "name": "<string>", // unique name for the parameter
+  "distribution": "<string>", // distribution type: "uniform", "log_uniform", "normal", or "log_normal"
+  "value": "<null | float>", // null for sampling, float for fixed value
+  "fixed": "<true | false>", // true if the parameter is fixed at "value"
+  "shared": "<null | string>", // name of another **profile** that contains the same **parameter name** to link to
+  "low": "<float>", // lower bound
+  "high": "<float>", // upper bound
+  "loc": "<float>", // center of the prior (used in normal distributions)
+  "scale": "<float>",  // width of the prior (used in normal distributions)
+  "circular": "<true | false>" // true if the parameter is circular (e.g., angles)
 }
 ```
 
