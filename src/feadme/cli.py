@@ -5,8 +5,11 @@ import loguru
 from astropy.table import Table
 import arviz as az
 import time
+import json
+import numpy as np
 
 from .compose import create_optimized_model
+from .models.lsq import lsq_model_fitter
 from .parser import Config, Template, Data, Sampler
 from .samplers.nuts_sampler import NUTSSampler
 
@@ -60,6 +63,12 @@ from .samplers.nuts_sampler import NUTSSampler
     default=True,
     help="Display a progress bar during sampling.",
 )
+@click.option(
+    "--pre-fit",
+    is_flag=True,
+    default=False,
+    help="Run a pre-fit using the least-squares model fitter before sampling.",
+)
 def cli(
     template_path: str,
     data_path: str,
@@ -69,6 +78,7 @@ def cli(
     num_samples: int,
     num_chains: int,
     progress_bar: bool,
+    pre_fit: bool = False,
 ):
     loguru.logger.info("Starting FEADME CLI...")
 
@@ -97,7 +107,42 @@ def cli(
         mask=template.mask,
     )
 
-    # Create config
+    # If a pre-fit is requested, run the least-squares model fitter and
+    # update the template parameters
+    if pre_fit:
+        with open(Path(template_path), "r") as f:
+            template_dict = json.load(f)
+
+        starters = lsq_model_fitter(template, data, show_plot=False)
+
+        for dprof in template_dict["disk_profiles"] + template_dict["line_profiles"]:
+            for _, dparam in dprof.items():
+                if not isinstance(dparam, dict):
+                    print(f"Skipping non-dict parameter: {type(dparam)}")
+                    continue
+
+                dname = f"{dprof['name']}_{dparam['name']}"
+
+                if dname in starters:
+                    dparam["loc"] = starters[dname][0].item()
+                    dparam["scale"] = (dparam["high"] - dparam["low"]) / np.sqrt(
+                        2 * np.pi
+                    )
+
+                    if "log" in dparam["distribution"]:
+                        dparam["scale"] = 10 ** (
+                            (np.log10(dparam["high"]) - np.log10(dparam["low"]))
+                            / np.sqrt(2 * np.pi)
+                        )
+
+                    if dparam["distribution"] == "log_uniform":
+                        dparam["distribution"] = "log_normal"
+                    elif dparam["distribution"] == "uniform":
+                        dparam["distribution"] = "normal"
+
+        template = Template.from_dict(template_dict)
+
+    # Create configuration object
     config = Config(
         template=template,
         data=data,
@@ -135,9 +180,9 @@ def cli(
         sampler.run()
         run_time = time.time() - start_time
         loguru.logger.info(
-            f"Sampling completed for `{template.name}` in `{run_time}s`."
+            f"Sampling completed for `{template.name}` in `{run_time:.2f}s`."
         )
 
-    loguru.logger.info(sampler.summary)
+    loguru.logger.info("\n" + sampler.summary.to_markdown())
     sampler.write_results()
     sampler.plot_results()
