@@ -8,6 +8,9 @@ import pandas as pd
 from arviz import InferenceData
 import corner
 
+from feadme.compose import evaluate_model
+from feadme.parser import Template
+
 
 def plot_hdi(
     idata: InferenceData,
@@ -45,6 +48,7 @@ def plot_hdi(
 def plot_model_fit(
     idata: InferenceData,
     summary: pd.DataFrame,
+    template: Template,
     wave: jnp.ndarray | np.ndarray,
     flux: jnp.ndarray | np.ndarray,
     flux_err: jnp.ndarray | np.ndarray,
@@ -59,9 +63,10 @@ def plot_model_fit(
 
     # Plot the posterior distributions for disk and line flux
     for var in ["disk_flux", "line_flux"]:
+        var_name = " ".join([x.capitalize() for x in var.split("_")])
         var_dist = idata.posterior_predictive[var].mean(dim=("chain",)).values
         median = np.percentile(var_dist, 50, axis=0)
-        ax.plot(wave, median, label=f"{var}")
+        ax.plot(wave, median, label=f"Sampled {var_name}")
 
     obs_dist = (
         idata.posterior_predictive["total_flux"].stack(sample=("chain", "draw")).values
@@ -70,8 +75,16 @@ def plot_model_fit(
     lower = np.percentile(obs_dist, 16, axis=1)
     upper = np.percentile(obs_dist, 84, axis=1)
 
-    ax.plot(wave, median, label="Model Fit", color="C3")
+    ax.plot(wave, median, label="Sampled Model Fit", color="C3")
     ax.fill_between(wave, lower, upper, alpha=0.5, color="C3")
+
+    # Reconstruct the model from the median of the posteriors
+    param_mods = az.summary(idata, stat_focus="median")["median"].to_dict()
+    tot_flux, disk_flux, line_flux = evaluate_model(template, wave, param_mods)
+
+    ax.plot(wave, tot_flux, label="Reconstructed Model", linestyle="--")
+    ax.plot(wave, disk_flux, label="Reconstructed Disk Flux", linestyle="--")
+    ax.plot(wave, line_flux, label="Reconstructed Line Flux", linestyle="--")
 
     ax.set_ylabel("Flux [mJy]")
     ax.set_xlabel("Wavelength [AA]")
@@ -112,7 +125,51 @@ def plot_corner(
         plot_density=True,
         plot_contours=True,
         fill_contours=True,
+        axes_scale=[
+            "log" if "vel_width" in x or "radius" in x or "sigma" in x else "linear"
+            for x in var_names
+        ],
     )
 
     fig.savefig(f"{output_path}/corner_plot.png")
+    plt.close(fig)
+
+
+def plot_corner_priors(
+    idata: InferenceData,
+    output_path: str | Path,
+    label: str,
+    ignored_vars: list[str] = None,
+):
+    if ignored_vars is None:
+        ignored_vars = []
+
+    # Filter out ignored variables
+    var_names = [var for var in idata.posterior.data_vars if var not in ignored_vars]
+
+    samples_ds = az.extract(idata, group="prior", var_names=var_names, combined=True)
+    samples = np.vstack([samples_ds[var].values for var in var_names]).T
+
+    # Compute quantiles
+    quantiles = [0.16, 0.5, 0.84]
+
+    # Create the corner plot
+    fig = corner.corner(
+        samples,
+        labels=var_names,
+        quantiles=quantiles,
+        show_titles=True,
+        title_fmt=".2f",
+        title_kwargs={"fontsize": 12},
+        label_kwargs={"fontsize": 14},
+        plot_density=True,
+        plot_contours=True,
+        fill_contours=True,
+        axes_scale=[
+            "log" if "vel_width" in x or "radius" in x or "sigma" in x else "linear"
+            for x in var_names
+        ],
+    )
+
+    fig.savefig(f"{output_path}/corner_plot_priors.png")
     plt.close(fig)
