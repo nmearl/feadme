@@ -115,7 +115,7 @@ def _compute_disk_flux_single(
 
     local_sigma = sigma * 1e5 * nu0 / c_cgs
 
-    res = jax_integrate(
+    res = quad_jax_integrate(
         inner_radius,
         outer_radius,
         0.0,
@@ -135,11 +135,126 @@ def _compute_disk_flux_single(
 def evaluate_model(
     template: Template,
     wave: jnp.ndarray | np.ndarray,
-    flux: jnp.ndarray | np.ndarray,
-    flux_err: jnp.ndarray | np.ndarray,
     param_mods: Dict[str, float],
 ):
-    total_flux = jnp.zeros_like(wave)
+    total_disk_flux = jnp.zeros_like(wave)
+    total_line_flux = jnp.zeros_like(wave)
+
+    disk_params = {
+        "centers": jnp.array(
+            [
+                param_mods[f"{prof.name}_center"]
+                for prof in template.disk_profiles
+                if f"{prof.name}_center" in param_mods
+            ]
+        ),
+        "inner_radii": jnp.array(
+            [
+                param_mods[f"{prof.name}_inner_radius"]
+                for prof in template.disk_profiles
+                if f"{prof.name}_inner_radius" in param_mods
+            ]
+        ),
+        "outer_radii": jnp.array(
+            [
+                param_mods[f"{prof.name}_outer_radius"]
+                for prof in template.disk_profiles
+                if f"{prof.name}_outer_radius" in param_mods
+            ]
+        ),
+        "sigmas": jnp.array(
+            [
+                param_mods[f"{prof.name}_sigma"]
+                for prof in template.disk_profiles
+                if f"{prof.name}_sigma" in param_mods
+            ]
+        ),
+        "inclinations": jnp.array(
+            [
+                param_mods[f"{prof.name}_inclination"]
+                for prof in template.disk_profiles
+                if f"{prof.name}_inclination" in param_mods
+            ]
+        ),
+        "qs": jnp.array(
+            [
+                param_mods[f"{prof.name}_q"]
+                for prof in template.disk_profiles
+                if f"{prof.name}_q" in param_mods
+            ]
+        ),
+        "eccentricities": jnp.array(
+            [
+                param_mods[f"{prof.name}_eccentricity"]
+                for prof in template.disk_profiles
+                if f"{prof.name}_eccentricity" in param_mods
+            ]
+        ),
+        "apocenters": jnp.array(
+            [
+                param_mods[f"{prof.name}_apocenter"]
+                for prof in template.disk_profiles
+                if f"{prof.name}_apocenter" in param_mods
+            ]
+        ),
+        "scales": jnp.array(
+            [
+                param_mods[f"{prof.name}_scale"]
+                for prof in template.disk_profiles
+                if f"{prof.name}_scale" in param_mods
+            ]
+        ),
+        "offsets": jnp.array(
+            [
+                param_mods[f"{prof.name}_offset"]
+                for prof in template.disk_profiles
+                if f"{prof.name}_offset" in param_mods
+            ]
+        ),
+    }
+
+    if len(disk_params["centers"]) > 0:
+        total_disk_flux = _compute_disk_flux_vectorized(wave, **disk_params)
+
+        if jnp.any(jnp.isnan(total_disk_flux)):
+            import pprint
+
+            pprint.pprint(disk_params)
+            raise ValueError()
+
+    line_params = {
+        "centers": jnp.array(
+            [
+                param_mods[f"{prof.name}_center"]
+                for prof in template.line_profiles
+                if f"{prof.name}_center" in param_mods
+            ]
+        ),
+        "vel_widths": jnp.array(
+            [
+                param_mods[f"{prof.name}_vel_width"]
+                for prof in template.line_profiles
+                if f"{prof.name}_vel_width" in param_mods
+            ]
+        ),
+        "amplitudes": jnp.array(
+            [
+                param_mods[f"{prof.name}_amplitude"]
+                for prof in template.line_profiles
+                if f"{prof.name}_amplitude" in param_mods
+            ]
+        ),
+        "shapes": jnp.array(
+            [prof.shape == Shape.GAUSSIAN for prof in template.line_profiles]
+        ),
+    }
+
+    if len(line_params["centers"]) > 0:
+        total_line_flux = _compute_line_flux_vectorized(wave, **line_params)
+
+    total_flux = total_disk_flux + total_line_flux
+
+    return total_flux, total_disk_flux, total_line_flux
 
 
 @flax.struct.dataclass
