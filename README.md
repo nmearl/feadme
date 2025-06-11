@@ -1,4 +1,4 @@
-![](https://raw.githubusercontent.com/nmearl/feadme/main/images/feadme_logo_wide.png)
+![](https://github.com/nmearl/feadme/blob/main/images/feadme_logo_wide.png)
 
 A fast elliptical accretion disk modeling engine written with NumPyro and Jax.
 
