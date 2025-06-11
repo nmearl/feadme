@@ -15,7 +15,7 @@ import xarray as xr
 from pathlib import Path
 
 from feadme.parser import Config, Sampler, Template
-from feadme.plotting import plot_hdi, plot_model_fit, plot_corner
+from feadme.plotting import plot_hdi, plot_model_fit, plot_corner, plot_corner_priors
 
 
 @flax.struct.dataclass
@@ -274,6 +274,7 @@ class BaseSampler(ABC):
         plot_model_fit(
             self._idata,
             self._summary,
+            self.template,
             self.wave,
             self.flux,
             self.flux_err,
@@ -281,6 +282,12 @@ class BaseSampler(ABC):
             label=self.template.name,
         )
         plot_corner(
+            self._idata,
+            self._config.output_path,
+            label=self.template.name,
+            ignored_vars=self._get_ignored_vars(),
+        )
+        plot_corner_priors(
             self._idata,
             self._config.output_path,
             label=self.template.name,
