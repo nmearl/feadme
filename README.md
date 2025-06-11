@@ -62,7 +62,7 @@ feadme my_template.json my_data.csv --sampler-type nuts --num-warmup 1000
 ## Data Format
 
 The data parser is currently designed to handle CSV files with three defined 
-column. The column names do not matter.
+columns. The column names do not matter.
 
 - **First column**: Wavelength values in `Angstrom`s.
 - **Second column**: Flux values in `mJy`.
@@ -79,7 +79,7 @@ The JSON file must include the following keys:
 * **`name`**: A descriptive name for the model or target.
 * **`redshift`**: The redshift of the source.
 * **`disk_profiles`**: A list of disk-like emission components.
-* **`line_profiles`**: A list of Gaussian line components.
+* **`line_profiles`**: A list of line components.
 * **`mask`**: A list of wavelength intervals to exclude from the fit.
 
 ### Defining Disk and Line Profiles
@@ -89,7 +89,7 @@ model component, and the definitions of these parameters are used to construct
 the prior distributions for the sampling. All model parameters (e.g. `center`, 
 `sigma`, `inclination`, `amplitude`, etc.) must follow this structure:
 
-```json
+```jsonc
 {
   "name": <string>, // unique name for the parameter
   "distribution": <string>, // distribution type: "uniform", "log_uniform", "normal", or "log_normal"
@@ -137,7 +137,7 @@ Each `line_profile` must define parameters for:
 
 ### Example
 
-```json
+```jsonc
 {
   "name": "ZTF18aahiqst",
   "redshift": 0.074675,
