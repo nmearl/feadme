@@ -35,6 +35,10 @@ class Writable:
         with open(path, "r") as f:
             raw = json.load(f)
 
+        return cls.from_dict(raw)
+
+    @classmethod
+    def from_dict(cls, raw: dict):
         instance = from_dict(
             data_class=cls,
             data=raw,
@@ -143,10 +147,10 @@ class Profile:
                 shared_candidates.append(field_value)
 
         for shared_param in shared_candidates:
-            if shared_param.shared in [p.name for p in independent]:
-                if shared_param in independent:
-                    independent.remove(shared_param)
-                shared.append(shared_param)
+            # if shared_param.shared in [p.name for p in independent]:
+            if shared_param in independent:
+                independent.remove(shared_param)
+            shared.append(shared_param)
 
         return self.replace(
             _independent_params=independent, _shared_params=shared, _fixed_params=fixed
