@@ -7,6 +7,10 @@ on:
       - 'pyproject.toml'
   workflow_dispatch:  # allows manual triggering
 
+permissions:
+  contents: write  # Required to create tags and releases
+  actions: read
+
 jobs:
   check-version:
     runs-on: ubuntu-latest
