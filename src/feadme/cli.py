@@ -124,9 +124,8 @@ def perform_sampling(config: Config):
     # If a results file already exists, load it instead of running the sampler
     if (Path(output_path) / "results.nc").exists():
         logger.info(
-            f"Sampler results already exist at "
-            f"<light-red>{output_path}/sampler_results.nc</light-red>. "
-            f"Loading existing results."
+            f"Loading existing results at "
+            f"<light-red>{output_path}/sampler_results.nc</light-red>."
         )
         sampler._idata = az.from_netcdf(
             f"{output_path}/results.nc",
@@ -142,7 +141,11 @@ def perform_sampling(config: Config):
 
     logger.info("Displaying sampler results:\n" + sampler.summary.to_markdown())
     sampler.write_results()
+
+    logger.info("Generating plots...")
     sampler.plot_results()
+
+    logger.info("Finished.")
 
 
 @click.command()
