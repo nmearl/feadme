@@ -1,63 +1,90 @@
-name: Release on Version Change
+name: Auto Tag and Publish
 
 on:
   push:
+    branches: [ main ]  # or your default branch
     paths:
       - 'pyproject.toml'
-    branches:
-      - main
-  workflow_dispatch:
+  workflow_dispatch:  # allows manual triggering
 
 jobs:
-  release:
+  check-version:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # needed to create tags
-
+    outputs:
+      version-changed: ${{ steps.check.outputs.changed }}
+      new-version: ${{ steps.check.outputs.version }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 2  # fetch last 2 commits to compare
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+    - name: Check if version changed
+      id: check
+      run: |
+        # Get current version from pyproject.toml
+        CURRENT_VERSION=$(grep -E '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+        
+        # Get previous version (if it exists)
+        git checkout HEAD~1 -- pyproject.toml 2>/dev/null || echo "No previous version"
+        PREVIOUS_VERSION=$(grep -E '^version = ' pyproject.toml 2>/dev/null | sed 's/version = "\(.*\)"/\1/' || echo "")
+        
+        # Restore current pyproject.toml
+        git checkout HEAD -- pyproject.toml
+        
+        echo "Current version: $CURRENT_VERSION"
+        echo "Previous version: $PREVIOUS_VERSION"
+        
+        if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ] && [ -n "$CURRENT_VERSION" ]; then
+          echo "changed=true" >> $GITHUB_OUTPUT
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "Version changed from $PREVIOUS_VERSION to $CURRENT_VERSION"
+        else
+          echo "changed=false" >> $GITHUB_OUTPUT
+          echo "No version change detected"
+        fi
 
-      - name: Install uv
-        run: pip install uv
+  tag-and-publish:
+    needs: check-version
+    if: needs.check-version.outputs.version-changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
 
-      - name: Get current version
-        id: get_version
-        run: |
-          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
 
-      - name: Check if tag exists
-        id: check_tag
-        run: |
-          if git rev-parse "v${{ steps.get_version.outputs.version }}" >/dev/null 2>&1; then
-            echo "Tag already exists. Skipping release."
-            echo "skip=true" >> $GITHUB_OUTPUT
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-          fi
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
 
-      - name: Create tag
-        if: steps.check_tag.outputs.skip == 'false'
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git tag "v${{ steps.get_version.outputs.version }}"
-          git push origin "v${{ steps.get_version.outputs.version }}"
+    - name: Build package
+      run: |
+        uv build
 
-      - name: Build package
-        if: steps.check_tag.outputs.skip == 'false'
-        run: uv pip compile --output dist/ && uv build
+    - name: Create and push tag
+      run: |
+        VERSION=${{ needs.check-version.outputs.new-version }}
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git tag "v$VERSION"
+        git push origin "v$VERSION"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish to PyPI
-        if: steps.check_tag.outputs.skip == 'false'
-        env:
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          pip install twine
-          twine upload dist/*
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ needs.check-version.outputs.new-version }}
+        release_name: Release v${{ needs.check-version.outputs.new-version }}
+        draft: false
+        prerelease: ${{ contains(needs.check-version.outputs.new-version, 'rc') || contains(needs.check-version.outputs.new-version, 'beta') || contains(needs.check-version.outputs.new-version, 'alpha') }}
+
+    - name: Publish to PyPI
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+      run: |
+        uv tool run twine upload dist/*
