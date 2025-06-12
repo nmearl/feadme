@@ -13,9 +13,12 @@ from numpyro.infer.mcmc import MCMCKernel, MCMC
 from numpyro.infer.util import Predictive
 import xarray as xr
 from pathlib import Path
+import loguru
 
 from ..parser import Config, Sampler, Template
 from ..plotting import plot_hdi, plot_model_fit, plot_corner, plot_corner_priors
+
+logger = loguru.logger.opt(colors=True)
 
 
 @flax.struct.dataclass
@@ -268,6 +271,8 @@ class BaseSampler(ABC):
         out_path = Path(f"{self._config.output_path}/results.nc")
 
         if not out_path.exists():
+            logger.info(
+                f"Results written to <green>{self._config.output_path}/results.nc</green>.")
             az.to_netcdf(self._idata, str(out_path))
 
         self.summary.to_csv(
