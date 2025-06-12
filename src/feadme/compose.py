@@ -393,6 +393,7 @@ class ParameterCache:
     line_shapes : jnp.ndarray
         Boolean array indicating the shape of each line profile.
     """
+
     disk_names: List[str]
     line_names: List[str]
     n_disks: int

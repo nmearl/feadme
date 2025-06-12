@@ -34,6 +34,7 @@ class SamplerResult:
     sampler_state : any, optional
         State of the sampler, if applicable.
     """
+
     samples: dict
     summary: dict
     diagnostics: dict

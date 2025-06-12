@@ -22,6 +22,7 @@ class Writable:
     """
     A mixin class for objects that can be serialized to JSON.
     """
+
     def to_json(self, path: str):
         """
         Serialize the object to a JSON file.
