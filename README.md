@@ -204,6 +204,36 @@ Each `line_profile` must define parameters for:
 }
 ```
 
+## Important Note
+
+Jax/NumPyro is designed to operate over physically distinct devices (CPU, GPU, TPU), and
+so parallelization is handled at the device level. This means that when using
+`feadme`, you should ensure that your setup appropriately distributes across
+the available devices.
+
+In practice, this means that if you are on a platform with a single CPU, Jax/NumPyro
+will not parallelize across multiple CPU cores. Instead, it will vectorize
+operations to maximize performance on that single device.
+
+Likewise, parallelization is done at the chain level, meaning that
+each MCMC chain will run independently on the available devices. If you are
+running multiple chains, they will not share data or state, but will each
+operate independently on the same dataset.
+
+### Parallelization and Device Management
+
+As mentioned, parallelization occurs at the device level, and over independent
+MCMC chains. If you are working on a single CPU device, you can force Jax to treat
+your CPU as multiple independent devices by setting the `FORCE_DEVICE_COUNT`
+environment variable.
+
+```bash
+$ export FORCE_DEVICE_COUNT=4  # or any number of devices you want to simulate
+```
+
+Your single CPU device will then be treated as if it were multiple independent
+devices, allowing you to run multiple MCMC chains in parallel.
+
 ## Contributing
 
 We welcome contributions to `feadme`. If you find a bug, have a feature 

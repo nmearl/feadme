@@ -1,6 +1,7 @@
 from loguru import logger
 import numpyro
 import sys
+import os
 
 logger.remove()
 
@@ -20,7 +21,7 @@ logger.add(
     "<level>{message}</level>",
 )
 
-numpyro.set_host_device_count(2)
+numpyro.set_host_device_count(int(os.getenv("FORCE_DEVICE_COUNT", "1")))
 numpyro.enable_x64()
 
 import jax
