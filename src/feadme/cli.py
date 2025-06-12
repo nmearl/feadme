@@ -135,7 +135,7 @@ def perform_sampling(config: Config):
         sampler.run()
         delta_time = (Time.now() - start_time).to_datetime()
         logger.info(
-            f"Sampling completed for <cyan>{template.name}<cyan> in "
+            f"Sampling completed for <cyan>{template.name}</cyan> in "
             f"<green>{delta_time}</green>."
         )
 
