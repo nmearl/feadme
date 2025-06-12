@@ -310,11 +310,7 @@ class Sampler(Writable):
 
     @property
     def chain_method(self) -> str:
-        return (
-            "vectorized"
-            if jax.local_device_count() == 1
-            else "parallel"
-        )
+        return "vectorized" if jax.local_device_count() == 1 else "parallel"
 
 
 @flax.struct.dataclass

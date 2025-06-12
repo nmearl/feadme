@@ -4,7 +4,7 @@ import click
 import loguru
 from astropy.table import Table
 import arviz as az
-import time
+from astropy.time import Time
 import json
 import numpy as np
 
@@ -12,6 +12,8 @@ from .compose import create_optimized_model
 from .models.lsq import lsq_model_fitter
 from .parser import Config, Template, Data, Sampler
 from .samplers.nuts_sampler import NUTSSampler
+
+logger = loguru.logger.opt(colors=True)
 
 
 def load_data(data_path: str, template: Template) -> Data:
@@ -106,10 +108,11 @@ def perform_sampling(config: Config):
     output_path = config.output_path
 
     # Start the fitting process
-    loguru.logger.info(
-        f"Starting fit of `{template.name}` using method "
-        f"`{config.sampler.chain_method}` with `{config.sampler.num_chains}` "
-        f"chains and `{config.sampler.num_samples}` samples."
+    logger.info(
+        f"Starting fit of <cyan>{template.name}</cyan> using "
+        f"<magenta>{config.sampler.chain_method}</magenta> method with "
+        f"<light-magenta>{config.sampler.num_chains}</light-magenta> chains "
+        f"and <light-magenta>{config.sampler.num_samples}</light-magenta> samples."
     )
 
     # Create the optimized model based on the template
@@ -120,24 +123,25 @@ def perform_sampling(config: Config):
 
     # If a results file already exists, load it instead of running the sampler
     if (Path(output_path) / "results.nc").exists():
-        loguru.logger.info(
+        logger.info(
             f"Sampler results already exist at "
-            f"`{output_path}/sampler_results.nc`. Loading existing results."
+            f"<light-red>{output_path}/sampler_results.nc</light-red>. "
+            f"Loading existing results."
         )
         sampler._idata = az.from_netcdf(
             f"{output_path}/results.nc",
         )
     else:
-        start_time = time.time()
+        start_time = Time.now()
         sampler.run()
-        run_time = time.time() - start_time
-        loguru.logger.info(
-            f"Sampling completed for `{template.name}` in `{run_time:.2f}s`."
+        delta_time = (Time.now() - start_time).to_datetime()
+        logger.info(
+            f"Sampling completed for <cyan>{template.name}<cyan> in "
+            f"<green>{delta_time:.2f}</green>."
         )
 
-    loguru.logger.info("Displaying sampler results:\n" + sampler.summary.to_markdown())
+    logger.info("Displaying sampler results:\n" + sampler.summary.to_markdown())
     sampler.write_results()
-    loguru.logger.info(f"Results written to `{output_path}/results.nc`.")
     sampler.plot_results()
 
 
@@ -241,7 +245,7 @@ def cli(
 
     # Run the least-squares model fitter and update the template parameters
     if pre_fit:
-        loguru.logger.info("Running pre-fit to initialize template parameters...")
+        logger.info("Running pre-fit to initialize template parameters...")
         template = run_pre_fit(template, template_path, data)
 
     # Create configuration object
@@ -265,7 +269,7 @@ def cli(
 
     if not output_path.exists():
         output_path.mkdir(parents=True, exist_ok=True)
-        loguru.logger.info(f"Created output directory: `{output_path}`")
+        logger.info(f"Created output directory: <light-red>{output_path}</light-red>")
 
     # Perform the sampling with the given configuration
     perform_sampling(config)
