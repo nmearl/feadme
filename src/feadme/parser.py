@@ -35,7 +35,7 @@ class Writable:
         )
 
         with open(path, "w") as f:
-            json.dump(serializable, f)
+            json.dump(serializable, f, indent=4)
 
     @classmethod
     def from_json(cls, path: str | Path):
@@ -96,7 +96,7 @@ class Writable:
         return instance
 
 
-class Distribution(Enum):
+class Distribution(str, Enum):
     UNIFORM = "uniform"
     NORMAL = "normal"
     LOG_UNIFORM = "log_uniform"

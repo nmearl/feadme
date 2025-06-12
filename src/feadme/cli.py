@@ -70,7 +70,6 @@ def run_pre_fit(template: Template, template_path: str, data: Data) -> Template:
     for dprof in template_dict["disk_profiles"] + template_dict["line_profiles"]:
         for _, dparam in dprof.items():
             if not isinstance(dparam, dict):
-                print(f"Skipping non-dict parameter: {type(dparam)}")
                 continue
 
             dname = f"{dprof['name']}_{dparam['name']}"
@@ -242,6 +241,7 @@ def cli(
 
     # Run the least-squares model fitter and update the template parameters
     if pre_fit:
+        loguru.logger.info("Running pre-fit to initialize template parameters...")
         template = run_pre_fit(template, template_path, data)
 
     # Create configuration object
@@ -265,7 +265,7 @@ def cli(
 
     if not output_path.exists():
         output_path.mkdir(parents=True, exist_ok=True)
-        loguru.logger.info(f"Created output directory: {output_path}")
+        loguru.logger.info(f"Created output directory: `{output_path}`")
 
     # Perform the sampling with the given configuration
     perform_sampling(config)

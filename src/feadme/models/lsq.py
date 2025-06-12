@@ -322,7 +322,7 @@ def lsq_model_fitter(
 
         samp_name = f"{sm.name}_{pn}"
 
-        print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
+        # print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
 
         if samp_name in indep_params:
             if pn in ["apocenter"]:
@@ -342,7 +342,7 @@ def lsq_model_fitter(
                 pv = unp.nominal_values(upv)
                 pe = unp.std_devs(upv)
 
-                print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
+                # print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
 
             if pe < FLOAT_EPSILON:
                 pe = 1
