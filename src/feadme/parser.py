@@ -312,7 +312,7 @@ class Sampler(Writable):
     def chain_method(self) -> str:
         return (
             "vectorized"
-            if jax.local_device_count() == 1 and self.num_chains == 1
+            if jax.local_device_count() == 1
             else "parallel"
         )
 

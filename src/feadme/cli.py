@@ -185,7 +185,7 @@ def perform_sampling(config: Config):
     help="Number of MCMC chains to run.",
 )
 @click.option(
-    "--progress-bar",
+    "--progress-bar/--no-progress-bar",
     is_flag=True,
     default=True,
     help="Display a progress bar during sampling.",
