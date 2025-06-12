@@ -14,8 +14,8 @@ from numpyro.infer.util import Predictive
 import xarray as xr
 from pathlib import Path
 
-from feadme.parser import Config, Sampler, Template
-from feadme.plotting import plot_hdi, plot_model_fit, plot_corner, plot_corner_priors
+from ..parser import Config, Sampler, Template
+from ..plotting import plot_hdi, plot_model_fit, plot_corner, plot_corner_priors
 
 
 @flax.struct.dataclass
@@ -284,6 +284,7 @@ class BaseSampler(ABC):
         )
         plot_model_fit(
             self._idata,
+            self.summary,
             self.template,
             self.wave,
             self.flux,

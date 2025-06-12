@@ -8,8 +8,8 @@ import pandas as pd
 from arviz import InferenceData
 import corner
 
-from feadme.compose import evaluate_model
-from feadme.parser import Template
+from .compose import evaluate_model
+from .parser import Template
 
 
 def plot_hdi(
@@ -65,6 +65,7 @@ def plot_hdi(
 
 def plot_model_fit(
     idata: InferenceData,
+    summary: pd.DataFrame,
     template: Template,
     wave: jnp.ndarray | np.ndarray,
     flux: jnp.ndarray | np.ndarray,
@@ -81,6 +82,8 @@ def plot_model_fit(
         The inference data containing the posterior predictive samples.
     template : Template
         The template object containing the model parameters.
+    summary : pd.DataFrame
+        A DataFrame containing the summary statistics of the posterior distributions.
     wave : jnp.ndarray or np.ndarray
         The wavelength array.
     flux : jnp.ndarray or np.ndarray
@@ -116,7 +119,14 @@ def plot_model_fit(
     ax.fill_between(wave, lower, upper, alpha=0.5, color="C3")
 
     # Reconstruct the model from the median of the posteriors
-    param_mods = az.summary(idata, stat_focus="median")["median"].to_dict()
+    param_mods = summary["median"].to_dict()
+    param_mods.update(
+        {
+            f"{prof.name}_{param.name}": param.value
+            for prof in template.disk_profiles + template.line_profiles
+            for param in prof.fixed
+        }
+    )
     tot_flux, disk_flux, line_flux = evaluate_model(template, wave, param_mods)
 
     ax.plot(wave, tot_flux, label="Reconstructed Model", linestyle="--")
