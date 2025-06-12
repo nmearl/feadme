@@ -20,6 +20,24 @@ def plot_hdi(
     output_path: str | Path,
     hdi_prob: float = 0.9,
 ):
+    """
+    Plot the highest density interval (HDI) of the posterior predictive distribution.
+
+    Parameters
+    ----------
+    idata : InferenceData
+        The inference data containing the posterior predictive samples.
+    wave : jnp.ndarray or np.ndarray
+        The wavelength array.
+    flux : jnp.ndarray or np.ndarray
+        The observed flux values.
+    flux_err : jnp.ndarray or np.ndarray
+        The observed flux errors.
+    output_path : str or Path
+        The path where the plot will be saved.
+    hdi_prob : float, optional
+        The probability for the HDI, by default 0.9.
+    """
     fig, ax = plt.subplots(figsize=(8, 4), layout="constrained")
 
     # Plot observed data
@@ -47,7 +65,6 @@ def plot_hdi(
 
 def plot_model_fit(
     idata: InferenceData,
-    summary: pd.DataFrame,
     template: Template,
     wave: jnp.ndarray | np.ndarray,
     flux: jnp.ndarray | np.ndarray,
@@ -55,6 +72,26 @@ def plot_model_fit(
     output_path: str | Path,
     label: str,
 ):
+    """
+    Plot the model fit using the posterior distributions of the disk and line fluxes.
+
+    Parameters
+    ----------
+    idata : InferenceData
+        The inference data containing the posterior predictive samples.
+    template : Template
+        The template object containing the model parameters.
+    wave : jnp.ndarray or np.ndarray
+        The wavelength array.
+    flux : jnp.ndarray or np.ndarray
+        The observed flux values.
+    flux_err : jnp.ndarray or np.ndarray
+        The observed flux errors.
+    output_path : str or Path
+        The path where the plot will be saved.
+    label : str
+        A label for the plot, typically the name of the template or object being modeled.
+    """
     fig, ax = plt.subplots(layout="constrained")
 
     ax.errorbar(
@@ -98,9 +135,20 @@ def plot_model_fit(
 def plot_corner(
     idata: InferenceData,
     output_path: str | Path,
-    label: str,
     ignored_vars: list[str] = None,
 ):
+    """
+    Create a corner plot of the posterior distributions of the model parameters.
+
+    Parameters
+    ----------
+    idata : InferenceData
+        The inference data containing the posterior samples.
+    output_path : str or Path
+        The path where the corner plot will be saved.
+    ignored_vars : list of str, optional
+        A list of variable names to ignore in the corner plot. Defaults to None.
+    """
     if ignored_vars is None:
         ignored_vars = []
 
@@ -138,9 +186,20 @@ def plot_corner(
 def plot_corner_priors(
     idata: InferenceData,
     output_path: str | Path,
-    label: str,
     ignored_vars: list[str] = None,
 ):
+    """
+    Create a corner plot of the prior distributions of the model parameters.
+
+    Parameters
+    ----------
+    idata : InferenceData
+        The inference data containing the prior samples.
+    output_path : str or Path
+        The path where the corner plot will be saved.
+    ignored_vars : list of str, optional
+        A list of variable names to ignore in the corner plot. Defaults to None.
+    """
     if ignored_vars is None:
         ignored_vars = []
 

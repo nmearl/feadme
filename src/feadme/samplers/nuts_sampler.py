@@ -7,6 +7,9 @@ from .base_sampler import BaseSampler
 
 class NUTSSampler(BaseSampler):
     def get_kernel(self):
+        """
+        Create a NUTS kernel for sampling.
+        """
         return NUTS(
             self.model,
             init_strategy=init_to_median(num_samples=1000),
@@ -16,6 +19,9 @@ class NUTSSampler(BaseSampler):
         )
 
     def sample(self):
+        """
+        Run the NUTS sampler to perform MCMC sampling.
+        """
         kernel = self.get_kernel()
         rng_key = random.PRNGKey(0)
 

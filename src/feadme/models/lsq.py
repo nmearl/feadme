@@ -103,6 +103,29 @@ def lsq_model_fitter(
     force_values=None,
     show_plot=False,
 ):
+    """
+    Fit a least-squares model to the provided template and data.
+    This function constructs a model based on the disk and line profiles defined in the template,
+    applies the necessary masks to the data, and performs a fit using the TRFLSQFitter.
+
+    Parameters
+    ----------
+    template : Template
+        The template object containing disk and line profiles.
+    data : Data
+        The data object containing wavelength, flux, and flux error.
+    force_values : dict, optional
+        A dictionary of parameter names and values to force during the fit.
+        The keys should be in the format "<profile_name>_<parameter_name>".
+    show_plot : bool, optional
+        If True, display a plot of the fit results. Defaults to False.
+
+    Returns
+    -------
+    dict
+        A dictionary containing the fitted parameters and their uncertainties.
+        The keys are in the format "<profile_name>_<parameter_name>".
+    """
     # Apply masks to data
     rest_wave = data.masked_wave
     flux = data.masked_flux

@@ -14,6 +14,134 @@ from .parser import Config, Template, Data, Sampler
 from .samplers.nuts_sampler import NUTSSampler
 
 
+def load_data(data_path: str, template: Template) -> Data:
+    """
+    Load data from a CSV file and adjust the wavelength based on the
+    template's redshift.
+
+    Parameters
+    ----------
+    data_path : str
+        Path to the CSV file containing the data.
+    template : Template
+        Template object containing the redshift and mask information.
+
+    Returns
+    -------
+    Data
+        A Data object containing the wavelength, flux, flux error, and mask.
+    """
+    data_tab = Table.read(
+        data_path, format="ascii.csv", names=["wave", "flux", "flux_err"]
+    )
+
+    return Data.create(
+        wave=data_tab["wave"] / (1 + template.redshift),
+        flux=data_tab["flux"],
+        flux_err=data_tab["flux_err"],
+        mask=template.mask,
+    )
+
+
+def run_pre_fit(template: Template, template_path: str, data: Data) -> Template:
+    """
+    Run a pre-fit using the least-squares model fitter to initialize
+    the template parameters based on the provided data.
+
+    Parameters
+    ----------
+    template : Template
+        The template object containing the initial parameters.
+    template_path : str
+        Path to the template JSON file.
+    data : Data
+        The data object containing the wavelength, flux, and flux error.
+
+    Returns
+    -------
+    Template
+        The updated template object with parameters initialized from the pre-fit.
+    """
+    with open(Path(template_path), "r") as f:
+        template_dict = json.load(f)
+
+    starters = lsq_model_fitter(template, data, show_plot=False)
+
+    for dprof in template_dict["disk_profiles"] + template_dict["line_profiles"]:
+        for _, dparam in dprof.items():
+            if not isinstance(dparam, dict):
+                print(f"Skipping non-dict parameter: {type(dparam)}")
+                continue
+
+            dname = f"{dprof['name']}_{dparam['name']}"
+
+            if dname in starters:
+                dparam["loc"] = starters[dname][0].item()
+                dparam["scale"] = (dparam["high"] - dparam["low"]) / np.sqrt(2 * np.pi)
+
+                if "log" in dparam["distribution"]:
+                    dparam["scale"] = 10 ** (
+                        (np.log10(dparam["high"]) - np.log10(dparam["low"]))
+                        / np.sqrt(2 * np.pi)
+                    )
+
+                if dparam["distribution"] == "log_uniform":
+                    dparam["distribution"] = "log_normal"
+                elif dparam["distribution"] == "uniform":
+                    dparam["distribution"] = "normal"
+
+    return Template.from_dict(template_dict)
+
+
+def perform_sampling(config: Config):
+    """
+    Perform MCMC sampling using the specified configuration.
+
+    Parameters
+    ----------
+    config : Config
+        Configuration object containing the template, data, sampler settings,
+        and output paths.
+    """
+    template = config.template
+    output_path = config.output_path
+
+    # Start the fitting process
+    loguru.logger.info(
+        f"Starting fit of `{template.name}` using method "
+        f"`{config.sampler.chain_method}` with `{config.sampler.num_chains}` "
+        f"chains and `{config.sampler.num_samples}` samples."
+    )
+
+    # Create the optimized model based on the template
+    model = create_optimized_model(template)
+
+    # Initialize the sampler with the model and configuration
+    sampler = NUTSSampler(model=model, config=config)
+
+    # If a results file already exists, load it instead of running the sampler
+    if (Path(output_path) / "results.nc").exists():
+        loguru.logger.info(
+            f"Sampler results already exist at "
+            f"`{output_path}/sampler_results.nc`. Loading existing results."
+        )
+        sampler._idata = az.from_netcdf(
+            f"{output_path}/results.nc",
+        )
+    else:
+        start_time = time.time()
+        sampler.run()
+        run_time = time.time() - start_time
+        loguru.logger.info(
+            f"Sampling completed for `{template.name}` in `{run_time:.2f}s`."
+        )
+
+    loguru.logger.info("Displaying sampler results:\n" + sampler.summary.to_markdown())
+    sampler.write_results()
+    loguru.logger.info(f"Results written to `{output_path}/results.nc`.")
+    sampler.plot_results()
+
+
 @click.command()
 @click.argument(
     "template-path",
@@ -80,67 +208,41 @@ def cli(
     progress_bar: bool,
     pre_fit: bool = False,
 ):
-    loguru.logger.info("Starting FEADME CLI...")
+    """
+    Command-line interface for the `feadme` package. Fits a template to
+    spectral data using Jax and NumPyro.
 
-    # Load template
-    # if Path(template_path).is_dir():
-    #     template_files = list(Path(template_path).glob("*.json"))
-    #     if not template_files:
-    #         raise ValueError(f"No template files found in directory {template_path}.")
-    #     templates = [
-    #         Template(**json.loads(file.read_text())) for file in template_files
-    #     ]
-    # else:
-    #     templates = [Template(**json.loads(Path(template_path).read_text()))]
-
+    Parameters
+    ----------
+    template_path : str
+        Path to the template JSON file.
+    data_path : str
+        Path to the data CSV file containing wavelength, flux, and flux error.
+    output_path : str
+        Directory to save output files and plots. Defaults to './output'.
+    sampler_type : str
+        Type of NumPyro sampler to use (currently only 'nuts' is supported).
+    num_warmup : int
+        Number of warmup steps for the MCMC sampler. Defaults to 1000.
+    num_samples : int
+        Number of samples to draw from the posterior distribution. Defaults to 1000.
+    num_chains : int
+        Number of MCMC chains to run. Defaults to 1.
+    progress_bar : bool
+        Display a progress bar during sampling. Defaults to True.
+    pre_fit : bool
+        Run a pre-fit using the least-squares model fitter before sampling.
+        This initializes the template parameters based on the provided data.
+    """
+    # Parse the template from JSON
     template = Template.from_json(Path(template_path))
 
-    # Load data
-    data_tab = Table.read(
-        data_path, format="ascii.csv", names=["wave", "flux", "flux_err"]
-    )
+    # Load the data given the template's redshift and mask
+    data = load_data(data_path, template)
 
-    data = Data.create(
-        wave=data_tab["wave"] / (1 + template.redshift),
-        flux=data_tab["flux"],
-        flux_err=data_tab["flux_err"],
-        mask=template.mask,
-    )
-
-    # If a pre-fit is requested, run the least-squares model fitter and
-    # update the template parameters
+    # Run the least-squares model fitter and update the template parameters
     if pre_fit:
-        with open(Path(template_path), "r") as f:
-            template_dict = json.load(f)
-
-        starters = lsq_model_fitter(template, data, show_plot=False)
-
-        for dprof in template_dict["disk_profiles"] + template_dict["line_profiles"]:
-            for _, dparam in dprof.items():
-                if not isinstance(dparam, dict):
-                    print(f"Skipping non-dict parameter: {type(dparam)}")
-                    continue
-
-                dname = f"{dprof['name']}_{dparam['name']}"
-
-                if dname in starters:
-                    dparam["loc"] = starters[dname][0].item()
-                    dparam["scale"] = (dparam["high"] - dparam["low"]) / np.sqrt(
-                        2 * np.pi
-                    )
-
-                    if "log" in dparam["distribution"]:
-                        dparam["scale"] = 10 ** (
-                            (np.log10(dparam["high"]) - np.log10(dparam["low"]))
-                            / np.sqrt(2 * np.pi)
-                        )
-
-                    if dparam["distribution"] == "log_uniform":
-                        dparam["distribution"] = "log_normal"
-                    elif dparam["distribution"] == "uniform":
-                        dparam["distribution"] = "normal"
-
-        template = Template.from_dict(template_dict)
+        template = run_pre_fit(template, template_path, data)
 
     # Create configuration object
     config = Config(
@@ -158,31 +260,12 @@ def cli(
         data_path=data_path,
     )
 
-    loguru.logger.info(
-        f"Starting fit of `{template.name}` using method "
-        f"`{config.sampler.chain_method}` with `{config.sampler.num_chains}` "
-        f"chains and `{config.sampler.num_samples}` samples."
-    )
+    # Ensure the output directory exists
+    output_path = Path(output_path)
 
-    model = create_optimized_model(template)
-    sampler = NUTSSampler(model=model, config=config)
+    if not output_path.exists():
+        output_path.mkdir(parents=True, exist_ok=True)
+        loguru.logger.info(f"Created output directory: {output_path}")
 
-    if (Path(output_path) / "results.nc").exists():
-        loguru.logger.info(
-            f"Sampler results already exist at "
-            f"`{output_path}/sampler_results.nc`. Loading existing results."
-        )
-        sampler._idata = az.from_netcdf(
-            f"{output_path}/results.nc",
-        )
-    else:
-        start_time = time.time()
-        sampler.run()
-        run_time = time.time() - start_time
-        loguru.logger.info(
-            f"Sampling completed for `{template.name}` in `{run_time:.2f}s`."
-        )
-
-    loguru.logger.info("\n" + sampler.summary.to_markdown())
-    sampler.write_results()
-    sampler.plot_results()
+    # Perform the sampling with the given configuration
+    perform_sampling(config)

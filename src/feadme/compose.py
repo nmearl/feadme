@@ -29,7 +29,28 @@ def _compute_line_flux_vectorized(
     amplitudes: jnp.ndarray,
     shapes: jnp.ndarray,
 ) -> jnp.ndarray:
-    """Vectorized line flux computation for all lines at once."""
+    """
+    Compute the line flux for multiple spectral lines in a vectorized manner.
+
+    Parameters
+    ----------
+    wave : jnp.ndarray
+        Wavelength array (in Angstroms).
+    centers : jnp.ndarray
+        Central wavelengths of the spectral lines (in Angstroms).
+    vel_widths : jnp.ndarray
+        Velocity widths of the spectral lines (in km/s).
+    amplitudes : jnp.ndarray
+        Amplitudes of the spectral lines.
+    shapes : jnp.ndarray
+        Boolean array indicating the shape of each line:
+        `True` for Gaussian, `False` for Lorentzian.
+
+    Returns
+    -------
+    jnp.ndarray
+        The computed line flux for each wavelength in the input array.
+    """
     if len(centers) == 0:
         return jnp.zeros_like(wave)
 
@@ -70,7 +91,39 @@ def _compute_disk_flux_vectorized(
     scales: jnp.ndarray,
     offsets: jnp.ndarray,
 ) -> jnp.ndarray:
-    """Vectorized disk flux computation."""
+    """
+    Compute the disk flux for multiple disk profiles in a vectorized manner.
+
+    Parameters
+    ----------
+    wave : jnp.ndarray
+        Wavelength array (in Angstroms).
+    centers : jnp.ndarray
+        Central wavelengths of the disk profiles (in Angstroms).
+    inner_radii : jnp.ndarray
+        Inner radii of the disk profiles (in arbitrary units).
+    outer_radii : jnp.ndarray
+        Outer radii of the disk profiles (in arbitrary units).
+    sigmas : jnp.ndarray
+        Line broadening parameters for the disk profiles.
+    inclinations : jnp.ndarray
+        Inclination angles of the disks (in radians).
+    qs : jnp.ndarray
+        Power-law indices for the radial intensity profiles.
+    eccentricities : jnp.ndarray
+        Eccentricities of the disk profiles.
+    apocenters : jnp.ndarray
+        Apocenter angles of the disk profiles (in radians).
+    scales : jnp.ndarray
+        Scaling factors for the disk profiles.
+    offsets : jnp.ndarray
+        Offset values for the disk profiles.
+
+    Returns
+    -------
+    jnp.ndarray
+        The computed disk flux for each wavelength in the input array.
+    """
     if len(centers) == 0:
         return jnp.zeros_like(wave)
 
@@ -108,7 +161,43 @@ def _compute_disk_flux_single(
     scale: float = 1.0,
     offset: float = 0.0,
 ) -> jnp.ndarray:
-    """Single disk flux computation (original implementation)."""
+    """
+    Compute the flux for a single disk profile.
+
+    This function calculates the flux contribution of a single disk profile
+    based on its parameters, using numerical integration over the disk's
+    radial and azimuthal extent.
+
+    Parameters
+    ----------
+    wave : jnp.ndarray
+        Wavelength array (in Angstroms).
+    center : float
+        Central wavelength of the disk profile (in Angstroms).
+    inner_radius : float
+        Inner radius of the disk (in arbitrary units).
+    outer_radius : float
+        Outer radius of the disk (in arbitrary units).
+    sigma : float
+        Line broadening parameter for the disk profile.
+    inclination : float
+        Inclination angle of the disk (in radians).
+    q : float
+        Power-law index for the radial intensity profile.
+    eccentricity : float
+        Eccentricity of the disk profile.
+    apocenter : float
+        Apocenter angle of the disk profile (in radians).
+    scale : float, optional
+        Scaling factor for the disk profile, by default 1.0.
+    offset : float, optional
+        Offset value for the disk profile, by default 0.0.
+
+    Returns
+    -------
+    jnp.ndarray
+        The computed flux for the disk profile at each wavelength in the input array.
+    """
     nu = c_cgs / (wave * 1e-8)
     nu0 = c_cgs / (center * 1e-8)
     X = nu / nu0 - 1
@@ -137,6 +226,29 @@ def evaluate_model(
     wave: jnp.ndarray | np.ndarray,
     param_mods: Dict[str, float],
 ):
+    """
+    Evaluate the model fluxes for a given template and parameter modifications.
+
+    Parameters
+    ----------
+    template : Template
+        The model template containing disk and line profile definitions.
+    wave : jnp.ndarray or np.ndarray
+        Wavelength array (in Angstroms) at which to evaluate the model.
+    param_mods : dict of str to float
+        Dictionary mapping parameter names to their modified values.
+
+    Returns
+    -------
+    tuple of jnp.ndarray
+        A tuple containing:
+        - total_flux : jnp.ndarray
+            The sum of disk and line fluxes at each wavelength.
+        - total_disk_flux : jnp.ndarray
+            The disk flux at each wavelength.
+        - total_line_flux : jnp.ndarray
+            The line flux at each wavelength.
+    """
     total_disk_flux = jnp.zeros_like(wave)
     total_line_flux = jnp.zeros_like(wave)
 
@@ -259,8 +371,28 @@ def evaluate_model(
 
 @flax.struct.dataclass
 class ParameterCache:
-    """Cache for pre-computed parameter metadata to avoid repeated processing."""
+    """
+    Cache for pre-computed parameter metadata to avoid repeated processing.
 
+    Attributes
+    ----------
+    disk_names : List[str]
+        Names of disk profiles in the template.
+    line_names : List[str]
+        Names of line profiles in the template.
+    n_disks : int
+        Number of disk profiles.
+    n_lines : int
+        Number of line profiles.
+    param_groups : Dict[str, List[Tuple[str, Parameter]]]
+        Grouped parameters for batch sampling, keyed by parameter name.
+    fixed_params : List[Tuple[str, Parameter]]
+        List of fixed parameters for all profiles.
+    shared_params : List[Tuple[str, Parameter]]
+        List of shared parameters for all profiles.
+    line_shapes : jnp.ndarray
+        Boolean array indicating the shape of each line profile.
+    """
     disk_names: List[str]
     line_names: List[str]
     n_disks: int
@@ -272,6 +404,20 @@ class ParameterCache:
 
     @classmethod
     def create(cls, template: Template):
+        """
+        Create a `ParameterCache` from a `Template`. Extract and pre-compute
+        necessary parameter metadata to optimize model evaluation and sampling.
+
+        Parameters
+        ----------
+        template : Template
+            The model template containing disk and line profile definitions.
+
+        Returns
+        -------
+        ParameterCache
+            An instance of ParameterCache containing pre-computed parameter metadata.
+        """
         disk_names = [prof.name for prof in template.disk_profiles]
         line_names = [prof.name for prof in template.line_profiles]
         n_disks = len(disk_names)
@@ -472,7 +618,22 @@ def disk_model_optimized(
     flux_err: jnp.ndarray | None = None,
     cache: ParameterCache | None = None,
 ):
-    """Optimized disk model with caching and vectorized operations."""
+    """
+    Optimized disk model with caching and vectorized operations.
+
+    Parameters
+    ----------
+    template : Template
+        The model template containing disk and line profile definitions.
+    wave : jnp.ndarray
+        Wavelength array (in Angstroms) at which to evaluate the model.
+    flux : jnp.ndarray or None, optional
+        Observed flux values at each wavelength, by default None.
+    flux_err : jnp.ndarray or None, optional
+        Observational uncertainties for each flux value, by default None.
+    cache : ParameterCache or None, optional
+        Precomputed parameter cache for efficiency, by default None.
+    """
 
     # Use cache or create new one
     if cache is None:

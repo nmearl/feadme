@@ -34,7 +34,6 @@ class SamplerResult:
     sampler_state : any, optional
         State of the sampler, if applicable.
     """
-
     samples: dict
     summary: dict
     diagnostics: dict
@@ -98,10 +97,21 @@ class BaseSampler(ABC):
         self.write_results()
         self.plot_results()
 
-    def _compose_inference_data(self, mcmc: MCMC):
+    def _compose_inference_data(self, mcmc: MCMC) -> az.InferenceData:
         """
         Create an ArviZ `InferenceData` object from a NumPyro MCMC run.
         Includes posterior, posterior predictive, and prior samples.
+
+        Parameters
+        ----------
+        mcmc : MCMC
+            The MCMC object containing the sampling results.
+
+        Returns
+        -------
+        az.InferenceData
+            An ArviZ InferenceData object containing the posterior, posterior predictive,
+            and prior samples.
         """
         posterior_samples = mcmc.get_samples()
 
@@ -273,7 +283,6 @@ class BaseSampler(ABC):
         )
         plot_model_fit(
             self._idata,
-            self._summary,
             self.template,
             self.wave,
             self.flux,
@@ -284,12 +293,10 @@ class BaseSampler(ABC):
         plot_corner(
             self._idata,
             self._config.output_path,
-            label=self.template.name,
             ignored_vars=self._get_ignored_vars(),
         )
         plot_corner_priors(
             self._idata,
             self._config.output_path,
-            label=self.template.name,
             ignored_vars=self._get_ignored_vars(),
         )

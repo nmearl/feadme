@@ -26,6 +26,9 @@ def dict_to_namedtuple(name, d):
 
 
 def truncnorm_ppf(q, loc, scale, lower_limit, upper_limit):
+    """
+    Compute the percent point function (PPF) of a truncated normal distribution.
+    """
     a = (lower_limit - loc) / scale
     b = (upper_limit - loc) / scale
 

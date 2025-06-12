@@ -19,7 +19,13 @@ def jax_array_hook(value, target_type):
 
 
 class Writable:
+    """
+    A mixin class for objects that can be serialized to JSON.
+    """
     def to_json(self, path: str):
+        """
+        Serialize the object to a JSON file.
+        """
         raw = flax.struct.dataclasses.asdict(self)
 
         serializable = tree_map(
@@ -32,6 +38,9 @@ class Writable:
 
     @classmethod
     def from_json(cls, path: str | Path):
+        """
+        Deserialize the object from a JSON file.
+        """
         with open(path, "r") as f:
             raw = json.load(f)
 
@@ -39,6 +48,9 @@ class Writable:
 
     @classmethod
     def from_dict(cls, raw: dict):
+        """
+        Deserialize the object from a dictionary.
+        """
         instance = from_dict(
             data_class=cls,
             data=raw,
