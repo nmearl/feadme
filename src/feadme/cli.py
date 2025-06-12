@@ -125,7 +125,7 @@ def perform_sampling(config: Config):
     if (Path(output_path) / "results.nc").exists():
         logger.info(
             f"Loading existing results at "
-            f"<light-red>{output_path}/sampler_results.nc</light-red>."
+            f"<light-red>{output_path}/results.nc</light-red>."
         )
         sampler._idata = az.from_netcdf(
             f"{output_path}/results.nc",
