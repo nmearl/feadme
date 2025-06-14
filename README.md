@@ -95,9 +95,10 @@ The JSON file must include the following keys:
 
 * **`name`**: A descriptive name for the model or target.
 * **`redshift`**: The redshift of the source.
+* **[Optional] `obs_date`**: Date of observation for target.
 * **`disk_profiles`**: A list of disk-like emission components.
 * **`line_profiles`**: A list of line components.
-* **`mask`**: A list of wavelength intervals to exclude from the fit.
+* **`mask`**: A list of wavelength intervals to include in the fit.
 
 ### Defining Disk and Line Profiles
 

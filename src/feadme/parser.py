@@ -256,6 +256,7 @@ class Template(Writable):
     disk_profiles: list[Disk] = flax.struct.field(default_factory=list)
     line_profiles: list[Line] = flax.struct.field(default_factory=list)
     redshift: float = 0.0
+    obs_date: float = 0.0
     white_noise: Parameter = Parameter(
         name="white_noise", distribution=Distribution.UNIFORM, low=0, high=0.1
     )

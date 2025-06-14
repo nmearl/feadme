@@ -15,6 +15,7 @@ dependencies = [
     "dacite>=1.9.2",
     "flax>=0.10.6",
     "loguru>=0.7.3",
+    "notebook>=7.4.3",
     "numpyro>=0.18.0",
     "pandas>=2.2.3",
     "python-box>=7.3.2",
