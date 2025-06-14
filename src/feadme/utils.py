@@ -8,6 +8,9 @@ from numpyro.distributions.transforms import Transform
 
 from numpyro.handlers import trace, seed
 import jax
+from scipy import stats
+
+from scipy.optimize import minimize_scalar
 
 
 def dict_to_namedtuple(name, d):
@@ -155,3 +158,118 @@ def transform_init_values(init_vals, sites):
             base_vals[site_name] = value  # fallback if not transformed
 
     return base_vals
+
+
+def circular_median(angles):
+    """
+    Calculate the circular median of angles in radians.
+    Uses the geometric median approach on the unit circle.
+    """
+    # Convert angles to unit vectors
+    x = np.cos(angles)
+    y = np.sin(angles)
+
+    def objective(theta):
+        # Sum of distances from candidate point to all data points
+        candidate_x, candidate_y = np.cos(theta), np.sin(theta)
+        distances = np.sqrt((x - candidate_x) ** 2 + (y - candidate_y) ** 2)
+        return np.sum(distances)
+
+    # Find the angle that minimizes the sum of distances
+    result = minimize_scalar(objective, bounds=(0, 2 * np.pi), method="bounded")
+    return result.x
+
+
+def circular_percentiles(angles, percentiles=[16, 84]):
+    """
+    Calculate circular percentiles using the circular median as reference.
+
+    Parameters:
+    angles: array of angles in radians (0 to 2π)
+    percentiles: list of percentiles to calculate (0-100)
+
+    Returns:
+    Array of percentile values in radians
+    """
+    # Get circular median as reference
+    median = circular_median(angles)
+
+    # Calculate signed angular distances from median
+    def angular_distance(angle, reference):
+        diff = angle - reference
+        # Wrap to [-π, π]
+        return np.arctan2(np.sin(diff), np.cos(diff))
+
+    distances = np.array([angular_distance(angle, median) for angle in angles])
+
+    # Sort distances
+    sorted_distances = np.sort(distances)
+
+    # Calculate percentiles
+    percentile_distances = np.percentile(sorted_distances, percentiles)
+
+    # Convert back to angles
+    percentile_angles = []
+    for dist in percentile_distances:
+        angle = median + dist
+        # Wrap to [0, 2π]
+        angle = angle % (2 * np.pi)
+        percentile_angles.append(angle)
+
+    return np.array(percentile_angles)
+
+
+# Usage with your pre-calculated angles
+def circular_error_bars(median, p16, p84):
+    """
+    Calculate error bars from circular median and percentiles.
+
+    Parameters:
+    median: circular median in radians
+    p16: 16th percentile in radians
+    p84: 84th percentile in radians
+
+    Returns:
+    err_lo, err_hi: lower and upper error bar magnitudes
+    """
+
+    def angular_distance(angle1, angle2):
+        """Calculate signed angular distance from angle1 to angle2"""
+        diff = angle2 - angle1
+        return np.arctan2(np.sin(diff), np.cos(diff))
+
+    # Calculate signed distances
+    dist_to_p16 = angular_distance(median, p16)
+    dist_to_p84 = angular_distance(median, p84)
+
+    # Error bars are absolute distances
+    err_lo = abs(dist_to_p16)  # Distance to 16th percentile (lower error)
+    err_hi = abs(dist_to_p84)  # Distance to 84th percentile (upper error)
+
+    return err_lo, err_hi
+
+
+def parse_circular_parameters(samples):
+    """
+    Analyze your pre-calculated apocenter angle samples.
+
+    Parameters:
+    samples: array of angles in radians (0 to 2π)
+
+    Returns:
+    Dictionary with circular mean, median, percentiles, and error bars
+    """
+    # Calculate circular statistics
+    circular_mean = stats.circmean(samples)
+    median = circular_median(samples)
+    p16, p84 = circular_percentiles(samples, [16, 84])
+    err_lo, err_hi = circular_error_bars(median, p16, p84)
+
+    return {
+        "circular_mean": circular_mean,
+        "circular_median": median,
+        "percentile_16th": p16,
+        "percentile_84th": p84,
+        "err_lo": err_lo,
+        "err_hi": err_hi,
+    }

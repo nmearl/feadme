@@ -17,6 +17,7 @@ import loguru
 
 from ..parser import Config, Sampler, Template
 from ..plotting import plot_hdi, plot_model_fit, plot_corner, plot_corner_priors
+from ..utils import parse_circular_parameters
 
 logger = loguru.logger.opt(colors=True)
 
@@ -188,6 +189,11 @@ class BaseSampler(ABC):
                 ],
             )
 
+            col_stat = "hdi" if "hdi_16%" in summary.columns else "eti"
+
+            summary["err_lo"] = summary["median"] - summary[f"{col_stat}_16%"]
+            summary["err_hi"] = summary[f"{col_stat}_84%"] - summary["median"]
+
             # Extract posterior samples of the circular parameters
             circ_vars = list(
                 set(
@@ -210,32 +216,24 @@ class BaseSampler(ABC):
             for var in circ_vars:
                 theta = posterior[var].values  # shape: (n_samples,)
 
-                # Unwrap and normalize for percentile computation
-                theta_unwrapped = np.unwrap(theta)
-                theta_unwrapped -= (
-                    2 * np.pi * np.floor(theta_unwrapped.min() / (2 * np.pi))
-                )
-
-                # Compute circular stats
-                theta_mean = circmean(theta, high=2 * np.pi, low=0)
-                theta_median = np.percentile(theta_unwrapped, 50) % (2 * np.pi)
-                theta_16 = np.percentile(theta_unwrapped, 16) % (2 * np.pi)
-                theta_84 = np.percentile(theta_unwrapped, 84) % (2 * np.pi)
+                theta_circ = parse_circular_parameters(theta)
+                theta_median = theta_circ["circular_median"]
+                theta_mean = theta_circ["circular_mean"]
+                theta_16 = theta_circ["percentile_16th"]
+                theta_84 = theta_circ["percentile_84th"]
+                theta_err_lo = theta_circ["err_lo"]
+                theta_err_hi = theta_circ["err_hi"]
 
                 # Update the summary DataFrame
                 row = summary.loc[var].copy()
                 row["mean"] = theta_mean
                 row["median"] = theta_median
+                row["err_lo"] = theta_err_lo
+                row["err_hi"] = theta_err_hi
 
                 # Replace the 68% HDI/ETI percentiles
-                is_hdi = "hdi_16%" in summary.columns
-
-                if is_hdi:
-                    row["hdi_16%"] = theta_16
-                    row["hdi_84%"] = theta_84
-                else:
-                    row["eti_16%"] = theta_16
-                    row["eti_84%"] = theta_84
+                row[f"{col_stat}_16%"] = theta_16
+                row[f"{col_stat}_84%"] = theta_84
 
                 # Save the corrected row back into the summary
                 summary.loc[var] = row
@@ -272,7 +270,8 @@ class BaseSampler(ABC):
 
         if not out_path.exists():
             logger.info(
-                f"Results written to <green>{self._config.output_path}/results.nc</green>.")
+                f"Results written to <green>{self._config.output_path}/results.nc</green>."
+            )
             az.to_netcdf(self._idata, str(out_path))
 
         self.summary.to_csv(
