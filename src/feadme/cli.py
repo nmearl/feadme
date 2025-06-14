@@ -123,6 +123,8 @@ def perform_sampling(config: Config):
 
     # If a results file already exists, load it instead of running the sampler
     if (Path(output_path) / "results.nc").exists():
+        delta_time = None
+
         logger.info(
             f"Loading existing results at "
             f"<light-red>{output_path}/results.nc</light-red>."
@@ -134,10 +136,7 @@ def perform_sampling(config: Config):
         start_time = Time.now()
         sampler.run()
         delta_time = (Time.now() - start_time).to_datetime()
-        logger.info(
-            f"Sampling completed for <cyan>{template.name}</cyan> in "
-            f"<green>{delta_time}</green>."
-        )
+        logger.info("Sampling completed.")
 
     logger.info("Displaying sampler results:\n" + sampler.summary.to_markdown())
     sampler.write_results()
@@ -145,7 +144,13 @@ def perform_sampling(config: Config):
     logger.info("Generating plots...")
     sampler.plot_results()
 
-    logger.info("Finished.")
+    if delta_time is not None:
+        logger.info(
+            f"Finished processing <cyan>{template.name}</cyan> in "
+            f"<green>{delta_time}</green>."
+        )
+    else:
+        logger.info(f"Results loaded for <cyan>{template.name}</cyan>.")
 
 
 @click.command()
