@@ -209,6 +209,9 @@ def lsq_model_fitter(
             in_par_fixed[param.name] = True
 
         for param in prof.shared:
+            if param.name not in [x.name for sm in full_model]:
+                continue
+
             param_low = param.low
             param_high = param.high
 
