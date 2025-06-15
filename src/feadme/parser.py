@@ -305,6 +305,7 @@ class Sampler(Writable):
     num_samples: int = 1000
     num_chains: int = 1
     progress_bar: bool = True
+    # TODO: Currently only NUTS is supported
     target_accept_prob: float = 0.8
     max_tree_depth: int = 10
     dense_mass: bool = True
