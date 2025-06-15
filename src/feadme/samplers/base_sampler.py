@@ -206,37 +206,38 @@ class BaseSampler(ABC):
                 )
             )
 
-            posterior = az.extract(
-                self._idata, var_names=circ_vars, group="posterior", combined=True
-            )
+            if len(circ_vars) > 0:
+                posterior = az.extract(
+                    self._idata, var_names=circ_vars, group="posterior", combined=True
+                )
 
-            if isinstance(posterior, xr.DataArray):
-                posterior = posterior.to_dataset(name=posterior.name)
+                if isinstance(posterior, xr.DataArray):
+                    posterior = posterior.to_dataset(name=posterior.name)
 
-            for var in circ_vars:
-                theta = posterior[var].values  # shape: (n_samples,)
+                for var in circ_vars:
+                    theta = posterior[var].values  # shape: (n_samples,)
 
-                theta_circ = parse_circular_parameters(theta)
-                theta_median = theta_circ["circular_median"]
-                theta_mean = theta_circ["circular_mean"]
-                theta_16 = theta_circ["percentile_16th"]
-                theta_84 = theta_circ["percentile_84th"]
-                theta_err_lo = theta_circ["err_lo"]
-                theta_err_hi = theta_circ["err_hi"]
+                    theta_circ = parse_circular_parameters(theta)
+                    theta_median = theta_circ["circular_median"]
+                    theta_mean = theta_circ["circular_mean"]
+                    theta_16 = theta_circ["percentile_16th"]
+                    theta_84 = theta_circ["percentile_84th"]
+                    theta_err_lo = theta_circ["err_lo"]
+                    theta_err_hi = theta_circ["err_hi"]
 
-                # Update the summary DataFrame
-                row = summary.loc[var].copy()
-                row["mean"] = theta_mean
-                row["median"] = theta_median
-                row["err_lo"] = theta_err_lo
-                row["err_hi"] = theta_err_hi
+                    # Update the summary DataFrame
+                    row = summary.loc[var].copy()
+                    row["mean"] = theta_mean
+                    row["median"] = theta_median
+                    row["err_lo"] = theta_err_lo
+                    row["err_hi"] = theta_err_hi
 
-                # Replace the 68% HDI/ETI percentiles
-                row[f"{col_stat}_16%"] = theta_16
-                row[f"{col_stat}_84%"] = theta_84
+                    # Replace the 68% HDI/ETI percentiles
+                    row[f"{col_stat}_16%"] = theta_16
+                    row[f"{col_stat}_84%"] = theta_84
 
-                # Save the corrected row back into the summary
-                summary.loc[var] = row
+                    # Save the corrected row back into the summary
+                    summary.loc[var] = row
 
             self._summary = summary
 
