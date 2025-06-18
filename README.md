@@ -7,6 +7,9 @@ accretion disks. It leverages the power of Jax and NumPyro to provide fast
 computations and easy-to-use interfaces for astrophysical modeling of 
 double-peaked emission line features in spectra.
 
+`feadme` implements the elliptical accretion disk model as described in 
+[Eracleous et al. (1995)](https://ui.adsabs.harvard.edu/abs/1995ApJ...438..610E/abstract).
+
 ## Features
 
 - **Fast Computation**: Utilizes Jax for automatic differentiation and GPU acceleration.
@@ -34,6 +37,15 @@ Or, to install directly from the GitHub repository, you can use:
 ```bash
 $ pip install git+https://github.com/nmearl/feadme.git
 ````
+
+> [!NOTE]
+> Currently, there is a bug upstream for the GPU installation. If you encounter
+> an issue with running `feadme` on a GPU, please ensure your `nvidia-cublas-cu12`
+> package version is compatible:
+>
+> ```bash
+> $ pip install "nvidia-cublas-cu12==12.9.0.13"
+> ````
 
 ### Developer Installation
 
@@ -68,12 +80,10 @@ Options:
   --help                 Show this message and exit.
 ```
 
-As an example, to run a model fit using the `nuts` (currently the only 
-available) sampler, you can use the following command:
+As an example, to run a model fit you can use the following command:
 
 ```bash
-feadme my_template.json my_data.csv --sampler-type nuts --num-warmup 1000 
---num-samples 5000 --num-chains 2
+feadme my_template.json my_data.csv --num-warmup 1000 --num-samples 5000 --num-chains 2
 ```
 
 ## Data Format
@@ -87,7 +97,10 @@ columns. The column names do not matter.
 
 ## Template Format
 
-To use `feadme`, you must provide a JSON configuration file that defines the model components and their parameter priors. This file serves as the input "template" describing the physical and statistical structure of your emission line model.
+To use `feadme`, you must provide a JSON configuration file that defines the 
+model components and their parameter priors. This file serves as the input 
+"template" describing the physical and statistical structure of your emission 
+line model.
 
 ### Top-Level Fields
 

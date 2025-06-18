@@ -1,6 +1,6 @@
 [project]
 name = "feadme"
-version = "0.1.2"
+version = "0.1.3"
 description = "Fast Elliptical Accretion Disk Modeling Engine"
 readme = "README.md"
 authors = [

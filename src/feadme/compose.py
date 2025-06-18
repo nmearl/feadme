@@ -204,7 +204,7 @@ def _compute_disk_flux_single(
 
     local_sigma = sigma * 1e5 * nu0 / c_cgs
 
-    res = quad_jax_integrate(
+    res = jax_integrate(
         inner_radius,
         outer_radius,
         0.0,
