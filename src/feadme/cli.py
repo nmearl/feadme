@@ -38,9 +38,9 @@ def load_data(data_path: str, template: Template) -> Data:
     )
 
     return Data.create(
-        wave=data_tab["wave"] / (1 + template.redshift),
-        flux=data_tab["flux"],
-        flux_err=data_tab["flux_err"],
+        wave=data_tab["wave"].value / (1 + template.redshift),
+        flux=data_tab["flux"].value,
+        flux_err=data_tab["flux_err"].value,
         mask=template.mask,
     )
 
@@ -163,7 +163,7 @@ def perform_sampling(config: Config):
 @click.argument(
     "data-path",
     type=click.Path(exists=True),
-    required=False,
+    required=True,
     # help="Path to the data file.",
 )
 @click.option(

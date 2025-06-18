@@ -64,7 +64,7 @@ $ pip install -e .[dev,gpu]  # or [tpu] for TPU support
 structure below:
 
 ```bash
-Usage: feadme [OPTIONS] TEMPLATE_PATH [DATA_PATH]
+Usage: feadme [OPTIONS] TEMPLATE_PATH DATA_PATH
 
 Options:
   --output-path PATH     Directory to save output files and plots. Defaults to

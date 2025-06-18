@@ -282,6 +282,7 @@ class Data(Writable):
             upper_limits = jnp.array([m.upper_limit for m in mask])
 
             wave_expanded = wave[:, None]
+
             individual_masks = (wave_expanded >= lower_limits) & (
                 wave_expanded <= upper_limits
             )

@@ -1,0 +1,367 @@
+{
+    "disk_profiles": [
+        {
+            "_fixed_params": [],
+            "_independent_params": [],
+            "_shared_params": [],
+            "apocenter": {
+                "circular": true,
+                "distribution": "uniform",
+                "fixed": false,
+                "high": 6.283185307179586,
+                "loc": 3.141592653589793,
+                "low": 0,
+                "name": "apocenter",
+                "scale": 0.7853981633974483,
+                "shared": null,
+                "value": null
+            },
+            "center": {
+                "circular": false,
+                "distribution": "uniform",
+                "fixed": false,
+                "high": 6567.819,
+                "loc": 6562.819,
+                "low": 6557.819,
+                "name": "center",
+                "scale": 1,
+                "shared": null,
+                "value": null
+            },
+            "delta_radius": {
+                "circular": false,
+                "distribution": "log_uniform",
+                "fixed": false,
+                "high": 10000.0,
+                "loc": 5000.0,
+                "low": 100.0,
+                "name": "delta_radius",
+                "scale": 500.0,
+                "shared": null,
+                "value": null
+            },
+            "eccentricity": {
+                "circular": false,
+                "distribution": "uniform",
+                "fixed": false,
+                "high": 1,
+                "loc": 0.5,
+                "low": 0,
+                "name": "eccentricity",
+                "scale": 0.25,
+                "shared": null,
+                "value": null
+            },
+            "inclination": {
+                "circular": false,
+                "distribution": "normal",
+                "fixed": false,
+                "high": 1.5707963267948966,
+                "loc": 0.39269908169872414,
+                "low": 0,
+                "name": "inclination",
+                "scale": 0.7853981633974483,
+                "shared": null,
+                "value": null
+            },
+            "inner_radius": {
+                "circular": false,
+                "distribution": "log_uniform",
+                "fixed": false,
+                "high": 5000.0,
+                "loc": 1000.0,
+                "low": 100.0,
+                "name": "inner_radius",
+                "scale": 100.0,
+                "shared": null,
+                "value": null
+            },
+            "name": "halpha_disk",
+            "offset": {
+                "circular": false,
+                "distribution": "uniform",
+                "fixed": true,
+                "high": 0.05,
+                "loc": null,
+                "low": 0,
+                "name": "offset",
+                "scale": null,
+                "shared": null,
+                "value": 0
+            },
+            "q": {
+                "circular": false,
+                "distribution": "normal",
+                "fixed": false,
+                "high": 4,
+                "loc": 2,
+                "low": 0.5,
+                "name": "q",
+                "scale": 1,
+                "shared": null,
+                "value": null
+            },
+            "scale": {
+                "circular": false,
+                "distribution": "uniform",
+                "fixed": false,
+                "high": 1.6012393426987617,
+                "loc": 0.5,
+                "low": 0,
+                "name": "scale",
+                "scale": 0.1,
+                "shared": null,
+                "value": null
+            },
+            "sigma": {
+                "circular": false,
+                "distribution": "log_uniform",
+                "fixed": false,
+                "high": 10000.0,
+                "loc": 1000.0,
+                "low": 200.0,
+                "name": "sigma",
+                "scale": 100.0,
+                "shared": null,
+                "value": null
+            }
+        }
+    ],
+    "line_profiles": [
+        {
+            "_fixed_params": [],
+            "_independent_params": [],
+            "_shared_params": [],
+            "amplitude": {
+                "circular": false,
+                "distribution": "uniform",
+                "fixed": false,
+                "high": 1.6012393426987617,
+                "loc": 0.5,
+                "low": 0,
+                "name": "amplitude",
+                "scale": 1,
+                "shared": null,
+                "value": null
+            },
+            "center": {
+                "circular": false,
+                "distribution": "uniform",
+                "fixed": false,
+                "high": 6564.819,
+                "loc": 6562.819,
+                "low": 6560.819,
+                "name": "center",
+                "scale": 2,
+                "shared": "halpha_disk",
+                "value": null
+            },
+            "name": "halpha_narrow",
+            "shape": "gaussian",
+            "vel_width": {
+                "circular": false,
+                "distribution": "log_uniform",
+                "fixed": false,
+                "high": 1000.0,
+                "loc": 500.0,
+                "low": 100.0,
+                "name": "vel_width",
+                "scale": 10.0,
+                "shared": null,
+                "value": null
+            }
+        },
+        {
+            "_fixed_params": [],
+            "_independent_params": [],
+            "_shared_params": [],
+            "amplitude": {
+                "circular": false,
+                "distribution": "uniform",
+                "fixed": false,
+                "high": 1.6012393426987617,
+                "loc": 0.5,
+                "low": 0,
+                "name": "amplitude",
+                "scale": 1,
+                "shared": null,
+                "value": null
+            },
+            "center": {
+                "circular": false,
+                "distribution": "uniform",
+                "fixed": false,
+                "high": 6588.46,
+                "loc": 6583.46,
+                "low": 6578.46,
+                "name": "center",
+                "scale": 2,
+                "shared": null,
+                "value": null
+            },
+            "name": "niir_narrow",
+            "shape": "gaussian",
+            "vel_width": {
+                "circular": false,
+                "distribution": "log_uniform",
+                "fixed": false,
+                "high": 1000.0,
+                "loc": 500.0,
+                "low": 100.0,
+                "name": "vel_width",
+                "scale": 10.0,
+                "shared": "halpha_narrow",
+                "value": null
+            }
+        },
+        {
+            "_fixed_params": [],
+            "_independent_params": [],
+            "_shared_params": [],
+            "amplitude": {
+                "circular": false,
+                "distribution": "uniform",
+                "fixed": false,
+                "high": 1.6012393426987617,
+                "loc": 0.5,
+                "low": 0,
+                "name": "amplitude",
+                "scale": 1,
+                "shared": null,
+                "value": null
+            },
+            "center": {
+                "circular": false,
+                "distribution": "uniform",
+                "fixed": false,
+                "high": 6553.05,
+                "loc": 6548.05,
+                "low": 6543.05,
+                "name": "center",
+                "scale": 2,
+                "shared": null,
+                "value": null
+            },
+            "name": "niil_narrow",
+            "shape": "gaussian",
+            "vel_width": {
+                "circular": false,
+                "distribution": "log_uniform",
+                "fixed": false,
+                "high": 1000.0,
+                "loc": 500.0,
+                "low": 100.0,
+                "name": "vel_width",
+                "scale": 10.0,
+                "shared": "halpha_narrow",
+                "value": null
+            }
+        },
+        {
+            "_fixed_params": [],
+            "_independent_params": [],
+            "_shared_params": [],
+            "amplitude": {
+                "circular": false,
+                "distribution": "uniform",
+                "fixed": false,
+                "high": 1.6012393426987617,
+                "loc": 0.5,
+                "low": 0,
+                "name": "amplitude",
+                "scale": 1,
+                "shared": null,
+                "value": null
+            },
+            "center": {
+                "circular": false,
+                "distribution": "uniform",
+                "fixed": false,
+                "high": 6735.81,
+                "loc": 6730.81,
+                "low": 6725.81,
+                "name": "center",
+                "scale": 2,
+                "shared": null,
+                "value": null
+            },
+            "name": "siir_narrow",
+            "shape": "gaussian",
+            "vel_width": {
+                "circular": false,
+                "distribution": "log_uniform",
+                "fixed": false,
+                "high": 1000.0,
+                "loc": 500.0,
+                "low": 100.0,
+                "name": "vel_width",
+                "scale": 10.0,
+                "shared": "halpha_narrow",
+                "value": null
+            }
+        },
+        {
+            "_fixed_params": [],
+            "_independent_params": [],
+            "_shared_params": [],
+            "amplitude": {
+                "circular": false,
+                "distribution": "uniform",
+                "fixed": false,
+                "high": 1.6012393426987617,
+                "loc": 0.5,
+                "low": 0,
+                "name": "amplitude",
+                "scale": 1,
+                "shared": null,
+                "value": null
+            },
+            "center": {
+                "circular": false,
+                "distribution": "uniform",
+                "fixed": false,
+                "high": 6721.44,
+                "loc": 6716.44,
+                "low": 6711.44,
+                "name": "center",
+                "scale": 2,
+                "shared": null,
+                "value": null
+            },
+            "name": "siil_narrow",
+            "shape": "gaussian",
+            "vel_width": {
+                "circular": false,
+                "distribution": "log_uniform",
+                "fixed": false,
+                "high": 1000.0,
+                "loc": 500.0,
+                "low": 100.0,
+                "name": "vel_width",
+                "scale": 10.0,
+                "shared": "halpha_narrow",
+                "value": null
+            }
+        }
+    ],
+    "mask": [
+        {
+            "lower_limit": 6400,
+            "upper_limit": 6800
+        }
+    ],
+    "name": "ZTF18aahiqst",
+    "redshift": 0.07467553924327339,
+    "white_noise": {
+        "circular": false,
+        "distribution": "uniform",
+        "fixed": true,
+        "high": 1,
+        "loc": 0,
+        "low": -10,
+        "name": "white_noise",
+        "scale": 0,
+        "shared": null,
+        "value": -7
+    }
+}
