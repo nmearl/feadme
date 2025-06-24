@@ -763,7 +763,6 @@ def disk_model_optimized(
         numpyro.sample("total_flux", dist.Normal(total_flux, total_error), obs=flux)
 
 
-# Usage example:
 def create_optimized_model(template: Template):
     """Factory function to create optimized model with cached metadata."""
     cache = ParameterCache.create(template)

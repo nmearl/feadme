@@ -247,17 +247,25 @@ class BaseSampler(ABC):
         """
         Get a list of variables to ignore in the pair plot and summary.
         """
+        fixed_vars = [
+            f"{prof.name}_{param.name}"
+            for prof in self.template.disk_profiles + self.template.line_profiles
+            for param in prof.fixed
+        ]
+
+        orphaned_vars = [
+            f"{prof.name}_{param.name}"
+            for prof in self.template.disk_profiles + self.template.line_profiles
+            for param in prof.shared
+            if f"{param.shared}_{param.name}" in fixed_vars
+        ]
+
         return [
             x
             for x in self._idata.posterior.data_vars
             if x.endswith("_flux")
             or x.endswith("_base")
-            or x
-            in [
-                f"{prof.name}_{param.name}"
-                for prof in self.template.disk_profiles + self.template.line_profiles
-                for param in prof.fixed
-            ]
+            or x in fixed_vars + orphaned_vars
         ]
 
     def write_results(self):

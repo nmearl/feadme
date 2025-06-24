@@ -184,12 +184,17 @@ def circular_percentiles(angles, percentiles=[16, 84]):
     """
     Calculate circular percentiles using the circular median as reference.
 
-    Parameters:
-    angles: array of angles in radians (0 to 2π)
-    percentiles: list of percentiles to calculate (0-100)
+    Parameters
+    ----------
+    angles : array_like
+        Array of angles in radians (0 to 2π).
+    percentiles : list of float, optional
+        List of percentiles to calculate (0-100). Default is [16, 84].
 
-    Returns:
-    Array of percentile values in radians
+    Returns
+    -------
+    percentile_angles : ndarray
+        Array of percentile values in radians.
     """
     # Get circular median as reference
     median = circular_median(angles)
@@ -224,13 +229,21 @@ def circular_error_bars(median, p16, p84):
     """
     Calculate error bars from circular median and percentiles.
 
-    Parameters:
-    median: circular median in radians
-    p16: 16th percentile in radians
-    p84: 84th percentile in radians
+    Parameters
+    ----------
+    median : float
+        Circular median in radians.
+    p16 : float
+        16th percentile in radians.
+    p84 : float
+        84th percentile in radians.
 
-    Returns:
-    err_lo, err_hi: lower and upper error bar magnitudes
+    Returns
+    -------
+    err_lo : float
+        Lower error bar magnitude (distance to 16th percentile).
+    err_hi : float
+        Upper error bar magnitude (distance to 84th percentile).
     """
 
     def angular_distance(angle1, angle2):
@@ -251,13 +264,29 @@ def circular_error_bars(median, p16, p84):
 
 def parse_circular_parameters(samples):
     """
-    Analyze your pre-calculated apocenter angle samples.
+    Analyze pre-calculated apocenter angle samples.
 
-    Parameters:
-    samples: array of angles in radians (0 to 2π)
+    Parameters
+    ----------
+    samples : array_like
+        Array of angles in radians (0 to 2π).
 
-    Returns:
-    Dictionary with circular mean, median, percentiles, and error bars
+    Returns
+    -------
+    dict
+        Dictionary with the following keys:
+        - 'circular_mean': float
+            Circular mean of the samples.
+        - 'circular_median': float
+            Circular median of the samples.
+        - 'percentile_16th': float
+            16th percentile of the samples.
+        - 'percentile_84th': float
+            84th percentile of the samples.
+        - 'err_lo': float
+            Lower error bar (distance to 16th percentile).
+        - 'err_hi': float
+            Upper error bar (distance to 84th percentile).
     """
     # Calculate circular statistics
     circular_mean = stats.circmean(samples)

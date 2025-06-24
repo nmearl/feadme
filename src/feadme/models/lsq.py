@@ -324,6 +324,8 @@ def lsq_model_fitter(
 
         # print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
 
+        std_scale = 5
+
         if samp_name in indep_params:
             if pn in ["apocenter"]:
                 ux = unp.cos(upv)
@@ -334,8 +336,8 @@ def lsq_model_fitter(
                 y = unp.nominal_values(uy)
                 ye = unp.std_devs(uy)
 
-                starters[f"{samp_name}_x"] = (x, 5 * xe)
-                starters[f"{samp_name}_y"] = (y, 5 * ye)
+                starters[f"{samp_name}_x"] = (x, std_scale * xe)
+                starters[f"{samp_name}_y"] = (y, std_scale * ye)
 
             if pn in ["inner_radius", "delta_radius", "sigma", "vel_width"]:
                 upv = 10**upv
@@ -347,6 +349,6 @@ def lsq_model_fitter(
             if pe < FLOAT_EPSILON:
                 pe = 1
 
-            starters[samp_name] = (pv, pe * 5)
+            starters[samp_name] = (pv, pe * std_scale)
 
     return starters

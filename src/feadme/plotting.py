@@ -119,14 +119,23 @@ def plot_model_fit(
     ax.fill_between(wave, lower, upper, alpha=0.5, color="C3")
 
     # Reconstruct the model from the median of the posteriors
+    fixed_vars = {
+        f"{prof.name}_{param.name}": param.value
+        for prof in template.disk_profiles + template.line_profiles
+        for param in prof.fixed
+    }
+
+    orphaned_vars = {
+        f"{prof.name}_{param.name}": fixed_vars[f"{param.shared}_{param.name}"]
+        for prof in template.disk_profiles + template.line_profiles
+        for param in prof.shared
+        if f"{param.shared}_{param.name}" in fixed_vars
+    }
+
     param_mods = summary["median"].to_dict()
-    param_mods.update(
-        {
-            f"{prof.name}_{param.name}": param.value
-            for prof in template.disk_profiles + template.line_profiles
-            for param in prof.fixed
-        }
-    )
+    param_mods.update(fixed_vars)
+    param_mods.update(orphaned_vars)
+
     tot_flux, disk_flux, line_flux = evaluate_model(template, wave, param_mods)
 
     ax.plot(wave, tot_flux, label="Reconstructed Model", linestyle="--")

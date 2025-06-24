@@ -160,7 +160,6 @@ class Profile:
                 shared_candidates.append(field_value)
 
         for shared_param in shared_candidates:
-            # if shared_param.shared in [p.name for p in independent]:
             if shared_param in independent:
                 independent.remove(shared_param)
             shared.append(shared_param)
