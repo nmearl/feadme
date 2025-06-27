@@ -99,8 +99,6 @@ class BaseSampler(ABC):
         Run the sampler, which includes sampling, writing results, and plotting.
         """
         self.sample()
-        self.write_results()
-        self.plot_results()
 
     def _compose_inference_data(self, mcmc: MCMC) -> az.InferenceData:
         """
@@ -122,10 +120,7 @@ class BaseSampler(ABC):
 
         rng_key = jax.random.PRNGKey(0)
 
-        predictive_post = Predictive(
-            self.model,
-            posterior_samples=posterior_samples,
-        )(
+        predictive_post = Predictive(self.model, posterior_samples=posterior_samples)(
             rng_key,
             wave=self.wave,
             flux=None,
@@ -133,10 +128,15 @@ class BaseSampler(ABC):
             # template=self.template,
         )
 
-        predictive_prior = Predictive(
-            self.model,
-            num_samples=1000,
-        )(
+        predictive_post.update(
+            {
+                k: jnp.zeros_like(v)
+                for k, v in posterior_samples.items()
+                if k not in predictive_post
+            }
+        )
+
+        predictive_prior = Predictive(self.model, num_samples=1000)(
             rng_key,
             wave=self.wave,
             flux=None,
@@ -144,11 +144,13 @@ class BaseSampler(ABC):
             # template=self.template,
         )
 
-        def reshape(pred_dict, n_chains, n_draws):
-            reshaped = {}
-            for k, v in pred_dict.items():
-                reshaped[k] = v.reshape((n_chains, n_draws) + v.shape[1:])
-            return reshaped
+        predictive_prior.update(
+            {
+                k: jnp.zeros_like(v)
+                for k, v in posterior_samples.items()
+                if k not in predictive_prior
+            }
+        )
 
         idata = az.from_numpyro(
             mcmc,
@@ -205,6 +207,12 @@ class BaseSampler(ABC):
                     ]
                 )
             )
+            circ_vars = [
+                x
+                for x in self._idata.posterior.data_vars
+                for y in circ_vars
+                if y.endswith(x)
+            ]
 
             if len(circ_vars) > 0:
                 posterior = az.extract(
@@ -243,7 +251,7 @@ class BaseSampler(ABC):
 
         return self._summary
 
-    def _get_ignored_vars(self) -> list[str]:
+    def _get_ignored_vars(self, include_shared=False) -> list[str]:
         """
         Get a list of variables to ignore in the pair plot and summary.
         """
@@ -260,13 +268,28 @@ class BaseSampler(ABC):
             if f"{param.shared}_{param.name}" in fixed_vars
         ]
 
-        return [
+        shared_vars = [
+            f"{prof.name}_{param.name}"
+            for prof in self.template.disk_profiles + self.template.line_profiles
+            for param in prof.shared
+            if f"{param.shared}_{param.name}" not in fixed_vars + orphaned_vars
+        ]
+
+        ignored_vars = [
             x
             for x in self._idata.posterior.data_vars
             if x.endswith("_flux")
             or x.endswith("_base")
+            or x.endswith("_unwrapped")
             or x in fixed_vars + orphaned_vars
         ]
+
+        if include_shared:
+            ignored_vars += [
+                x for x in self._idata.posterior.data_vars if x in shared_vars
+            ]
+
+        return ignored_vars
 
     def write_results(self):
         """
@@ -308,10 +331,10 @@ class BaseSampler(ABC):
         plot_corner(
             self._idata,
             self._config.output_path,
-            ignored_vars=self._get_ignored_vars(),
+            ignored_vars=self._get_ignored_vars(include_shared=True),
         )
         plot_corner_priors(
             self._idata,
             self._config.output_path,
-            ignored_vars=self._get_ignored_vars(),
+            ignored_vars=self._get_ignored_vars(include_shared=True),
         )
