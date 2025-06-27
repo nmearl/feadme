@@ -174,7 +174,9 @@ def plot_corner(
     # Filter out ignored variables
     var_names = [var for var in idata.posterior.data_vars if var not in ignored_vars]
 
-    samples_ds = az.extract(idata, var_names=var_names, combined=True)
+    samples_ds = az.extract(
+        idata, group="posterior", var_names=var_names, combined=True
+    )
     samples = np.vstack([samples_ds[var].values for var in var_names]).T
 
     # Compute quantiles
@@ -223,7 +225,7 @@ def plot_corner_priors(
         ignored_vars = []
 
     # Filter out ignored variables
-    var_names = [var for var in idata.posterior.data_vars if var not in ignored_vars]
+    var_names = [var for var in idata.prior.data_vars if var not in ignored_vars]
 
     samples_ds = az.extract(idata, group="prior", var_names=var_names, combined=True)
     samples = np.vstack([samples_ds[var].values for var in var_names]).T

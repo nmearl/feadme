@@ -296,7 +296,7 @@ def lsq_model_fitter(
         )
 
         ax.legend()
-        fig.savefig(f"lsq_fit_{template.name}.png")
+        fig.savefig(f"lsq_fit_{template.name}_{template.obs_date}.png")
 
     starters = {}
 

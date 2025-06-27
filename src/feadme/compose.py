@@ -587,15 +587,15 @@ def _sample_parameter_batch_optimized(
                 param_mods[samp_name] = numpyro.deterministic(samp_name, 10**log_value)
 
         elif dist_type == "circular":
+            circular_x = numpyro.sample(
+                f"{base_name}_circ_x_base", dist.Normal(0, 1).expand([n_params])
+            )
+            circular_y = numpyro.sample(
+                f"{base_name}_circ_y_base", dist.Normal(0, 1).expand([n_params])
+            )
+
             for i, (prof_name, param) in enumerate(params):
                 samp_name = f"{prof_name}_{param.name}"
-
-                circular_x = numpyro.sample(
-                    f"{samp_name}_circ_x_base", dist.Normal(0, 1).expand([n_params])
-                )
-                circular_y = numpyro.sample(
-                    f"{samp_name}_circ_y_base", dist.Normal(0, 1).expand([n_params])
-                )
 
                 x = circular_x[i]
                 y = circular_y[i]
@@ -652,13 +652,13 @@ def disk_model_optimized(
         "white_noise", dist.Uniform(template.white_noise.low, template.white_noise.high)
     )
 
-    # Add fixed parameters (pre-computed)
+    # Add fixed parameters
     for prof_name, param in cache.fixed_params:
         param_mods[f"{prof_name}_{param.name}"] = numpyro.deterministic(
             f"{prof_name}_{param.name}", param.value
         )
 
-    # Add shared parameters (pre-computed)
+    # Add shared parameters
     for prof_name, param in cache.shared_params:
         samp_name = f"{prof_name}_{param.name}"
         param_mods[samp_name] = numpyro.deterministic(
@@ -753,7 +753,7 @@ def disk_model_optimized(
 
     total_flux = total_disk_flux + total_line_flux
 
-    # Construct total error (optimized)
+    # Construct total error
     flux_err = flux_err if flux_err is not None else jnp.zeros_like(wave)
     total_error = jnp.sqrt(flux_err**2 + total_flux**2 * jnp.exp(2 * white_noise))
 
