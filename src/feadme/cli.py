@@ -78,12 +78,11 @@ def run_pre_fit(template: Template, template_path: str, data: Data) -> Template:
 
             if dname in starters:
                 dparam["loc"] = starters[dname][0].item()
-                dparam["scale"] = (dparam["high"] - dparam["low"]) / np.sqrt(2 * np.pi)
+                dparam["scale"] = (dparam["high"] - dparam["low"]) / 2
 
                 if "log" in dparam["distribution"]:
                     dparam["scale"] = 10 ** (
-                        (np.log10(dparam["high"]) - np.log10(dparam["low"]))
-                        / np.sqrt(2 * np.pi)
+                        (np.log10(dparam["high"]) - np.log10(dparam["low"])) / 2
                     )
 
                 if dparam["distribution"] == "log_uniform":
