@@ -601,8 +601,8 @@ def _sample_parameter_batch_optimized(
                 y = circular_y[i]
 
                 if param.distribution == Distribution.NORMAL:
-                    x = x + jnp.cos(param.loc)
-                    y = y + jnp.sin(param.loc)
+                    x = x * param.scale + jnp.cos(param.loc)
+                    y = y * param.scale + jnp.sin(param.loc)
 
                 r = jnp.sqrt(x**2 + y**2) + 1e-6
                 value = jnp.arctan2(y / r, x / r) % (2 * jnp.pi)
