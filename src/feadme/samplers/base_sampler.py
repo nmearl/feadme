@@ -100,7 +100,9 @@ class BaseSampler(ABC):
         """
         self.sample()
 
-    def _compose_inference_data(self, mcmc: MCMC) -> az.InferenceData:
+    def _compose_inference_data(
+        self, mcmc: MCMC, neutra, neutra_model
+    ) -> az.InferenceData:
         """
         Create an ArviZ `InferenceData` object from a NumPyro MCMC run.
         Includes posterior, posterior predictive, and prior samples.
@@ -116,7 +118,8 @@ class BaseSampler(ABC):
             An ArviZ InferenceData object containing the posterior, posterior predictive,
             and prior samples.
         """
-        posterior_samples = mcmc.get_samples()
+        zs = mcmc.get_samples()["auto_shared_latent"]
+        posterior_samples = neutra.transform_sample(zs)
 
         rng_key = jax.random.PRNGKey(0)
 
@@ -136,7 +139,7 @@ class BaseSampler(ABC):
             }
         )
 
-        predictive_prior = Predictive(self.model, num_samples=1000)(
+        predictive_prior = Predictive(neutra_model, num_samples=1000)(
             rng_key,
             wave=self.wave,
             flux=None,
@@ -281,6 +284,7 @@ class BaseSampler(ABC):
             if x.endswith("_flux")
             or x.endswith("_base")
             or x.endswith("_unwrapped")
+            or "auto_shared_latent" in x
             or x in fixed_vars + orphaned_vars
         ]
 

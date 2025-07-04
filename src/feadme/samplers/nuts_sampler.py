@@ -1,6 +1,10 @@
 import arviz as az
 import jax.random as random
 from numpyro.infer import MCMC, NUTS, init_to_median
+from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO
+from numpyro.infer.autoguide import AutoBNAFNormal
+from numpyro.infer.reparam import NeuTraReparam
+from numpyro import optim
 
 from .base_sampler import BaseSampler
 
@@ -12,7 +16,7 @@ class NUTSSampler(BaseSampler):
         """
         return NUTS(
             self.model,
-            init_strategy=init_to_median(num_samples=1000),
+            # init_strategy=init_to_median(num_samples=1000),
             target_accept_prob=self.sampler.target_accept_prob,
             max_tree_depth=self.sampler.max_tree_depth,
             dense_mass=self.sampler.dense_mass,
@@ -22,8 +26,28 @@ class NUTSSampler(BaseSampler):
         """
         Run the NUTS sampler to perform MCMC sampling.
         """
-        kernel = self.get_kernel()
         rng_key = random.PRNGKey(0)
+
+        guide = AutoBNAFNormal(self.model, hidden_factors=[8, 8])
+        svi = SVI(self.model, guide, optim.Adam(0.003), Trace_ELBO())
+        svi_result = svi.run(
+            random.PRNGKey(1),
+            10_000,
+            wave=self.wave,
+            flux=self.flux,
+            flux_err=self.flux_err,
+        )
+
+        neutra = NeuTraReparam(guide, svi_result.params)
+        neutra_model = neutra.reparam(self.model)
+
+        kernel = NUTS(
+            neutra_model,
+            target_accept_prob=self.sampler.target_accept_prob,
+            max_tree_depth=self.sampler.max_tree_depth,
+            dense_mass=self.sampler.dense_mass,
+            find_heuristic_step_size=True,
+        )
 
         mcmc = MCMC(
             kernel,
@@ -42,4 +66,4 @@ class NUTSSampler(BaseSampler):
             # template=self.template,
         )
 
-        self._idata = self._compose_inference_data(mcmc)
+        self._idata = self._compose_inference_data(mcmc, neutra, neutra_model)
