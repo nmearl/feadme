@@ -488,10 +488,10 @@ class ParameterCache:
 def _sample_parameter_batch_optimized(
     param_batch: List[Tuple[str, Parameter]], base_name: str
 ) -> Dict[str, jnp.ndarray]:
-    """Simplified parameter batch sampling without manual reparameterization.
+    """Optimized parameter batch sampling.
 
     This version uses the original parameter distributions directly,
-    allowing Neutra to handle the reparameterization automatically.
+    allowing NeuTra to handle the reparameterization automatically.
     """
     param_mods = {}
 
@@ -502,9 +502,7 @@ def _sample_parameter_batch_optimized(
         samp_name = f"{prof_name}_{param.name}"
 
         if param.circular:
-            # For circular parameters, sample directly from the appropriate distribution
             if param.distribution == Distribution.NORMAL:
-                # Sample from a von Mises distribution (circular normal)
                 # Convert normal parameters to von Mises parameters
                 concentration = 1.0 / (
                     param.scale**2
@@ -560,123 +558,6 @@ def _sample_parameter_batch_optimized(
 
         else:
             raise ValueError(f"Unsupported distribution type: {param.distribution}")
-
-    return param_mods
-
-
-def _sample_parameter_batch_optimized_old(
-    param_batch: List[Tuple[str, Parameter]], base_name: str
-) -> Dict[str, jnp.ndarray]:
-    """Optimized parameter batch sampling with reduced branching."""
-    param_mods = {}
-
-    if not param_batch:
-        return param_mods
-
-    # Pre-sort parameters by type to minimize branching
-    param_types = {
-        "uniform": [],
-        "log_uniform": [],
-        "normal": [],
-        "log_normal": [],
-        "circular": [],
-    }
-
-    for prof_name, param in param_batch:
-        if param.circular:
-            param_types["circular"].append((prof_name, param))
-        elif param.distribution == Distribution.UNIFORM:
-            param_types["uniform"].append((prof_name, param))
-        elif param.distribution == Distribution.LOG_UNIFORM:
-            param_types["log_uniform"].append((prof_name, param))
-        elif param.distribution == Distribution.NORMAL:
-            param_types["normal"].append((prof_name, param))
-        elif param.distribution == Distribution.LOG_NORMAL:
-            param_types["log_normal"].append((prof_name, param))
-
-    # Process each type with vectorized operations
-    for dist_type, params in param_types.items():
-        if not params:
-            continue
-
-        n_params = len(params)
-
-        if dist_type == "uniform":
-            for i, (prof_name, param) in enumerate(params):
-                samp_name = f"{prof_name}_{param.name}"
-                # param_mods[samp_name] = numpyro.deterministic(samp_name, values[i])
-                param_mods[samp_name] = numpyro.sample(
-                    samp_name, dist.Uniform(param.low, param.high)
-                )
-
-        elif dist_type == "log_uniform":
-            for i, (prof_name, param) in enumerate(params):
-                samp_name = f"{prof_name}_{param.name}"
-                param_mods[samp_name] = numpyro.sample(
-                    samp_name,
-                    dist.TransformedDistribution(
-                        dist.Uniform(
-                            jnp.log(param.low),
-                            jnp.log(param.high),
-                        ),
-                        dist.transforms.ExpTransform(),
-                    ),
-                )
-
-        elif dist_type == "normal":
-            normal_bases = numpyro.sample(
-                f"{base_name}_normal_base", dist.Uniform(0, 1).expand([n_params])
-            )
-
-            for i, (prof_name, param) in enumerate(params):
-                samp_name = f"{prof_name}_{param.name}"
-                value = truncnorm_ppf(
-                    normal_bases[i],
-                    loc=param.loc,
-                    scale=param.scale,
-                    lower_limit=param.low,
-                    upper_limit=param.high,
-                )
-                param_mods[samp_name] = numpyro.deterministic(samp_name, value)
-
-        elif dist_type == "log_normal":
-            log_normal_bases = numpyro.sample(
-                f"{base_name}_log_normal_base", dist.Uniform(0, 1).expand([n_params])
-            )
-
-            for i, (prof_name, param) in enumerate(params):
-                samp_name = f"{prof_name}_{param.name}"
-                log_value = truncnorm_ppf(
-                    log_normal_bases[i],
-                    loc=jnp.log10(param.loc),
-                    scale=jnp.log10(param.scale),
-                    lower_limit=jnp.log10(param.low),
-                    upper_limit=jnp.log10(param.high),
-                )
-                param_mods[samp_name] = numpyro.deterministic(samp_name, 10**log_value)
-
-        elif dist_type == "circular":
-            circular_x = numpyro.sample(
-                f"{base_name}_circ_x_base", dist.Normal(0, 1).expand([n_params])
-            )
-            circular_y = numpyro.sample(
-                f"{base_name}_circ_y_base", dist.Normal(0, 1).expand([n_params])
-            )
-
-            for i, (prof_name, param) in enumerate(params):
-                samp_name = f"{prof_name}_{param.name}"
-
-                x = circular_x[i]
-                y = circular_y[i]
-
-                if param.distribution == Distribution.NORMAL:
-                    x = x * param.scale + jnp.cos(param.loc)
-                    y = y * param.scale + jnp.sin(param.loc)
-
-                r = jnp.sqrt(x**2 + y**2) + 1e-6
-                value = jnp.arctan2(y / r, x / r) % (2 * jnp.pi)
-
-                param_mods[samp_name] = numpyro.deterministic(samp_name, value)
 
     return param_mods
 

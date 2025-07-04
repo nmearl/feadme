@@ -200,22 +200,7 @@ class BaseSampler(ABC):
             summary["err_hi"] = summary[f"{col_stat}_84%"] - summary["median"]
 
             # Extract posterior samples of the circular parameters
-            circ_vars = list(
-                set(
-                    [
-                        x.replace("_circ_x_base", "").replace("_circ_y_base", "")
-                        for x in [
-                            x for x in self._idata.posterior.data_vars if "circ" in x
-                        ]
-                    ]
-                )
-            )
-            circ_vars = [
-                x
-                for x in self._idata.posterior.data_vars
-                for y in circ_vars
-                if y.endswith(x)
-            ]
+            circ_vars = self._get_circular_vars()
 
             if len(circ_vars) > 0:
                 posterior = az.extract(
@@ -226,7 +211,7 @@ class BaseSampler(ABC):
                     posterior = posterior.to_dataset(name=posterior.name)
 
                 for var in circ_vars:
-                    theta = posterior[var].values  # shape: (n_samples,)
+                    theta = posterior[var].values
 
                     theta_circ = parse_circular_parameters(theta)
                     theta_median = theta_circ["circular_median"]
@@ -294,6 +279,19 @@ class BaseSampler(ABC):
             ]
 
         return ignored_vars
+
+    def _get_circular_vars(self) -> list[str]:
+        """
+        Get a list of circular variables in the posterior samples.
+        """
+        circ_vars = [
+            f"{prof.name}_{param.name}"
+            for prof in self.template.disk_profiles + self.template.line_profiles
+            for param in prof.independent
+            if param.circular
+        ]
+
+        return [x for x in self._idata.posterior.data_vars if x in circ_vars]
 
     def write_results(self):
         """
