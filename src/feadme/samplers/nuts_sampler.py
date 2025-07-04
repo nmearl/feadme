@@ -16,7 +16,7 @@ class NUTSSampler(BaseSampler):
         """
         return NUTS(
             self.model,
-            # init_strategy=init_to_median(num_samples=1000),
+            init_strategy=init_to_median(num_samples=1000),
             target_accept_prob=self.sampler.target_accept_prob,
             max_tree_depth=self.sampler.max_tree_depth,
             dense_mass=self.sampler.dense_mass,
@@ -32,7 +32,7 @@ class NUTSSampler(BaseSampler):
         svi = SVI(self.model, guide, optim.Adam(0.003), Trace_ELBO())
         svi_result = svi.run(
             random.PRNGKey(1),
-            10_000,
+            20_000,
             wave=self.wave,
             flux=self.flux,
             flux_err=self.flux_err,
@@ -63,7 +63,6 @@ class NUTSSampler(BaseSampler):
             wave=self.wave,
             flux=self.flux,
             flux_err=self.flux_err,
-            # template=self.template,
         )
 
         self._idata = self._compose_inference_data(mcmc, neutra, neutra_model)

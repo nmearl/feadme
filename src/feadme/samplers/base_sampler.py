@@ -1,19 +1,18 @@
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Callable
 
 import arviz as az
-import numpy as np
-import pandas as pd
-from scipy.stats import circmean
 import flax.struct
 import jax
 import jax.numpy as jnp
-import pandas as pd
-from numpyro.infer.mcmc import MCMCKernel, MCMC
-from numpyro.infer.util import Predictive
-import xarray as xr
-from pathlib import Path
 import loguru
+import pandas as pd
+import xarray as xr
+from numpyro.handlers import reparam
+from numpyro.infer.mcmc import MCMCKernel, MCMC
+from numpyro.infer.reparam import NeuTraReparam
+from numpyro.infer.util import Predictive
 
 from ..parser import Config, Sampler, Template
 from ..plotting import plot_hdi, plot_model_fit, plot_corner, plot_corner_priors
@@ -101,7 +100,7 @@ class BaseSampler(ABC):
         self.sample()
 
     def _compose_inference_data(
-        self, mcmc: MCMC, neutra, neutra_model
+        self, mcmc: MCMC, neutra: NeuTraReparam, neutra_model: reparam
     ) -> az.InferenceData:
         """
         Create an ArviZ `InferenceData` object from a NumPyro MCMC run.
