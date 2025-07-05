@@ -46,7 +46,7 @@ class NUTSSampler(BaseSampler):
             target_accept_prob=self.sampler.target_accept_prob,
             max_tree_depth=self.sampler.max_tree_depth,
             dense_mass=self.sampler.dense_mass,
-            find_heuristic_step_size=True,
+            find_heuristic_step_size=False,
         )
 
         mcmc = MCMC(
