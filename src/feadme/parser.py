@@ -306,9 +306,9 @@ class Sampler(Writable):
     num_chains: int = 1
     progress_bar: bool = True
     # TODO: Currently only NUTS is supported
-    target_accept_prob: float = 0.9
+    target_accept_prob: float = 0.8
     max_tree_depth: int = 10
-    dense_mass: bool = True
+    dense_mass: bool = False
 
     @property
     def chain_method(self) -> str:
