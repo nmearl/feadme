@@ -2,7 +2,7 @@ import arviz as az
 import jax.random as random
 from numpyro.infer import MCMC, NUTS, init_to_median
 from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO
-from numpyro.infer.autoguide import AutoBNAFNormal
+from numpyro.infer.autoguide import AutoBNAFNormal, AutoIAFNormal
 from numpyro.infer.reparam import NeuTraReparam
 from numpyro import optim
 
@@ -32,7 +32,7 @@ class NUTSSampler(BaseSampler):
         svi = SVI(self.model, guide, optim.Adam(0.003), Trace_ELBO())
         svi_result = svi.run(
             random.PRNGKey(1),
-            20_000,
+            10_000,
             wave=self.wave,
             flux=self.flux,
             flux_err=self.flux_err,
@@ -46,7 +46,7 @@ class NUTSSampler(BaseSampler):
             target_accept_prob=self.sampler.target_accept_prob,
             max_tree_depth=self.sampler.max_tree_depth,
             dense_mass=self.sampler.dense_mass,
-            find_heuristic_step_size=False,
+            find_heuristic_step_size=True,
         )
 
         mcmc = MCMC(

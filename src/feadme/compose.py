@@ -31,8 +31,6 @@ def _compute_line_flux_vectorized(
 ) -> jnp.ndarray:
     """
     Compute the line flux for multiple spectral lines in a vectorized manner.
-
-    OPTIMIZATION: Use more efficient computation and avoid redundant operations.
     """
     if len(center) == 0:
         return jnp.zeros_like(wave)
@@ -55,8 +53,6 @@ def _compute_line_flux_vectorized(
     # More efficient Gaussian computation
     sigma = fwhm * fwhm_factor
     gau_exp = -0.5 * (delta_lamb / sigma) ** 2
-    # Clamp to avoid overflow in exp
-    gau_exp = jnp.clip(gau_exp, -50.0, 0.0)
     gau = amplitudes_bc * jnp.exp(gau_exp)
 
     # More efficient Lorentzian computation
@@ -86,8 +82,6 @@ def _compute_disk_flux_vectorized(
 ) -> jnp.ndarray:
     """
     Compute the disk flux for multiple disk profiles in a vectorized manner.
-
-    OPTIMIZATION: Use more efficient vmapping and avoid redundant computations.
     """
     if len(center) == 0:
         return jnp.zeros_like(wave)
@@ -128,8 +122,6 @@ def _compute_disk_flux_single(
 ) -> jnp.ndarray:
     """
     Compute the flux for a single disk profile.
-
-    OPTIMIZATION: Pre-compute constants and use more efficient operations.
     """
     # Pre-compute frequency conversions
     nu = c_cgs / (wave * 1e-8)
@@ -138,7 +130,7 @@ def _compute_disk_flux_single(
 
     local_sigma = sigma * 1e5 * nu0 / c_cgs
 
-    res = jax_integrate(
+    res = quad_jax_integrate(
         inner_radius,
         outer_radius,
         0.0,
@@ -172,8 +164,6 @@ class ParameterCache:
     fixed_params: List[Tuple[str, Parameter]]
     shared_params: List[Tuple[str, Parameter]]
     line_shapes: jnp.ndarray
-    disk_param_indices: Dict[str, jnp.ndarray]
-    line_param_indices: Dict[str, jnp.ndarray]
 
     @classmethod
     def create(cls, template: Template):
@@ -193,16 +183,6 @@ class ParameterCache:
             else jnp.array([])
         )
 
-        # Pre-compute parameter indices
-        disk_param_indices = {}
-        line_param_indices = {}
-
-        for i, name in enumerate(disk_names):
-            disk_param_indices[name] = i
-
-        for i, name in enumerate(line_names):
-            line_param_indices[name] = i
-
         return cls(
             disk_names=disk_names,
             line_names=line_names,
@@ -212,8 +192,6 @@ class ParameterCache:
             fixed_params=fixed_params,
             shared_params=shared_params,
             line_shapes=line_shapes,
-            disk_param_indices=disk_param_indices,
-            line_param_indices=line_param_indices,
         )
 
     @staticmethod
@@ -289,14 +267,14 @@ def _sample_parameter_batch_optimized(
             )
 
         elif param.distribution == Distribution.LOG_UNIFORM:
-            log_low = jnp.log(param.low)
-            log_high = jnp.log(param.high)
+            log_low = jnp.log10(param.low)
+            log_high = jnp.log10(param.high)
             base_log_uniform = numpyro.sample(
                 f"{samp_name}_base",
                 dist.Uniform(log_low, log_high),
             )
             param_mods[samp_name] = numpyro.deterministic(
-                samp_name, jnp.exp(base_log_uniform)
+                samp_name, 10**base_log_uniform
             )
 
         elif param.distribution == Distribution.NORMAL:
@@ -308,10 +286,10 @@ def _sample_parameter_batch_optimized(
             )
 
         elif param.distribution == Distribution.LOG_NORMAL:
-            log_loc = jnp.log(param.loc)
-            log_scale = jnp.log(param.scale)
-            log_low = jnp.log(param.low)
-            log_high = jnp.log(param.high)
+            log_loc = jnp.log10(param.loc)
+            log_scale = jnp.log10(param.scale)
+            log_low = jnp.log10(param.low)
+            log_high = jnp.log10(param.high)
 
             base_log_normal = numpyro.sample(
                 f"{samp_name}_base",
@@ -323,7 +301,7 @@ def _sample_parameter_batch_optimized(
                 ),
             )
             param_mods[samp_name] = numpyro.deterministic(
-                samp_name, jnp.exp(base_log_normal)
+                samp_name, 10**base_log_normal
             )
 
         else:
@@ -359,7 +337,11 @@ def evaluate_model(
             "offset",
         ]:
             disk_arrays[param_type] = jnp.array(
-                [param_mods[f"{name}_{param_type}"] for name in cache.disk_names]
+                [
+                    param_mods[f"{name}_{param_type}"]
+                    for name in cache.disk_names
+                    if f"{name}_{param_type}" in param_mods
+                ]
             )
 
         total_disk_flux = _compute_disk_flux_vectorized(wave, **disk_arrays)
@@ -368,13 +350,25 @@ def evaluate_model(
         # Use more efficient array construction
         line_arrays = {
             "center": jnp.array(
-                [param_mods[f"{name}_center"] for name in cache.line_names]
+                [
+                    param_mods[f"{name}_center"]
+                    for name in cache.line_names
+                    if f"{name}_center" in param_mods
+                ]
             ),
             "vel_width": jnp.array(
-                [param_mods[f"{name}_vel_width"] for name in cache.line_names]
+                [
+                    param_mods[f"{name}_vel_width"]
+                    for name in cache.line_names
+                    if f"{name}_vel_width" in param_mods
+                ]
             ),
             "amplitude": jnp.array(
-                [param_mods[f"{name}_amplitude"] for name in cache.line_names]
+                [
+                    param_mods[f"{name}_amplitude"]
+                    for name in cache.line_names
+                    if f"{name}_amplitude" in param_mods
+                ]
             ),
             "shape": cache.line_shapes,
         }

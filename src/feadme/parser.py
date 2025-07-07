@@ -103,6 +103,14 @@ class Distribution(str, Enum):
     LOG_NORMAL = "log_normal"
 
 
+DIST_MAP = {
+    Distribution.UNIFORM: 0,
+    Distribution.NORMAL: 1,
+    Distribution.LOG_UNIFORM: 2,
+    Distribution.LOG_NORMAL: 3,
+}
+
+
 @flax.struct.dataclass
 class Parameter:
     name: str
@@ -307,7 +315,7 @@ class Sampler(Writable):
     progress_bar: bool = True
     # TODO: Currently only NUTS is supported
     target_accept_prob: float = 0.8
-    max_tree_depth: int = 7
+    max_tree_depth: int = 8
     dense_mass: bool = False
 
     @property
