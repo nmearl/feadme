@@ -130,7 +130,7 @@ def _compute_disk_flux_single(
 
     local_sigma = sigma * 1e5 * nu0 / c_cgs
 
-    res = quad_jax_integrate(
+    res = jax_integrate(
         inner_radius,
         outer_radius,
         0.0,
@@ -150,180 +150,136 @@ def _compute_disk_flux_single(
     return normalized_res * scale + offset
 
 
-@flax.struct.dataclass
-class ParameterCache:
+def disk_model(
+    template: Template,
+    wave: jnp.ndarray,
+    flux: Optional[jnp.ndarray] = None,
+    flux_err: Optional[jnp.ndarray] = None,
+):
     """
-    Enhanced cache with pre-computed arrays for better performance.
+    Main disk model function that computes the disk and line fluxes.
     """
+    # Sample white noise with better bounds
+    white_noise = numpyro.sample(
+        "white_noise",
+        dist.Uniform(
+            template.white_noise.low,
+            template.white_noise.high,
+        ),
+    )
 
-    disk_names: List[str]
-    line_names: List[str]
-    n_disks: int
-    n_lines: int
-    param_groups: Dict[str, List[Tuple[str, Parameter]]]
-    fixed_params: List[Tuple[str, Parameter]]
-    shared_params: List[Tuple[str, Parameter]]
-    line_shapes: jnp.ndarray
-
-    @classmethod
-    def create(cls, template: Template):
-        """Enhanced cache creation with parameter indexing."""
-        disk_names = [prof.name for prof in template.disk_profiles]
-        line_names = [prof.name for prof in template.line_profiles]
-        n_disks = len(disk_names)
-        n_lines = len(line_names)
-
-        param_groups = cls._compute_param_groups(template)
-        fixed_params = cls._collect_fixed_params(template)
-        shared_params = cls._collect_shared_params(template)
-
-        line_shapes = (
-            jnp.array([prof.shape == Shape.GAUSSIAN for prof in template.line_profiles])
-            if line_names
-            else jnp.array([])
-        )
-
-        return cls(
-            disk_names=disk_names,
-            line_names=line_names,
-            n_disks=n_disks,
-            n_lines=n_lines,
-            param_groups=param_groups,
-            fixed_params=fixed_params,
-            shared_params=shared_params,
-            line_shapes=line_shapes,
-        )
-
-    @staticmethod
-    def _compute_param_groups(
-        template: Template,
-    ) -> Dict[str, List[Tuple[str, Parameter]]]:
-        """Pre-compute parameter groups for batch sampling."""
-        param_groups = {}
-        all_profiles = template.disk_profiles + template.line_profiles
-
-        for prof in all_profiles:
-            for param in prof.independent:
-                if param.name not in param_groups:
-                    param_groups[param.name] = []
-                param_groups[param.name].append((prof.name, param))
-
-        return param_groups
-
-    @staticmethod
-    def _collect_fixed_params(template: Template) -> List[Tuple[str, Parameter]]:
-        """Collect all fixed parameters."""
-        fixed_params = []
-        all_profiles = template.disk_profiles + template.line_profiles
-
-        for prof in all_profiles:
-            for param in prof.fixed:
-                fixed_params.append((prof.name, param))
-
-        return fixed_params
-
-    @staticmethod
-    def _collect_shared_params(template: Template) -> List[Tuple[str, Parameter]]:
-        """Collect all shared parameters."""
-        shared_params = []
-        all_profiles = template.disk_profiles + template.line_profiles
-
-        for prof in all_profiles:
-            for param in prof.shared:
-                shared_params.append((prof.name, param))
-
-        return shared_params
-
-
-def _sample_parameter_batch_optimized(
-    param_batch: List[Tuple[str, Parameter]], base_name: str
-) -> Dict[str, jnp.ndarray]:
-    """
-    Optimized parameter batch sampling with reduced overhead.
-    """
+    # Dictionary to store all sampled parameters
     param_mods = {}
 
-    if not param_batch:
-        return param_mods
+    # Sample independent parameters for all profiles
+    for prof in template.disk_profiles + template.line_profiles:
+        for param in prof.independent:
+            samp_name = f"{prof.name}_{param.name}"
 
-    for prof_name, param in param_batch:
-        samp_name = f"{prof_name}_{param.name}"
+            if param.circular:
+                x = numpyro.sample(f"{samp_name}_circ_x_base", dist.Normal(0, 1))
+                y = numpyro.sample(f"{samp_name}_circ_y_base", dist.Normal(0, 1))
+                r = jnp.sqrt(x**2 + y**2) + 1e-6
+                param_mods[samp_name] = numpyro.deterministic(
+                    samp_name, jnp.arctan2(y / r, x / r) % (2 * jnp.pi)
+                )
 
-        if param.circular:
-            circular_x = numpyro.sample(f"{samp_name}_circ_x_base", dist.Normal(0, 1))
-            circular_y = numpyro.sample(f"{samp_name}_circ_y_base", dist.Normal(0, 1))
+            elif param.distribution == Distribution.UNIFORM:
+                param_mods[samp_name] = numpyro.sample(
+                    samp_name, dist.Uniform(param.low, param.high)
+                )
+            elif param.distribution == Distribution.LOG_UNIFORM:
+                param_mods[f"{samp_name}_base"] = numpyro.sample(
+                    f"{samp_name}_base",
+                    # dist.TransformedDistribution(
+                    #     dist.Uniform(jnp.log(param.low), jnp.log(param.high)),
+                    #     ExpTransform(),
+                    # ),
+                    dist.Uniform(jnp.log10(param.low), jnp.log10(param.high)),
+                )
+                param_mods[samp_name] = numpyro.deterministic(
+                    samp_name,
+                    10 ** param_mods[f"{samp_name}_base"],
+                )
+            elif param.distribution == Distribution.NORMAL:
+                param_mods[samp_name] = numpyro.sample(
+                    samp_name,
+                    dist.TruncatedNormal(
+                        loc=param.loc,
+                        scale=param.scale,
+                        low=param.low,
+                        high=param.high,
+                    ),
+                )
+            elif param.distribution == Distribution.LOG_NORMAL:
+                param_mods[f"{samp_name}_base"] = numpyro.sample(
+                    f"{samp_name}_base",
+                    # dist.TransformedDistribution(
+                    #     dist.TruncatedNormal(
+                    #         loc=jnp.log(param.loc),
+                    #         scale=jnp.log(param.scale),
+                    #         low=jnp.log(param.low),
+                    #         high=jnp.log(param.high),
+                    #     ),
+                    #     ExpTransform(),
+                    # ),
+                    dist.TruncatedNormal(
+                        loc=jnp.log10(param.loc),
+                        scale=jnp.log10(param.scale),
+                        low=jnp.log10(param.low),
+                        high=jnp.log10(param.high),
+                    ),
+                )
+                param_mods[samp_name] = numpyro.deterministic(
+                    samp_name,
+                    10 ** param_mods[f"{samp_name}_base"],
+                )
 
-            if param.distribution == Distribution.NORMAL:
-                circular_x = circular_x * param.scale + jnp.cos(param.loc)
-                circular_y = circular_y * param.scale + jnp.sin(param.loc)
+    # Add fixed parameters
+    for prof in template.disk_profiles + template.line_profiles:
+        for param in prof.fixed:
+            samp_name = f"{prof.name}_{param.name}"
+            param_mods[samp_name] = numpyro.deterministic(samp_name, param.value)
 
-            r = jnp.sqrt(circular_x**2 + circular_y**2) + 1e-6
-            value = jnp.arctan2(circular_y / r, circular_x / r) % (2 * jnp.pi)
-            param_mods[samp_name] = numpyro.deterministic(samp_name, value)
-
-        elif param.distribution == Distribution.UNIFORM:
-            param_mods[samp_name] = numpyro.sample(
-                samp_name, dist.Uniform(param.low, param.high)
-            )
-
-        elif param.distribution == Distribution.LOG_UNIFORM:
-            log_low = jnp.log10(param.low)
-            log_high = jnp.log10(param.high)
-            base_log_uniform = numpyro.sample(
-                f"{samp_name}_base",
-                dist.Uniform(log_low, log_high),
-            )
+    # Add shared parameters
+    for prof in template.disk_profiles + template.line_profiles:
+        for param in prof.shared:
+            samp_name = f"{prof.name}_{param.name}"
             param_mods[samp_name] = numpyro.deterministic(
-                samp_name, 10**base_log_uniform
+                samp_name, param_mods[f"{param.shared}_{param.name}"]
             )
 
-        elif param.distribution == Distribution.NORMAL:
-            param_mods[samp_name] = numpyro.sample(
-                samp_name,
-                dist.TruncatedNormal(
-                    loc=param.loc, scale=param.scale, low=param.low, high=param.high
-                ),
-            )
+    # Compute outer radius for disk profiles
+    for prof in template.disk_profiles:
+        samp_name = f"{prof.name}_outer_radius"
+        param_mods[samp_name] = numpyro.deterministic(
+            samp_name,
+            param_mods[f"{prof.name}_inner_radius"]
+            + param_mods[f"{prof.name}_delta_radius"],
+        )
 
-        elif param.distribution == Distribution.LOG_NORMAL:
-            log_loc = jnp.log10(param.loc)
-            log_scale = jnp.log10(param.scale)
-            log_low = jnp.log10(param.low)
-            log_high = jnp.log10(param.high)
+    total_flux, total_disk_flux, total_line_flux = evaluate_model(
+        template, wave, param_mods
+    )
 
-            base_log_normal = numpyro.sample(
-                f"{samp_name}_base",
-                dist.TruncatedNormal(
-                    loc=log_loc,
-                    scale=log_scale,
-                    low=log_low,
-                    high=log_high,
-                ),
-            )
-            param_mods[samp_name] = numpyro.deterministic(
-                samp_name, 10**base_log_normal
-            )
+    total_error = jnp.sqrt(flux_err**2 + total_flux**2 * jnp.exp(2 * white_noise))
 
-        else:
-            raise ValueError(f"Unsupported distribution type: {param.distribution}")
+    with numpyro.plate("data", wave.shape[0]):
+        numpyro.deterministic("disk_flux", total_disk_flux)
+        numpyro.deterministic("line_flux", total_line_flux)
 
-    return param_mods
+        numpyro.sample("total_flux", dist.Normal(total_flux, total_error), obs=flux)
 
 
 def evaluate_model(
-    template: Template,
-    wave: jnp.ndarray | np.ndarray,
-    param_mods: Dict[str, float],
-    cache: Optional[ParameterCache] = None,
+    template: Template, wave: jnp.ndarray | np.ndarray, param_mods: Dict[str, float]
 ):
-    if cache is None:
-        cache = ParameterCache.create(template)
-
+    # Convert disk parameter lists to arrays
     total_disk_flux = jnp.zeros_like(wave)
-    total_line_flux = jnp.zeros_like(wave)
 
-    if cache.n_disks > 0:
+    for prof in template.disk_profiles:
         disk_arrays = {}
+
         for param_type in [
             "center",
             "inner_radius",
@@ -338,124 +294,48 @@ def evaluate_model(
         ]:
             disk_arrays[param_type] = jnp.array(
                 [
-                    param_mods[f"{name}_{param_type}"]
-                    for name in cache.disk_names
-                    if f"{name}_{param_type}" in param_mods
+                    param_mods[f"{prof.name}_{param_type}"]
+                    for prof in template.disk_profiles
+                    if f"{prof.name}_{param_type}" in param_mods
                 ]
             )
 
-        total_disk_flux = _compute_disk_flux_vectorized(wave, **disk_arrays)
+        total_disk_flux += _compute_disk_flux_vectorized(wave, **disk_arrays)
 
-    if cache.n_lines > 0:
-        # Use more efficient array construction
+    # Collect line parameters in lists
+    total_line_flux = jnp.zeros_like(wave)
+
+    for prof in template.line_profiles:
         line_arrays = {
             "center": jnp.array(
                 [
-                    param_mods[f"{name}_center"]
-                    for name in cache.line_names
-                    if f"{name}_center" in param_mods
+                    param_mods[f"{prof.name}_center"]
+                    for prof in template.line_profiles
+                    if f"{prof.name}_center" in param_mods
                 ]
             ),
             "vel_width": jnp.array(
                 [
-                    param_mods[f"{name}_vel_width"]
-                    for name in cache.line_names
-                    if f"{name}_vel_width" in param_mods
+                    param_mods[f"{prof.name}_vel_width"]
+                    for prof in template.line_profiles
+                    if f"{prof.name}_vel_width" in param_mods
                 ]
             ),
             "amplitude": jnp.array(
                 [
-                    param_mods[f"{name}_amplitude"]
-                    for name in cache.line_names
-                    if f"{name}_amplitude" in param_mods
+                    param_mods[f"{prof.name}_amplitude"]
+                    for prof in template.line_profiles
+                    if f"{prof.name}_amplitude" in param_mods
                 ]
             ),
-            "shape": cache.line_shapes,
+            "shape": jnp.array(
+                [prof.shape == Shape.GAUSSIAN for prof in template.line_profiles]
+            ),
         }
 
-        total_line_flux = _compute_line_flux_vectorized(wave, **line_arrays)
+        total_line_flux += _compute_line_flux_vectorized(wave, **line_arrays)
 
+    # Combine fluxes
     total_flux = total_disk_flux + total_line_flux
 
     return total_flux, total_disk_flux, total_line_flux
-
-
-def disk_model_optimized(
-    template: Template,
-    wave: jnp.ndarray,
-    flux: Optional[jnp.ndarray] = None,
-    flux_err: Optional[jnp.ndarray] = None,
-    cache: Optional[ParameterCache] = None,
-):
-    """
-    Optimized disk model with caching and vectorized operations.
-    """
-    if cache is None:
-        cache = ParameterCache.create(template)
-
-    param_mods = {}
-
-    # Sample parameters in optimized batches
-    for param_name, param_batch in cache.param_groups.items():
-        batch_params = _sample_parameter_batch_optimized(param_batch, param_name)
-        param_mods.update(batch_params)
-
-    # Sample white noise with better bounds
-    white_noise = numpyro.sample(
-        "white_noise",
-        dist.Uniform(
-            template.white_noise.low,
-            template.white_noise.high,
-        ),
-    )
-
-    # Add fixed parameters
-    for prof_name, param in cache.fixed_params:
-        samp_name = f"{prof_name}_{param.name}"
-        param_mods[samp_name] = numpyro.deterministic(samp_name, param.value)
-
-    # Add shared parameters
-    for prof_name, param in cache.shared_params:
-        samp_name = f"{prof_name}_{param.name}"
-        param_mods[samp_name] = numpyro.deterministic(
-            samp_name, param_mods[f"{param.shared}_{param.name}"]
-        )
-
-    # Compute outer radius for disk profiles
-    for prof_name in cache.disk_names:
-        samp_name = f"{prof_name}_outer_radius"
-        param_mods[samp_name] = numpyro.deterministic(
-            samp_name,
-            param_mods[f"{prof_name}_inner_radius"]
-            + param_mods[f"{prof_name}_delta_radius"],
-        )
-
-    total_flux, total_disk_flux, total_line_flux = evaluate_model(
-        template, wave, param_mods, cache
-    )
-
-    if flux_err is not None:
-        base_error_sq = flux_err**2
-    else:
-        base_error_sq = jnp.zeros_like(wave)
-
-    noise_factor = jnp.exp(2 * white_noise)
-    total_error = jnp.sqrt(base_error_sq + total_flux**2 * noise_factor)
-
-    with numpyro.plate("data", wave.shape[0]):
-        numpyro.deterministic("disk_flux", total_disk_flux)
-        numpyro.deterministic("line_flux", total_line_flux)
-
-        numpyro.sample("total_flux", dist.Normal(total_flux, total_error), obs=flux)
-
-
-def create_optimized_model(template: Template):
-    """
-    Factory function to create optimized model with cached metadata.
-    """
-    cache = ParameterCache.create(template)
-
-    def model(wave, flux=None, flux_err=None):
-        return disk_model_optimized(template, wave, flux, flux_err, cache)
-
-    return model

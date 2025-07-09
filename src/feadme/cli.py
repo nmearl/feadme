@@ -8,7 +8,7 @@ from astropy.time import Time
 import json
 import numpy as np
 
-from .compose import create_optimized_model
+from .compose import disk_model
 from .models.lsq import lsq_model_fitter
 from .parser import Config, Template, Data, Sampler
 from .samplers.nuts_sampler import NUTSSampler
@@ -113,12 +113,8 @@ def perform_sampling(config: Config):
         f"<light-magenta>{config.sampler.num_chains}</light-magenta> chains "
         f"and <light-magenta>{config.sampler.num_samples}</light-magenta> samples."
     )
-
-    # Create the optimized model based on the template
-    model = create_optimized_model(template)
-
     # Initialize the sampler with the model and configuration
-    sampler = NUTSSampler(model=model, config=config)
+    sampler = NUTSSampler(model=disk_model, config=config)
 
     # If a results file already exists, load it instead of running the sampler
     if (Path(output_path) / "results.nc").exists():
