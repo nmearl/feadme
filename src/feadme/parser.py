@@ -173,7 +173,9 @@ class Profile:
             shared.append(shared_param)
 
         return self.replace(
-            _independent_params=independent, _shared_params=shared, _fixed_params=fixed
+            _independent_params=independent,
+            _shared_params=shared,
+            _fixed_params=fixed,
         )
 
     @classmethod
@@ -315,8 +317,8 @@ class Sampler(Writable):
     progress_bar: bool = True
     # TODO: Currently only NUTS is supported
     target_accept_prob: float = 0.8
-    max_tree_depth: int = 8
-    dense_mass: bool = False
+    max_tree_depth: int = 6
+    dense_mass: bool = True
 
     @property
     def chain_method(self) -> str:

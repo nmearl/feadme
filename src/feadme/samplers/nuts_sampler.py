@@ -33,6 +33,7 @@ class NUTSSampler(BaseSampler):
         svi_result = svi.run(
             random.PRNGKey(1),
             10_000,
+            template=self.template,
             wave=self.wave,
             flux=self.flux,
             flux_err=self.flux_err,
@@ -60,6 +61,7 @@ class NUTSSampler(BaseSampler):
 
         mcmc.run(
             rng_key,
+            template=self.template,
             wave=self.wave,
             flux=self.flux,
             flux_err=self.flux_err,

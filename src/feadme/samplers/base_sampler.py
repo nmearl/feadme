@@ -119,11 +119,13 @@ class BaseSampler(ABC):
         """
         zs = mcmc.get_samples()["auto_shared_latent"]
         posterior_samples = neutra.transform_sample(zs)
+        # posterior_samples = mcmc.get_samples()
 
         rng_key = jax.random.PRNGKey(0)
 
         predictive_post = Predictive(self.model, posterior_samples=posterior_samples)(
             rng_key,
+            template=self.template,
             wave=self.wave,
             flux=None,
             flux_err=self.flux_err,
@@ -140,6 +142,7 @@ class BaseSampler(ABC):
 
         predictive_prior = Predictive(neutra_model, num_samples=1000)(
             rng_key,
+            template=self.template,
             wave=self.wave,
             flux=None,
             flux_err=self.flux_err,
