@@ -175,7 +175,7 @@ def jax_integrate(
     """
     Perform a double integral over `xi` and `phi` using trapezoidal rule.
     """
-    xi = jnp.exp(jnp.log(xi1) + (jnp.log(xi2) - jnp.log(xi1)) * XI_u)
+    xi = 10 ** (jnp.log10(xi1) + (jnp.log10(xi2) - jnp.log10(xi1)) * XI_u)
     phi = phi1 + (phi2 - phi1) * PHI_u
 
     res = jax.vmap(

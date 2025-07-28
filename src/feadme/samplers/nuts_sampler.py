@@ -32,7 +32,7 @@ class NUTSSampler(BaseSampler):
         svi = SVI(self.model, guide, optim.Adam(0.003), Trace_ELBO())
         svi_result = svi.run(
             random.PRNGKey(1),
-            10_000,
+            20_000,
             template=self.template,
             wave=self.wave,
             flux=self.flux,

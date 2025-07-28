@@ -129,7 +129,6 @@ class BaseSampler(ABC):
             wave=self.wave,
             flux=None,
             flux_err=self.flux_err,
-            # template=self.template,
         )
 
         predictive_post.update(
@@ -146,7 +145,6 @@ class BaseSampler(ABC):
             wave=self.wave,
             flux=None,
             flux_err=self.flux_err,
-            # template=self.template,
         )
 
         predictive_prior.update(
