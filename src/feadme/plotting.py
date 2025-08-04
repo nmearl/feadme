@@ -136,16 +136,20 @@ def plot_model_fit(
     param_mods.update(fixed_vars)
     param_mods.update(orphaned_vars)
 
-    tot_flux, disk_flux, line_flux = evaluate_model(template, wave, param_mods)
+    new_wave = np.linspace(wave[0], wave[-1], 1000)
 
-    ax.plot(wave, tot_flux, label="Reconstructed Model", linestyle="--")
-    ax.plot(wave, disk_flux, label="Reconstructed Disk Flux", linestyle="--")
-    ax.plot(wave, line_flux, label="Reconstructed Line Flux", linestyle="--")
+    tot_flux, disk_flux, line_flux = evaluate_model(template, new_wave, param_mods)
+
+    ax.plot(new_wave, tot_flux, label="Reconstructed Model", linestyle="--")
+    ax.plot(new_wave, disk_flux, label="Reconstructed Disk Flux", linestyle="--")
+    ax.plot(new_wave, line_flux, label="Reconstructed Line Flux", linestyle="--")
 
     ax.set_ylabel("Flux [mJy]")
     ax.set_xlabel("Wavelength [AA]")
-    ax.set_title(f"{label} Model Fit")
-    ax.legend()
+    ax.set_title(
+        f"{label}{' ' + str(template.obs_date) if template.obs_date is not None else ''} Model Fit"
+    )
+    ax.legend(fontsize=8)
 
     fig.savefig(f"{output_path}/model_fit.png")
     plt.close(fig)

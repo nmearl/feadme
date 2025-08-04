@@ -13,9 +13,8 @@ c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
 fixed_quadgk51 = GaussKronrodRule(order=51).integrate
-fixed_quadgk31 = GaussKronrodRule(order=31).integrate
 
-N_xi, N_phi = 30, 50
+N_xi, N_phi = 50, 50
 unit_xi = jnp.linspace(0.0, 1.0, N_xi)
 unit_phi = jnp.linspace(0.0, 1.0, N_phi)
 XI_u, PHI_u = jnp.meshgrid(unit_xi, unit_phi, indexing="ij")
@@ -55,7 +54,7 @@ def doppler_factor(
     dc = xi**0.5 * scale ** (3 / 2) * (1 - e * cosphiphinot) ** 0.5
     dd = b_div_r * (1 - e * cosphiphinot) ** 0.5 * sini * sinphi
     de = xi**0.5 * scale**0.5 * (1 - sini**2 * cosphi**2) ** 0.5
-    de = jnp.where(de == 0.0, FLOAT_EPSILON, de)
+    de = jnp.where(de < FLOAT_EPSILON, FLOAT_EPSILON, de)
 
     inv_dop = gamma * (da - db / dc + dd / de)
 
@@ -131,8 +130,12 @@ def _inner_quad(
     """
     Inner integral over `phi` for a fixed `xi`.
     """
+
+    def transformed_integrand(phi: float, *args) -> jnp.ndarray:
+        return integrand(phi, *args) * 10**xi * jnp.log(10)
+
     return fixed_quadgk51(
-        integrand, phi1, phi2, args=(xi, X, inc, sigma, q, e, phi0, nu0)
+        transformed_integrand, phi1, phi2, args=(10**xi, X, inc, sigma, q, e, phi0, nu0)
     )[0]
 
 
@@ -153,8 +156,11 @@ def quad_jax_integrate(
     """
     Perform a double integral over `xi` and `phi` using Gauss-Kronrod quadrature.
     """
-    return fixed_quadgk31(
-        _inner_quad, xi1, xi2, args=(phi1, phi2, X, inc, sigma, q, e, phi0, nu0)
+    return fixed_quadgk51(
+        _inner_quad,
+        jnp.log10(xi1),
+        jnp.log10(xi2),
+        args=(phi1, phi2, X, inc, sigma, q, e, phi0, nu0),
     )[0]
 
 
@@ -175,17 +181,21 @@ def jax_integrate(
     """
     Perform a double integral over `xi` and `phi` using trapezoidal rule.
     """
-    xi = 10 ** (jnp.log10(xi1) + (jnp.log10(xi2) - jnp.log10(xi1)) * XI_u)
+    xi_log = jnp.log10(xi1) + (jnp.log10(xi2) - jnp.log10(xi1)) * XI_u
+    xi = 10**xi_log
     phi = phi1 + (phi2 - phi1) * PHI_u
 
+    jacobian = xi * jnp.log(10)
+
     res = jax.vmap(
-        lambda phi_arr, xi_arr: integrand(
+        lambda phi_arr, xi_arr, jac_arr: integrand(
             phi_arr, xi_arr, X[:, None], inc, sigma, q, e, phi0, nu0
-        ),
-        in_axes=(0, 0),
-    )(phi, xi)
+        )
+        * jac_arr,
+        in_axes=(0, 0, 0),
+    )(phi, xi, jacobian)
 
     inner_integral = jnp.trapezoid(res, x=phi[0], axis=2)
-    outer_integral = jnp.trapezoid(inner_integral, x=xi[:, 0], axis=0)
+    outer_integral = jnp.trapezoid(inner_integral, x=xi_log[:, 0], axis=0)
 
     return outer_integral
