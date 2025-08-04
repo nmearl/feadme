@@ -179,9 +179,8 @@ def disk_model(
             if param.circular:
                 x = numpyro.sample(f"{samp_name}_circ_x_base", dist.Normal(0, 1))
                 y = numpyro.sample(f"{samp_name}_circ_y_base", dist.Normal(0, 1))
-                r = jnp.sqrt(x**2 + y**2) + 1e-6
                 param_mods[samp_name] = numpyro.deterministic(
-                    samp_name, jnp.arctan2(y / r, x / r) % (2 * jnp.pi)
+                    samp_name, jnp.arctan2(y, x) % (2 * jnp.pi)
                 )
 
             elif param.distribution == Distribution.UNIFORM:
