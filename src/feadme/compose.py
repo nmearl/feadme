@@ -279,10 +279,8 @@ def disk_model(
 def evaluate_model(
     template: Template, wave: jnp.ndarray | np.ndarray, param_mods: Dict[str, float]
 ):
-    # Convert disk parameter lists to arrays
-    total_disk_flux = jnp.zeros_like(wave)
-
-    for prof in template.disk_profiles:
+    # Build arrays for ALL disk profiles at once (not in a loop)
+    if template.disk_profiles:
         disk_arrays = {}
 
         for param_type in [
@@ -305,12 +303,13 @@ def evaluate_model(
                 ]
             )
 
-        total_disk_flux += _compute_disk_flux_vectorized(wave, **disk_arrays)
+        # Call vectorized function once with all disk profiles
+        total_disk_flux = _compute_disk_flux_vectorized(wave, **disk_arrays)
+    else:
+        total_disk_flux = jnp.zeros_like(wave)
 
-    # Collect line parameters in lists
-    total_line_flux = jnp.zeros_like(wave)
-
-    for prof in template.line_profiles:
+    # Build arrays for ALL line profiles at once
+    if template.line_profiles:
         line_arrays = {
             "center": jnp.array(
                 [
@@ -338,7 +337,10 @@ def evaluate_model(
             ),
         }
 
-        total_line_flux += _compute_line_flux_vectorized(wave, **line_arrays)
+        # Call vectorized function once with all line profiles
+        total_line_flux = _compute_line_flux_vectorized(wave, **line_arrays)
+    else:
+        total_line_flux = jnp.zeros_like(wave)
 
     # Combine fluxes
     total_flux = total_disk_flux + total_line_flux

@@ -116,7 +116,7 @@ def integrand(
 
 
 def _inner_quad(
-    xi: float,
+    log_xi: float,
     phi1: float,
     phi2: float,
     X: jnp.ndarray | np.ndarray,
@@ -130,12 +130,13 @@ def _inner_quad(
     """
     Inner integral over `phi` for a fixed `xi`.
     """
+    xi = 10**log_xi
 
     def transformed_integrand(phi: float, *args) -> jnp.ndarray:
-        return integrand(phi, *args) * 10**xi * jnp.log(10)
+        return integrand(phi, *args) * xi * jnp.log(10)
 
     return fixed_quadgk51(
-        transformed_integrand, phi1, phi2, args=(10**xi, X, inc, sigma, q, e, phi0, nu0)
+        transformed_integrand, phi1, phi2, args=(xi, X, inc, sigma, q, e, phi0, nu0)
     )[0]
 
 
