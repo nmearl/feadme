@@ -169,71 +169,76 @@ def disk_model(
     """
     Main disk model function that computes the disk and line fluxes.
     """
-    # Sample white noise with better bounds
-    white_noise = numpyro.sample(
-        "white_noise",
-        dist.Uniform(
-            template.white_noise.low,
-            template.white_noise.high,
-        ),
-    )
+    reparam_config = create_reparam_config(template)
 
-    # Dictionary to store all sampled parameters
-    param_mods = {}
+    with reparam(config=reparam_config):
+        # Sample white noise with better bounds
+        white_noise = numpyro.sample(
+            "white_noise",
+            dist.Uniform(
+                template.white_noise.low,
+                template.white_noise.high,
+            ),
+        )
 
-    # Sample independent parameters for all profiles
-    for prof in template.disk_profiles + template.line_profiles:
-        for param in prof.independent:
-            samp_name = f"{prof.name}_{param.name}"
+        # Dictionary to store all sampled parameters
+        param_mods = {}
 
-            if param.circular:
-                x = numpyro.sample(f"{samp_name}_x_base", dist.Normal(0, 1))
-                y = numpyro.sample(f"{samp_name}_y_base", dist.Normal(0, 1))
-                param_mods[samp_name] = numpyro.deterministic(
-                    samp_name, jnp.arctan2(y, x) + jnp.pi
-                )
+        # Sample independent parameters for all profiles
+        for prof in template.disk_profiles + template.line_profiles:
+            for param in prof.independent:
+                samp_name = f"{prof.name}_{param.name}"
 
-            elif param.distribution == Distribution.UNIFORM:
-                param_mods[samp_name] = numpyro.sample(
-                    samp_name, dist.Uniform(param.low, param.high)
-                )
-            elif param.distribution == Distribution.LOG_UNIFORM:
-                param_mods[f"{samp_name}_base"] = numpyro.sample(
-                    f"{samp_name}_base",
-                    # dist.TransformedDistribution(
-                    #     dist.Uniform(jnp.log(param.low), jnp.log(param.high)),
-                    #     ExpTransform(),
-                    # ),
-                    dist.Uniform(jnp.log10(param.low), jnp.log10(param.high)),
-                )
-                param_mods[samp_name] = numpyro.deterministic(
-                    samp_name,
-                    10 ** param_mods[f"{samp_name}_base"],
-                )
-            elif param.distribution == Distribution.NORMAL:
-                param_mods[samp_name] = numpyro.sample(
-                    samp_name,
-                    dist.TruncatedNormal(
-                        loc=param.loc,
-                        scale=param.scale,
-                        low=param.low,
-                        high=param.high,
-                    ),
-                )
-            elif param.distribution == Distribution.LOG_NORMAL:
-                param_mods[f"{samp_name}_base"] = numpyro.sample(
-                    f"{samp_name}_base",
-                    dist.TruncatedNormal(
-                        loc=jnp.log10(param.loc),
-                        scale=jnp.log10(param.scale),
-                        low=jnp.log10(param.low),
-                        high=jnp.log10(param.high),
-                    ),
-                )
-                param_mods[samp_name] = numpyro.deterministic(
-                    samp_name,
-                    10 ** param_mods[f"{samp_name}_base"],
-                )
+                if param.circular:
+                    circ_base = numpyro.sample(
+                        f"{samp_name}_base",
+                        dist.VonMises(concentration=1e-3, loc=0.0),
+                    )
+                    param_mods[samp_name] = numpyro.deterministic(
+                        samp_name, (circ_base + jnp.pi)
+                    )
+
+                elif param.distribution == Distribution.UNIFORM:
+                    param_mods[samp_name] = numpyro.sample(
+                        samp_name, dist.Uniform(param.low, param.high)
+                    )
+                elif param.distribution == Distribution.LOG_UNIFORM:
+                    param_mods[f"{samp_name}_base"] = numpyro.sample(
+                        f"{samp_name}_base",
+                        # dist.TransformedDistribution(
+                        #     dist.Uniform(jnp.log(param.low), jnp.log(param.high)),
+                        #     ExpTransform(),
+                        # ),
+                        dist.Uniform(jnp.log10(param.low), jnp.log10(param.high)),
+                    )
+                    param_mods[samp_name] = numpyro.deterministic(
+                        samp_name,
+                        10 ** param_mods[f"{samp_name}_base"],
+                    )
+                elif param.distribution == Distribution.NORMAL:
+                    param_mods[samp_name] = numpyro.sample(
+                        samp_name,
+                        dist.TruncatedNormal(
+                            loc=param.loc,
+                            scale=param.scale,
+                            low=param.low,
+                            high=param.high,
+                        ),
+                    )
+                elif param.distribution == Distribution.LOG_NORMAL:
+                    param_mods[f"{samp_name}_base"] = numpyro.sample(
+                        f"{samp_name}_base",
+                        dist.TruncatedNormal(
+                            loc=jnp.log10(param.loc),
+                            scale=jnp.log10(param.scale),
+                            low=jnp.log10(param.low),
+                            high=jnp.log10(param.high),
+                        ),
+                    )
+                    param_mods[samp_name] = numpyro.deterministic(
+                        samp_name,
+                        10 ** param_mods[f"{samp_name}_base"],
+                    )
 
     # Add fixed parameters
     for prof in template.disk_profiles + template.line_profiles:

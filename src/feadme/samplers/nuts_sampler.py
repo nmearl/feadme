@@ -5,6 +5,7 @@ from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO
 from numpyro.infer.autoguide import AutoBNAFNormal, AutoIAFNormal
 from numpyro.infer.reparam import NeuTraReparam
 from numpyro import optim
+import time
 
 from .base_sampler import BaseSampler
 
@@ -26,12 +27,13 @@ class NUTSSampler(BaseSampler):
         """
         Run the NUTS sampler to perform MCMC sampling.
         """
-        rng_key = random.PRNGKey(0)
+        rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
+        rng_key, svi_key = random.split(rng_key)
 
-        guide = AutoBNAFNormal(self.model, hidden_factors=[8, 8])
+        guide = AutoBNAFNormal(self.model, hidden_factors=[16, 16])
         svi = SVI(self.model, guide, optim.Adam(0.003), Trace_ELBO())
         svi_result = svi.run(
-            random.PRNGKey(1),
+            svi_key,
             20_000,
             template=self.template,
             wave=self.wave,
