@@ -164,7 +164,7 @@ class Profile:
         # Second pass: handle shared parameters
         shared_candidates = []
         for field_name, field_value in param_kwargs.items():
-            if field_value.shared is not None:
+            if field_value.shared is not None and not field_value.fixed:
                 shared_candidates.append(field_value)
 
         for shared_param in shared_candidates:
@@ -195,7 +195,7 @@ class Profile:
 
         for field_name, field_value in param_kwargs.items():
             if isinstance(field_value, Parameter):
-                if field_value.shared is not None:
+                if field_value.shared is not None and not field_value.fixed:
                     if field_value.shared in [p.name for p in independent]:
                         shared.append(field_value)
                     else:
