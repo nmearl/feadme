@@ -116,6 +116,32 @@ def integrand(
     return res
 
 
+def _inner_trap(
+    log_xi: float,
+    phi1: float,
+    phi2: float,
+    X: jnp.ndarray | np.ndarray,
+    inc: float,
+    sigma: float,
+    q: float,
+    e: float,
+    phi0: float,
+    nu0: float,
+) -> jnp.ndarray:
+    """
+    Inner integral over `phi` for a fixed `xi`.
+    """
+    xi = 10**log_xi
+    phi = jnp.linspace(phi1, phi2, 100)
+
+    result = jax.vmap(
+        lambda phi_arr: integrand(phi_arr, xi, X, inc, sigma, q, e, phi0, nu0),
+        in_axes=0,
+    )(phi)
+
+    return jnp.trapezoid(result, x=phi, axis=0) * xi * jnp.log(10)
+
+
 def _inner_quad(
     log_xi: float,
     phi1: float,
@@ -136,7 +162,7 @@ def _inner_quad(
     def transformed_integrand(phi: float, *args) -> jnp.ndarray:
         return integrand(phi, *args) * xi * jnp.log(10)
 
-    return fixed_quadgk31(
+    return fixed_quadgk51(
         transformed_integrand, phi1, phi2, args=(xi, X, inc, sigma, q, e, phi0, nu0)
     )[0]
 

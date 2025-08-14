@@ -1,13 +1,22 @@
 import arviz as az
+import loguru
 import jax.random as random
-from numpyro.infer import MCMC, NUTS, init_to_median
-from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO
-from numpyro.infer.autoguide import AutoBNAFNormal, AutoIAFNormal
+from numpyro.infer import MCMC, NUTS, init_to_median, init_to_value
+from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO, SA
+from numpyro.infer.autoguide import (
+    AutoBNAFNormal,
+    AutoIAFNormal,
+    AutoMultivariateNormal,
+)
 from numpyro.infer.reparam import NeuTraReparam
 from numpyro import optim
+import jax.numpy as jnp
 import time
 
 from .base_sampler import BaseSampler
+
+
+logger = loguru.logger.opt(colors=True)
 
 
 class NUTSSampler(BaseSampler):
@@ -30,22 +39,37 @@ class NUTSSampler(BaseSampler):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key = random.split(rng_key)
 
-        guide = AutoBNAFNormal(self.model, hidden_factors=[16, 16])
-        svi = SVI(self.model, guide, optim.Adam(0.003), Trace_ELBO())
+        # guide = AutoBNAFNormal(self.model, hidden_factors=[32, 32, 32], num_flows=2)
+        # guide = AutoIAFNormal(self.model, hidden_dims=[32], num_flows=1)
+        guide = AutoMultivariateNormal(self.model)
+        optimizer = optim.Adam(lambda t: 0.005 * 0.999**t)
+        svi = SVI(self.model, guide, optimizer, Trace_ELBO())
         svi_result = svi.run(
             svi_key,
-            20_000,
+            25_000,
             template=self.template,
             wave=self.wave,
             flux=self.flux,
             flux_err=self.flux_err,
         )
 
+        # Check convergence
+        if (
+            jnp.std(svi_result.losses[-1000:])
+            / jnp.abs(jnp.mean(svi_result.losses[-1000:]))
+            > 0.01
+        ):
+            logger.warning("SVI may not have converged!")
+
         neutra = NeuTraReparam(guide, svi_result.params)
         neutra_model = neutra.reparam(self.model)
 
+        # Initialize from VI posterior
+        init_params = guide.sample_posterior(rng_key, svi_result.params)
+
         kernel = NUTS(
             neutra_model,
+            init_strategy=init_to_median(),
             target_accept_prob=self.sampler.target_accept_prob,
             max_tree_depth=self.sampler.max_tree_depth,
             dense_mass=self.sampler.dense_mass,
