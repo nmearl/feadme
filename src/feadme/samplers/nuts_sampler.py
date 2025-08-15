@@ -39,8 +39,8 @@ class NUTSSampler(BaseSampler):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key = random.split(rng_key)
 
-        # guide = AutoBNAFNormal(self.model, hidden_factors=[32, 32, 32], num_flows=2)
-        # guide = AutoIAFNormal(self.model, hidden_dims=[32], num_flows=1)
+        # guide = AutoBNAFNormal(self.model, hidden_factors=[8, 8], num_flows=1)
+        # guide = AutoIAFNormal(self.model, hidden_dims=[32, 32], num_flows=2)
         guide = AutoMultivariateNormal(self.model)
         optimizer = optim.Adam(lambda t: 0.005 * 0.999**t)
         svi = SVI(self.model, guide, optimizer, Trace_ELBO())
