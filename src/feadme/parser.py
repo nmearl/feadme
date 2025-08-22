@@ -98,16 +98,20 @@ class Writable:
 
 class Distribution(str, Enum):
     UNIFORM = "uniform"
-    NORMAL = "normal"
     LOG_UNIFORM = "log_uniform"
+    NORMAL = "normal"
     LOG_NORMAL = "log_normal"
+    HALF_NORMAL = "half_normal"
+    LOG_HALF_NORMAL = "log_half_normal"
 
 
 DIST_MAP = {
     Distribution.UNIFORM: 0,
-    Distribution.NORMAL: 1,
-    Distribution.LOG_UNIFORM: 2,
+    Distribution.LOG_UNIFORM: 1,
+    Distribution.NORMAL: 2,
     Distribution.LOG_NORMAL: 3,
+    Distribution.HALF_NORMAL: 4,
+    Distribution.LOG_HALF_NORMAL: 5,
 }
 
 

@@ -11,7 +11,7 @@ from numpyro.infer.reparam import CircularReparam
 
 from .models.disk import quad_jax_integrate, jax_integrate
 from .parser import Distribution, Template, Shape
-from .utils import truncnorm_ppf
+from .utils import truncnorm_ppf, trunchalfnorm_ppf
 
 ERR = float(np.finfo(np.float32).tiny)
 c_cgs = const.c.cgs.value
@@ -181,22 +181,14 @@ def disk_model(
             samp_name = f"{prof.name}_{param.name}"
 
             if param.circular:
-                circ_x_base = numpyro.sample(
-                    f"{samp_name}_x_base",
-                    dist.Normal(0, 1)
-                )
-                circ_y_base = numpyro.sample(
-                    f"{samp_name}_y_base",
-                    dist.Normal(0, 1)
-                )
+                circ_x_base = numpyro.sample(f"{samp_name}_x_base", dist.Normal(0, 1))
+                circ_y_base = numpyro.sample(f"{samp_name}_y_base", dist.Normal(0, 1))
                 param_mods[samp_name] = numpyro.deterministic(
                     samp_name, jnp.arctan2(circ_y_base, circ_x_base) % (2 * jnp.pi)
                 )
 
             elif param.distribution == Distribution.UNIFORM:
-                uniform_base = numpyro.sample(
-                    f"{samp_name}_base", dist.Uniform(0, 1)
-                )
+                uniform_base = numpyro.sample(f"{samp_name}_base", dist.Uniform(0, 1))
                 param_mods[samp_name] = numpyro.deterministic(
                     samp_name, param.low + uniform_base * (param.high - param.low)
                 )
@@ -210,20 +202,19 @@ def disk_model(
                     samp_name,
                     jnp.exp(
                         jnp.log(param.low)
-                        + log_uniform_base
-                        * (jnp.log(param.high) - jnp.log(param.low))
+                        + log_uniform_base * (jnp.log(param.high) - jnp.log(param.low))
                     ),
                 )
+
             elif param.distribution == Distribution.NORMAL:
-                normal_base = numpyro.sample(
-                    f"{samp_name}_base", dist.Uniform(0, 1)
-                )
+                normal_base = numpyro.sample(f"{samp_name}_base", dist.Uniform(0, 1))
                 param_mods[samp_name] = numpyro.deterministic(
                     samp_name,
                     truncnorm_ppf(
                         normal_base, param.loc, param.scale, param.low, param.high
                     ),
                 )
+
             elif param.distribution == Distribution.LOG_NORMAL:
                 log_normal_base = numpyro.sample(
                     f"{samp_name}_base", dist.Uniform(0, 1)
@@ -236,6 +227,33 @@ def disk_model(
                             jnp.log(param.loc),
                             jnp.log(param.scale),
                             jnp.log(param.low),
+                            jnp.log(param.high),
+                        )
+                    ),
+                )
+
+            elif param.distribution == Distribution.HALF_NORMAL:
+                half_normal_base = numpyro.sample(
+                    f"{samp_name}_base", dist.Uniform(0, 1)
+                )
+                param_mods[samp_name] = numpyro.deterministic(
+                    samp_name,
+                    trunchalfnorm_ppf(
+                        half_normal_base, param.loc, param.scale, param.high
+                    ),
+                )
+
+            elif param.distribution == Distribution.LOG_HALF_NORMAL:
+                log_half_normal_base = numpyro.sample(
+                    f"{samp_name}_base", dist.Uniform(0, 1)
+                )
+                param_mods[samp_name] = numpyro.deterministic(
+                    samp_name,
+                    jnp.exp(
+                        trunchalfnorm_ppf(
+                            log_half_normal_base,
+                            jnp.log(param.loc),
+                            jnp.log(param.scale),
                             jnp.log(param.high),
                         )
                     ),

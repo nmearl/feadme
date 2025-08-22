@@ -1,15 +1,14 @@
-from jax.scipy.stats import norm
-import jax.numpy as jnp
 from collections import namedtuple
-import numpy as np
 
+import jax
+import jax.numpy as jnp
+import numpy as np
+from jax.scipy.special import erf, erfinv
+from jax.scipy.stats import norm
 from numpyro.distributions import constraints
 from numpyro.distributions.transforms import Transform
-
-from numpyro.handlers import trace, seed
-import jax
+from numpyro.handlers import seed, trace
 from scipy import stats
-
 from scipy.optimize import minimize_scalar
 
 
@@ -26,6 +25,22 @@ def dict_to_namedtuple(name, d):
     fields = {k: dict_to_namedtuple(k.capitalize(), v) for k, v in d.items()}
     NT = namedtuple(name, fields.keys())
     return NT(**fields)
+
+
+def trunchalfnorm_ppf(q, loc, scale, upper_limit):
+    """
+    Compute the percent point function (PPF) of a truncated half-normal distribution.
+    """
+    # CDF at upper boundary
+    standardized_upper = (upper_limit - loc) / (scale * jnp.sqrt(2.0))
+    cdf_upper = erf(standardized_upper)
+    
+    # Scale the uniform sample to the truncated range
+    # Since cdf_lower = 0, this is just q * cdf_upper
+    scaled_q = q * cdf_upper
+    
+    # Apply inverse CDF
+    return loc + scale * jnp.sqrt(2.0) * erfinv(scaled_q)
 
 
 def truncnorm_ppf(q, loc, scale, lower_limit, upper_limit):
