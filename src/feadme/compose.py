@@ -7,11 +7,11 @@ import jax.numpy as jnp
 import numpy as np
 import numpyro
 import numpyro.distributions as dist
-from numpyro.handlers import reparam
 from numpyro.infer.reparam import CircularReparam
 
-from .models.disk import quad_jax_integrate
+from .models.disk import quad_jax_integrate, jax_integrate
 from .parser import Distribution, Template, Shape
+from .utils import truncnorm_ppf
 
 ERR = float(np.finfo(np.float32).tiny)
 c_cgs = const.c.cgs.value
@@ -153,9 +153,12 @@ def create_reparam_config(template: Template) -> dict:
 
     for prof in template.disk_profiles + template.line_profiles:
         for param in prof.independent:
+            samp_name = f"{prof.name}_{param.name}"
+
             if param.circular:
-                samp_name = f"{prof.name}_{param.name}_base"
-                reparam_config[samp_name] = CircularReparam()
+                reparam_config[f"{samp_name}_base"] = CircularReparam()
+            # else:  # if param.distribution not in [Distribution.NORMAL]:
+            #     reparam_config[samp_name] = TransformReparam()
 
     return reparam_config
 
@@ -169,63 +172,74 @@ def disk_model(
     """
     Main disk model function that computes the disk and line fluxes.
     """
-    reparam_config = create_reparam_config(template)
-
     # Dictionary to store all sampled parameters
     param_mods = {}
 
-    with reparam(config=reparam_config):
-        # Sample independent parameters for all profiles
-        for prof in template.disk_profiles + template.line_profiles:
-            for param in prof.independent:
-                samp_name = f"{prof.name}_{param.name}"
+    # Sample independent parameters for all profiles
+    for prof in template.disk_profiles + template.line_profiles:
+        for param in prof.independent:
+            samp_name = f"{prof.name}_{param.name}"
 
-                if param.circular:
-                    circ_base = numpyro.sample(
-                        f"{samp_name}_base",
-                        dist.VonMises(concentration=1e-3, loc=jnp.pi),
-                    )
-                    param_mods[samp_name] = numpyro.deterministic(
-                        samp_name, (circ_base % (2 * jnp.pi))
-                    )
+            if param.circular:
+                circ_x_base = numpyro.sample(
+                    f"{samp_name}_x_base",
+                    dist.Normal(0, 1)
+                )
+                circ_y_base = numpyro.sample(
+                    f"{samp_name}_y_base",
+                    dist.Normal(0, 1)
+                )
+                param_mods[samp_name] = numpyro.deterministic(
+                    samp_name, jnp.arctan2(circ_y_base, circ_x_base) % (2 * jnp.pi)
+                )
 
-                elif param.distribution == Distribution.UNIFORM:
-                    param_mods[samp_name] = numpyro.sample(
-                        samp_name, dist.Uniform(param.low, param.high)
-                    )
-                elif param.distribution == Distribution.LOG_UNIFORM:
-                    log_uniform_base = numpyro.sample(
-                        f"{samp_name}_base",
-                        dist.Uniform(jnp.log10(param.low), jnp.log10(param.high)),
-                    )
-                    param_mods[samp_name] = numpyro.deterministic(
-                        samp_name,
-                        10**log_uniform_base,
-                    )
-                elif param.distribution == Distribution.NORMAL:
-                    param_mods[samp_name] = numpyro.sample(
-                        samp_name,
-                        dist.TruncatedNormal(
-                            loc=param.loc,
-                            scale=param.scale,
-                            low=param.low,
-                            high=param.high,
-                        ),
-                    )
-                elif param.distribution == Distribution.LOG_NORMAL:
-                    log_uniform_base = numpyro.sample(
-                        f"{samp_name}_base",
-                        dist.TruncatedNormal(
-                            loc=jnp.log10(param.loc),
-                            scale=jnp.log10(param.scale),
-                            low=jnp.log10(param.low),
-                            high=jnp.log10(param.high),
-                        ),
-                    )
-                    param_mods[samp_name] = numpyro.deterministic(
-                        samp_name,
-                        10**log_uniform_base,
-                    )
+            elif param.distribution == Distribution.UNIFORM:
+                uniform_base = numpyro.sample(
+                    f"{samp_name}_base", dist.Uniform(0, 1)
+                )
+                param_mods[samp_name] = numpyro.deterministic(
+                    samp_name, param.low + uniform_base * (param.high - param.low)
+                )
+
+            elif param.distribution == Distribution.LOG_UNIFORM:
+                log_uniform_base = numpyro.sample(
+                    f"{samp_name}_base",
+                    dist.Uniform(0, 1),
+                )
+                param_mods[samp_name] = numpyro.deterministic(
+                    samp_name,
+                    jnp.exp(
+                        jnp.log(param.low)
+                        + log_uniform_base
+                        * (jnp.log(param.high) - jnp.log(param.low))
+                    ),
+                )
+            elif param.distribution == Distribution.NORMAL:
+                normal_base = numpyro.sample(
+                    f"{samp_name}_base", dist.Uniform(0, 1)
+                )
+                param_mods[samp_name] = numpyro.deterministic(
+                    samp_name,
+                    truncnorm_ppf(
+                        normal_base, param.loc, param.scale, param.low, param.high
+                    ),
+                )
+            elif param.distribution == Distribution.LOG_NORMAL:
+                log_normal_base = numpyro.sample(
+                    f"{samp_name}_base", dist.Uniform(0, 1)
+                )
+                param_mods[samp_name] = numpyro.deterministic(
+                    samp_name,
+                    jnp.exp(
+                        truncnorm_ppf(
+                            log_normal_base,
+                            jnp.log(param.loc),
+                            jnp.log(param.scale),
+                            jnp.log(param.low),
+                            jnp.log(param.high),
+                        )
+                    ),
+                )
 
     # Add fixed parameters
     for prof in template.disk_profiles + template.line_profiles:
