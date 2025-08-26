@@ -113,6 +113,15 @@ def perform_sampling(config: Config):
         f"<light-magenta>{config.sampler.num_chains}</light-magenta> chains "
         f"and <light-magenta>{config.sampler.num_samples}</light-magenta> samples."
     )
+    logger.info(
+        f"Targetting acceptance probability of <light-magenta>{config.sampler.target_accept_prob}</light-magenta> "
+        f"with max tree depth of <light-magenta>{config.sampler.max_tree_depth}</light-magenta> and a "
+        f"<light-magenta>{'dense' if config.sampler.dense_mass else 'sparse'}</light-magenta> mass matrix."
+    )
+    logger.info(
+        f"Auto reparameterization is "
+        f"<light-magenta>{'enabled' if config.sampler.auto_reparam else 'disabled'}</light-magenta>."
+    )
     # Initialize the sampler with the model and configuration
     sampler = NUTSSampler(model=disk_model, config=config)
 
@@ -198,10 +207,10 @@ def perform_sampling(config: Config):
     help="Display a progress bar during sampling.",
 )
 @click.option(
-    "--pre-fit",
+    "--auto-reparam",
     is_flag=True,
     default=False,
-    help="Run a pre-fit using the least-squares model fitter before sampling.",
+    help="Automatically create reparameterization configuration for parameters.",
 )
 def cli(
     template_path: str,
@@ -212,7 +221,7 @@ def cli(
     num_samples: int,
     num_chains: int,
     progress_bar: bool,
-    pre_fit: bool = False,
+    auto_reparam: bool = False,
 ):
     """
     Command-line interface for the `feadme` package. Fits a template to
@@ -236,20 +245,14 @@ def cli(
         Number of MCMC chains to run. Defaults to 1.
     progress_bar : bool
         Display a progress bar during sampling. Defaults to True.
-    pre_fit : bool
-        Run a pre-fit using the least-squares model fitter before sampling.
-        This initializes the template parameters based on the provided data.
+    auto_reparam : bool
+        Automatically create reparameterization configuration for parameters.
     """
     # Parse the template from JSON
     template = Template.from_json(Path(template_path))
 
     # Load the data given the template's redshift and mask
     data = load_data(data_path, template)
-
-    # Run the least-squares model fitter and update the template parameters
-    if pre_fit:
-        logger.info("Running pre-fit to initialize template parameters...")
-        template = run_pre_fit(template, template_path, data)
 
     # Create configuration object
     config = Config(
@@ -261,6 +264,7 @@ def cli(
             num_samples=num_samples,
             num_chains=num_chains,
             progress_bar=progress_bar,
+            auto_reparam=auto_reparam,
         ),
         output_path=output_path,
         template_path=template_path,
