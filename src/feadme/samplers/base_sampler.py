@@ -127,7 +127,7 @@ class BaseSampler(ABC):
 
         rng_key = jax.random.PRNGKey(0)
 
-        predictive_post = Predictive(self.model, posterior_samples=posterior_samples)(
+        predictive_post = Predictive(neutra_model, posterior_samples=posterior_samples)(
             rng_key,
             template=self.template,
             wave=self.wave,

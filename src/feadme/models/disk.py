@@ -3,19 +3,18 @@ import astropy.units as u
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
 from jax.typing import ArrayLike
-from quadax import GaussKronrodRule, quadgk
+from quadax import GaussKronrodRule, quadgk, simpson
 
 FLOAT_EPSILON = float(np.finfo(np.float32).tiny)
 ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-fixed_quadgk51 = GaussKronrodRule(order=51).integrate
-fixed_quadgk31 = GaussKronrodRule(order=41).integrate
+fixed_quadgk51 = GaussKronrodRule(order=61).integrate
+fixed_quadgk31 = GaussKronrodRule(order=61).integrate
 
-N_xi, N_phi = 50, 50
+N_xi, N_phi = 40, 80
 unit_xi = jnp.linspace(0.0, 1.0, N_xi)
 unit_phi = jnp.linspace(0.0, 1.0, N_phi)
 XI_u, PHI_u = jnp.meshgrid(unit_xi, unit_phi, indexing="ij")
@@ -23,7 +22,7 @@ XI_u, PHI_u = jnp.meshgrid(unit_xi, unit_phi, indexing="ij")
 
 def doppler_factor(
     xi: float, phi: float, inc: float, e: float, phi0: float
-) -> jnp.ndarray:
+) -> ArrayLike:
     """
     Calculate the Doppler factor for a given `xi`, `phi`, `inc`, `e`, and `phi0`.
     """
@@ -64,7 +63,7 @@ def doppler_factor(
 
 def intensity(
     xi: float, X: ArrayLike, D: float, sigma: float, q: float, nu0: float
-) -> jnp.ndarray:
+) -> ArrayLike:
     """
     `I_nu` function for the disk model, as defined in Eracleous et al. (1995).
     """
@@ -79,7 +78,7 @@ def intensity(
     return res
 
 
-def Psi(xi: float, phi: float, inc: float) -> jnp.ndarray:
+def Psi(xi: float, phi: float, inc: float) -> ArrayLike:
     """
     `Psi` function for the disk model, as defined in Eracleous et al. (1995).
     """
@@ -92,14 +91,14 @@ def Psi(xi: float, phi: float, inc: float) -> jnp.ndarray:
 def integrand(
     phi: float,
     xi_tilde: float,
-    X: jnp.ndarray | np.ndarray,
+    X: ArrayLike,
     inc: float,
     sigma: float,
     q: float,
     e: float,
     phi0: float,
     nu0: float,
-) -> jnp.ndarray:
+) -> ArrayLike:
     """
     Integrand for the double integral over `xi` and `phi`.
     """
@@ -120,14 +119,14 @@ def _inner_trap(
     log_xi: float,
     phi1: float,
     phi2: float,
-    X: jnp.ndarray | np.ndarray,
+    X: ArrayLike,
     inc: float,
     sigma: float,
     q: float,
     e: float,
     phi0: float,
     nu0: float,
-) -> jnp.ndarray:
+) -> ArrayLike:
     """
     Inner integral over `phi` for a fixed `xi`.
     """
@@ -146,20 +145,20 @@ def _inner_quad(
     log_xi: float,
     phi1: float,
     phi2: float,
-    X: jnp.ndarray | np.ndarray,
+    X: ArrayLike,
     inc: float,
     sigma: float,
     q: float,
     e: float,
     phi0: float,
     nu0: float,
-) -> jnp.ndarray:
+) -> ArrayLike:
     """
     Inner integral over `phi` for a fixed `xi`.
     """
     xi = 10**log_xi
 
-    def transformed_integrand(phi: float, *args) -> jnp.ndarray:
+    def transformed_integrand(phi: float, *args) -> ArrayLike:
         return integrand(phi, *args) * xi * jnp.log(10)
 
     return fixed_quadgk51(
@@ -173,14 +172,14 @@ def quad_jax_integrate(
     xi2: float,
     phi1: float,
     phi2: float,
-    X: jnp.ndarray | np.ndarray,
+    X: ArrayLike,
     inc: float,
     sigma: float,
     q: float,
     e: float,
     phi0: float,
     nu0: float,
-) -> jnp.ndarray:
+) -> ArrayLike:
     """
     Perform a double integral over `xi` and `phi` using Gauss-Kronrod quadrature.
     """
@@ -198,14 +197,14 @@ def jax_integrate(
     xi2: float,
     phi1: float,
     phi2: float,
-    X: jnp.ndarray | np.ndarray,
+    X: ArrayLike,
     inc: float,
     sigma: float,
     q: float,
     e: float,
     phi0: float,
     nu0: float,
-) -> jnp.ndarray:
+) -> ArrayLike:
     """
     Perform a double integral over `xi` and `phi` using trapezoidal rule.
     """
@@ -235,14 +234,14 @@ def jax_integrate_scan(
     xi2: float,
     phi1: float,
     phi2: float,
-    X: jnp.ndarray | np.ndarray,
+    X: ArrayLike,
     inc: float,
     sigma: float,
     q: float,
     e: float,
     phi0: float,
     nu0: float,
-) -> jnp.ndarray:
+) -> ArrayLike:
     """
     Memory-efficient version using jax.lax.scan for outer loop.
     """
@@ -272,14 +271,14 @@ def jax_integrate_vector(
     xi2: float,
     phi1: float,
     phi2: float,
-    X: jnp.ndarray,
+    X: ArrayLike,
     inc: float,
     sigma: float,
     q: float,
     e: float,
     phi0: float,
     nu0: float,
-) -> jnp.ndarray:
+) -> ArrayLike:
     """
     Perform a double integral over `xi` and `phi` using trapezoidal rule.
     Uses explicit vectorization.
@@ -311,6 +310,8 @@ def jax_integrate_vector(
     # First integrate over phi (axis=-1), then over xi_log (axis=-1)
     inner_integral = jnp.trapezoid(integrand_vals, x=phi, axis=-1)  # Shape: (168, N_xi)
     outer_integral = jnp.trapezoid(inner_integral, x=xi_log, axis=-1)  # Shape: (168,)
+    # inner_integral = simpson(integrand_vals, x=phi, axis=-1)  # Shape: (168, N_xi)
+    # outer_integral = simpson(inner_integral, x=xi_log, axis=-1)  # Shape: (168,)
 
     return outer_integral
 
@@ -321,14 +322,14 @@ def jax_integrate_mesh(
     xi2: float,
     phi1: float,
     phi2: float,
-    X: jnp.ndarray,
+    X: ArrayLike,
     inc: float,
     sigma: float,
     q: float,
     e: float,
     phi0: float,
     nu0: float,
-) -> jnp.ndarray:
+) -> ArrayLike:
     """
     Perform a double integral over `xi` and `phi` using trapezoidal rule.
     Generates a meshgrid while avoiding using `jax.vmap`.

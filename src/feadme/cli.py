@@ -8,7 +8,7 @@ from astropy.time import Time
 import json
 import numpy as np
 
-from .compose import disk_model
+from .compose import construct_model
 from .models.lsq import lsq_model_fitter
 from .parser import Config, Template, Data, Sampler
 from .samplers.nuts_sampler import NUTSSampler
@@ -123,7 +123,9 @@ def perform_sampling(config: Config):
         f"<light-magenta>{'enabled' if config.sampler.auto_reparam else 'disabled'}</light-magenta>."
     )
     # Initialize the sampler with the model and configuration
-    sampler = NUTSSampler(model=disk_model, config=config)
+
+    model = construct_model(template, auto_reparam=config.sampler.auto_reparam)
+    sampler = NUTSSampler(model=model, config=config)
 
     # If a results file already exists, load it instead of running the sampler
     if (Path(output_path) / "results.nc").exists():

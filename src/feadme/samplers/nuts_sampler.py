@@ -15,7 +15,6 @@ import jax.numpy as jnp
 import time
 
 from .base_sampler import BaseSampler
-from ..compose import construct_model
 
 
 logger = loguru.logger.opt(colors=True)
@@ -41,13 +40,11 @@ class NUTSSampler(BaseSampler):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
-        model = construct_model(self.template, auto_reparam=self.sampler.auto_reparam)
-
-        guide = AutoBNAFNormal(model, hidden_factors=[8, 8], num_flows=2)
-        # guide = AutoIAFNormal(model, hidden_dims=[32, 32], num_flows=2)
-        # guide = AutoMultivariateNormal(model)
+        guide = AutoBNAFNormal(self.model, hidden_factors=[8, 8], num_flows=2)
+        # guide = AutoIAFNormal(self.model, hidden_dims=[32, 32], num_flows=2)
+        # guide = AutoMultivariateNormal(self.model)
         optimizer = optim.Adam(0.003)
-        svi = SVI(model, guide, optimizer, Trace_ELBO())
+        svi = SVI(self.model, guide, optimizer, Trace_ELBO())
         svi_result = svi.run(
             svi_key,
             25_000,
@@ -72,7 +69,7 @@ class NUTSSampler(BaseSampler):
             )
 
         neutra = NeuTraReparam(guide, svi_result.params)
-        neutra_model = neutra.reparam(model)
+        neutra_model = neutra.reparam(self.model)
 
         # Initialize from VI posterior
         init_key, mcmc_key = random.split(mcmc_key)
