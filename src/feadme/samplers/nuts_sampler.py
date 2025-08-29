@@ -90,8 +90,8 @@ class NUTSSampler(BaseSampler):
 
         kernel = NUTS(
             neutra_model,
-            # init_strategy=init_to_value(values=chain_init_params),
-            init_strategy=init_to_median(),
+            init_strategy=init_to_value(values=chain_init_params),
+            # init_strategy=init_to_median(),
             target_accept_prob=self.sampler.target_accept_prob,
             max_tree_depth=self.sampler.max_tree_depth,
             dense_mass=self.sampler.dense_mass,

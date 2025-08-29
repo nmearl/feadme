@@ -4,15 +4,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
-from quadax import GaussKronrodRule, quadgk, simpson
+from quadax import GaussKronrodRule, quadgk, simpson, ClenshawCurtisRule
 
 FLOAT_EPSILON = float(np.finfo(np.float32).tiny)
 ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-fixed_quadgk51 = GaussKronrodRule(order=61).integrate
-fixed_quadgk31 = GaussKronrodRule(order=61).integrate
+fixed_quadgk51 = GaussKronrodRule(order=51).integrate
+fixed_quadgk31 = GaussKronrodRule(order=31).integrate
+fixed_quadcc32 = ClenshawCurtisRule(order=32).integrate
 
 N_xi, N_phi = 40, 80
 unit_xi = jnp.linspace(0.0, 1.0, N_xi)
@@ -161,7 +162,7 @@ def _inner_quad(
     def transformed_integrand(phi: float, *args) -> ArrayLike:
         return integrand(phi, *args) * xi * jnp.log(10)
 
-    return fixed_quadgk51(
+    return fixed_quadcc32(
         transformed_integrand, phi1, phi2, args=(xi, X, inc, sigma, q, e, phi0, nu0)
     )[0]
 
@@ -183,7 +184,7 @@ def quad_jax_integrate(
     """
     Perform a double integral over `xi` and `phi` using Gauss-Kronrod quadrature.
     """
-    return fixed_quadgk31(
+    return fixed_quadcc32(
         _inner_quad,
         jnp.log10(xi1),
         jnp.log10(xi2),
