@@ -14,7 +14,7 @@ logger.remove()
 # )
 
 logger.add(
-    sys.stderr,
+    sys.stdout,
     colorize=True,
     format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
     "<level>{level: <8}</level> | "

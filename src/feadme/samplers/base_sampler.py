@@ -123,11 +123,10 @@ class BaseSampler(ABC):
         else:
             posterior_samples = mcmc.get_samples()
 
-        neutra_model = neutra_model if neutra is not None else self.model
-
         rng_key = jax.random.PRNGKey(0)
 
-        predictive_post = Predictive(neutra_model, posterior_samples=posterior_samples)(
+        # Posterior predictive
+        predictive_post = Predictive(self.model, posterior_samples=posterior_samples)(
             rng_key,
             template=self.template,
             wave=self.wave,
@@ -143,7 +142,8 @@ class BaseSampler(ABC):
             }
         )
 
-        predictive_prior = Predictive(neutra_model, num_samples=1000)(
+        # Prior predictive
+        predictive_prior = Predictive(self.model, num_samples=1000)(
             rng_key,
             template=self.template,
             wave=self.wave,
@@ -159,10 +159,24 @@ class BaseSampler(ABC):
             }
         )
 
+        # Compute log-likelihood for each posterior sample
+        log_likelihood = Predictive(
+            self.model, 
+            posterior_samples=posterior_samples,
+            return_sites=["total_flux"]
+        )(
+            rng_key,
+            template=self.template,
+            wave=self.wave,
+            flux=self.flux,
+            flux_err=self.flux_err,
+        )
+
         idata = az.from_numpyro(
             mcmc,
             posterior_predictive=predictive_post,
             prior=predictive_prior,
+            log_likelihood=log_likelihood
         )
 
         return idata

@@ -52,6 +52,7 @@ class NUTSSampler(BaseSampler):
             wave=self.wave,
             flux=self.flux,
             flux_err=self.flux_err,
+            progress_bar=self.sampler.progress_bar,
         )
 
         # Convergence check
