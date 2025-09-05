@@ -123,6 +123,8 @@ class BaseSampler(ABC):
         else:
             posterior_samples = mcmc.get_samples()
 
+        neutra_model = neutra_model if neutra_model is not None else self.model
+
         rng_key = jax.random.PRNGKey(0)
 
         # Posterior predictive
@@ -143,7 +145,7 @@ class BaseSampler(ABC):
         )
 
         # Prior predictive
-        predictive_prior = Predictive(self.model, num_samples=1000)(
+        predictive_prior = Predictive(neutra_model, num_samples=1000)(
             rng_key,
             template=self.template,
             wave=self.wave,
