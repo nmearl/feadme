@@ -38,7 +38,7 @@ def load_data(data_path: str, template: Template) -> Data:
     )
 
     return Data.create(
-        wave=data_tab["wave"].value / (1 + template.redshift),
+        wave=data_tab["wave"].value, # / (1 + template.redshift.value),
         flux=data_tab["flux"].value,
         flux_err=data_tab["flux_err"].value,
         mask=template.mask,
@@ -214,6 +214,12 @@ def perform_sampling(config: Config):
     default=False,
     help="Automatically create reparameterization configuration for parameters.",
 )
+@click.option(
+    "--use-neutra/--no-neutra",
+    is_flag=True,
+    default=True,
+    help="Perform preprocessing with NeuTra.",
+)
 def cli(
     template_path: str,
     data_path: str,
@@ -224,6 +230,7 @@ def cli(
     num_chains: int,
     progress_bar: bool,
     auto_reparam: bool = False,
+    use_neutra: bool = True
 ):
     """
     Command-line interface for the `feadme` package. Fits a template to
@@ -249,6 +256,8 @@ def cli(
         Display a progress bar during sampling. Defaults to True.
     auto_reparam : bool
         Automatically create reparameterization configuration for parameters.
+    use_neutra : bool
+        Perform NeuTra preprocessing to improve sampling.
     """
     # Parse the template from JSON
     template = Template.from_json(Path(template_path))
@@ -267,6 +276,7 @@ def cli(
             num_chains=num_chains,
             progress_bar=progress_bar,
             auto_reparam=auto_reparam,
+            use_neutra=use_neutra,
         ),
         output_path=output_path,
         template_path=template_path,
