@@ -11,13 +11,7 @@ from numpyro.infer.reparam import CircularReparam, TransformReparam
 from numpyro.handlers import reparam
 from jax.typing import ArrayLike
 
-from .models.disk import (
-    quad_jax_integrate,
-    jax_integrate,
-    jax_integrate_scan,
-    jax_integrate_mesh,
-    jax_integrate_vector,
-)
+from .models.disk import quad_jax_integrate, jax_integrate
 from .parser import Distribution, Template, Shape, Parameter
 from .utils import truncnorm_ppf, trunchalfnorm_ppf
 
@@ -85,6 +79,7 @@ def _compute_disk_flux_vectorized(
     scale: ArrayLike,
     offset: ArrayLike,
     delta_radius: ArrayLike = jnp.array([]),
+    radius_ratio: ArrayLike = jnp.array([]),
 ) -> ArrayLike:
     """
     Compute the disk flux for multiple disk profiles in a vectorized manner.
@@ -137,7 +132,7 @@ def _compute_disk_flux_single(
     # Convert from velocity to frequency
     local_sigma = sigma * 1e5 * nu0 / c_cgs
 
-    res = quad_jax_integrate(
+    res = jax_integrate(
         inner_radius,
         outer_radius,
         0.0,
@@ -157,6 +152,9 @@ def _compute_disk_flux_single(
 
 
 def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
+    param_low = param.low
+    param_high = param.high
+
     if param.circular:
         circ_x_base = numpyro.sample(f"{samp_name}_x_base", dist.Normal(0, 1))
         circ_y_base = numpyro.sample(f"{samp_name}_y_base", dist.Normal(0, 1))
@@ -167,7 +165,7 @@ def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
     elif param.distribution == Distribution.UNIFORM:
         uniform_base = numpyro.sample(f"{samp_name}_base", dist.Uniform(0, 1))
         param_samp = numpyro.deterministic(
-            samp_name, param.low + uniform_base * (param.high - param.low)
+            samp_name, param_low + uniform_base * (param_high - param_low)
         )
 
     elif param.distribution == Distribution.LOG_UNIFORM:
@@ -177,9 +175,10 @@ def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
         )
         param_samp = numpyro.deterministic(
             samp_name,
-            jnp.exp(
-                jnp.log(param.low)
-                + log_uniform_base * (jnp.log(param.high) - jnp.log(param.low))
+            10
+            ** (
+                jnp.log10(param_low)
+                + log_uniform_base * (jnp.log10(param_high) - jnp.log10(param_low))
             ),
         )
 
@@ -187,21 +186,20 @@ def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
         normal_base = numpyro.sample(f"{samp_name}_base", dist.Uniform(0, 1))
         param_samp = numpyro.deterministic(
             samp_name,
-            truncnorm_ppf(normal_base, param.loc, param.scale, param.low, param.high),
+            truncnorm_ppf(normal_base, param.loc, param.scale, param_low, param_high),
         )
 
     elif param.distribution == Distribution.LOG_NORMAL:
         log_normal_base = numpyro.sample(f"{samp_name}_base", dist.Uniform(0, 1))
         param_samp = numpyro.deterministic(
             samp_name,
-            jnp.exp(
-                truncnorm_ppf(
-                    log_normal_base,
-                    jnp.log(param.loc),
-                    jnp.log(param.scale),
-                    jnp.log(param.low),
-                    jnp.log(param.high),
-                )
+            10
+            ** truncnorm_ppf(
+                log_normal_base,
+                jnp.log10(param_low),
+                jnp.log10(param.scale),
+                jnp.log10(param_low),
+                jnp.log10(param_high),
             ),
         )
 
@@ -209,20 +207,19 @@ def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
         half_normal_base = numpyro.sample(f"{samp_name}_base", dist.Uniform(0, 1))
         param_samp = numpyro.deterministic(
             samp_name,
-            trunchalfnorm_ppf(half_normal_base, param.loc, param.scale, param.high),
+            trunchalfnorm_ppf(half_normal_base, param.loc, param.scale, param_high),
         )
 
     elif param.distribution == Distribution.LOG_HALF_NORMAL:
         log_half_normal_base = numpyro.sample(f"{samp_name}_base", dist.Uniform(0, 1))
         param_samp = numpyro.deterministic(
             samp_name,
-            jnp.exp(
-                trunchalfnorm_ppf(
-                    log_half_normal_base,
-                    jnp.log(param.loc),
-                    jnp.log(param.scale),
-                    jnp.log(param.high),
-                )
+            10
+            ** trunchalfnorm_ppf(
+                log_half_normal_base,
+                jnp.log10(param_low),
+                jnp.log10(param.scale),
+                jnp.log10(param_high),
             ),
         )
 
@@ -329,7 +326,7 @@ def disk_model(
         for k in [
             "center",
             "inner_radius",
-            "delta_radius",
+            "radius_ratio",
             "outer_radius",
             "sigma",
             "inclination",
@@ -395,32 +392,48 @@ def disk_model(
             param_mods[samp_name] = param_samp
             line_arrs[param.name] = line_arrs[param.name].at[i].set(param_samp)
 
-    # Compute outer radius for disk profiles
+    # Enforce inner < outer radius constraint
     for i, prof in enumerate(template.disk_profiles):
         samp_name = f"{prof.name}_outer_radius"
         param_samp = numpyro.deterministic(
             samp_name,
             param_mods[f"{prof.name}_inner_radius"]
-            + param_mods[f"{prof.name}_delta_radius"],
+            * param_mods[f"{prof.name}_radius_ratio"],
         )
         param_mods[samp_name] = param_samp
         disk_arrs["outer_radius"] = disk_arrs["outer_radius"].at[i].set(param_samp)
+
+    # Enforce inner < outer radius constraint
+    # for i, prof in enumerate(template.disk_profiles):
+    #     numpyro.factor(
+    #         f"{prof.name}_radius_constraint",
+    #         jnp.where(
+    #             disk_arrs["outer_radius"][i] > disk_arrs["inner_radius"][i],
+    #             0.0,
+    #             -jnp.inf,
+    #         ),
+    #     )
 
     # Define line profile shapes
     for i, prof in enumerate(template.line_profiles):
         line_arrs["shape"] = line_arrs["shape"].at[i].set(prof.shape == Shape.GAUSSIAN)
 
     # Sample white noise with better bounds
-    white_noise = numpyro.sample(
-        "white_noise",
-        dist.Uniform(
-            template.white_noise.low,
-            template.white_noise.high,
-        ),
-    )
+    if template.white_noise.fixed:
+        white_noise = numpyro.deterministic("white_noise", template.white_noise.value)
+    else:
+        white_noise = _sample_manual_reparam("white_noise", template.white_noise)
 
-    total_disk_flux = _compute_disk_flux_vectorized(wave, **disk_arrs)
-    total_line_flux = _compute_line_flux_vectorized(wave, **line_arrs)
+    # Sample redshift
+    if template.redshift.fixed:
+        redshift = numpyro.deterministic("redshift", template.redshift.value)
+    else:
+        redshift = _sample_manual_reparam("redshift", template.redshift)
+
+    rest_wave = wave / (1 + redshift)
+
+    total_disk_flux = _compute_disk_flux_vectorized(rest_wave, **disk_arrs)
+    total_line_flux = _compute_line_flux_vectorized(rest_wave, **line_arrs)
     total_flux = total_disk_flux + total_line_flux
 
     total_error = jnp.sqrt(flux_err**2 + total_flux**2 * jnp.exp(2 * white_noise))
