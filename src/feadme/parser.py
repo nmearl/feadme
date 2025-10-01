@@ -200,10 +200,7 @@ class Profile:
         for field_name, field_value in param_kwargs.items():
             if isinstance(field_value, Parameter):
                 if field_value.shared is not None and not field_value.fixed:
-                    if field_value.shared in [p.name for p in independent]:
-                        shared.append(field_value)
-                    else:
-                        independent.append(field_value)
+                    shared.append(field_value)
 
         return cls(
             name=name,
@@ -230,7 +227,7 @@ class Profile:
 class Disk(Profile, Writable):
     center: Optional[Parameter] = None
     inner_radius: Optional[Parameter] = None
-    delta_radius: Optional[Parameter] = None
+    radius_ratio: Optional[Parameter] = None
     inclination: Optional[Parameter] = None
     sigma: Optional[Parameter] = None
     q: Optional[Parameter] = None
@@ -268,12 +265,25 @@ class Template(Writable):
     name: str = "default_template"
     disk_profiles: list[Disk] = flax.struct.field(default_factory=list)
     line_profiles: list[Line] = flax.struct.field(default_factory=list)
-    redshift: float = 0.0
+    redshift: Parameter = Parameter(
+        name="redshift", distribution=Distribution.UNIFORM, low=0, high=1.0
+    )
     obs_date: float = 0.0
     white_noise: Parameter = Parameter(
-        name="white_noise", distribution=Distribution.UNIFORM, low=0, high=0.1
+        name="white_noise", distribution=Distribution.UNIFORM, low=-10, high=1
     )
     mask: list[Mask] | None = None
+
+    @property
+    def all_parameters(self) -> list[Parameter]:
+        params = [self.redshift, self.white_noise]
+
+        for prof in self.disk_profiles + self.line_profiles:
+            params.extend(prof.independent)
+            params.extend(prof.shared)
+            params.extend(prof.fixed)
+
+        return params
 
 
 @flax.struct.dataclass
@@ -321,9 +331,10 @@ class Sampler(Writable):
     progress_bar: bool = True
     # TODO: Currently only NUTS is supported
     target_accept_prob: float = 0.9
-    max_tree_depth: int = 7
+    max_tree_depth: int = 10
     dense_mass: bool = True
     auto_reparam: bool = False
+    use_neutra: bool = True
 
     @property
     def chain_method(self) -> str:
