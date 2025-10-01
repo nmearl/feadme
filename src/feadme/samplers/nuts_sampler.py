@@ -1,42 +1,37 @@
-import arviz as az
 import loguru
-import jax.random as random
-from numpyro.infer import MCMC, NUTS, init_to_median, init_to_value
-from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO, SA
-from numpyro.infer.autoguide import (
-    AutoBNAFNormal,
-    AutoIAFNormal,
-    AutoMultivariateNormal,
-    AutoDAIS,
-)
-from numpyro.infer.reparam import NeuTraReparam
-from numpyro import optim
-import jax.numpy as jnp
 import time
 
-from .base_sampler import BaseSampler
+import jax.numpy as jnp
+import jax.random as random
+import loguru
+from jax.typing import ArrayLike
+from numpyro import optim
+from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO
+from numpyro.infer import init_to_median, init_to_value
+from numpyro.infer.autoguide import (
+    AutoBNAFNormal,
+)
+from numpyro.infer.reparam import NeuTraReparam
 
+from .base_sampler import BaseSampler
+from ..models.lsq import lsq_model_fitter
 
 logger = loguru.logger.opt(colors=True)
 
 
 class NUTSSampler(BaseSampler):
-    def get_kernel(self):
-        """
-        Create a NUTS kernel for sampling.
-        """
-        return NUTS(
-            self.model,
-            init_strategy=init_to_median(num_samples=1000),
-            target_accept_prob=self.sampler.target_accept_prob,
-            max_tree_depth=self.sampler.max_tree_depth,
-            dense_mass=self.sampler.dense_mass,
-        )
+    def get_posterior_samples(
+        self, mcmc: MCMC, neutra: NeuTraReparam = None
+    ) -> dict[str, ArrayLike]:
+        if self.sampler.use_neutra and neutra is not None:
+            zs = mcmc.get_samples()["auto_shared_latent"]
+            posterior_samples = neutra.transform_sample(zs)
+        else:
+            posterior_samples = mcmc.get_samples()
 
-    def sample(self):
-        """
-        Run the NUTS sampler to perform MCMC sampling.
-        """
+        return posterior_samples
+
+    def _initialize_neutra(self) -> tuple:
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
@@ -74,9 +69,6 @@ class NUTSSampler(BaseSampler):
 
         # Initialize from VI posterior
         init_key, mcmc_key = random.split(mcmc_key)
-        init_params = guide.sample_posterior(
-            init_key, svi_result.params, sample_shape=(self.sampler.num_chains,)
-        )
 
         if self.sampler.num_chains > 1:
             # Sample one set of parameters per chain
@@ -89,10 +81,37 @@ class NUTSSampler(BaseSampler):
             # Single chain - sample one set of parameters
             chain_init_params = guide.sample_posterior(init_key, svi_result.params)
 
+        init_strategy = init_to_value(values=chain_init_params)
+
+        return neutra_model, init_strategy, neutra
+
+    def sample(self):
+        """
+        Run the NUTS sampler to perform MCMC sampling.
+        """
+        rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
+        rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
+
+        # starters = lsq_model_fitter(self.template, self._data)
+        # init_values = {
+        #     k: v[0]
+        #     for k, v in starters.items()
+        #     if not k.endswith("_x") and not k.endswith("_y")
+        # }
+
+        model, init_strategy, neutra = (
+            self.model,
+            init_to_median(num_samples=1000),
+            # init_to_value(values=init_values),
+            None,
+        )
+
+        if self.sampler.use_neutra:
+            model, init_strategy, neutra = self._initialize_neutra()
+
         kernel = NUTS(
-            neutra_model,
-            init_strategy=init_to_value(values=chain_init_params),
-            # init_strategy=init_to_median(),
+            model,
+            init_strategy=init_strategy,
             target_accept_prob=self.sampler.target_accept_prob,
             max_tree_depth=self.sampler.max_tree_depth,
             dense_mass=self.sampler.dense_mass,
@@ -116,4 +135,8 @@ class NUTSSampler(BaseSampler):
             flux_err=self.flux_err,
         )
 
-        self._idata = self._compose_inference_data(mcmc, neutra, neutra_model)
+        posterior_samples = self.get_posterior_samples(mcmc, neutra)
+
+        self._idata = self._compose_inference_data(
+            mcmc, posterior_samples, prior_model=model
+        )

@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import loguru
 import pandas as pd
 import xarray as xr
+from jax.typing import ArrayLike
 from numpyro.handlers import reparam
 from numpyro.infer.mcmc import MCMCKernel, MCMC
 from numpyro.infer.reparam import NeuTraReparam
@@ -66,15 +67,19 @@ class BaseSampler(ABC):
         return self._model
 
     @property
-    def wave(self) -> jnp.ndarray:
+    def _data(self):
+        return self._config.data
+
+    @property
+    def wave(self) -> ArrayLike:
         return self._config.data.masked_wave
 
     @property
-    def flux(self) -> jnp.ndarray:
+    def flux(self) -> ArrayLike:
         return self._config.data.masked_flux
 
     @property
-    def flux_err(self) -> jnp.ndarray:
+    def flux_err(self) -> ArrayLike:
         return self._config.data.masked_flux_err
 
     @property
@@ -90,7 +95,7 @@ class BaseSampler(ABC):
         pass
 
     @abstractmethod
-    def get_kernel(self) -> MCMCKernel:
+    def get_posterior_samples(self, mcmc: MCMC) -> ArrayLike:
         pass
 
     def run(self):
@@ -100,7 +105,10 @@ class BaseSampler(ABC):
         self.sample()
 
     def _compose_inference_data(
-        self, mcmc: MCMC, neutra: NeuTraReparam = None, neutra_model: reparam = None
+        self,
+        mcmc: MCMC,
+        posterior_samples: dict[str, ArrayLike],
+        prior_model: Callable = None,
     ) -> az.InferenceData:
         """
         Create an ArviZ `InferenceData` object from a NumPyro MCMC run.
@@ -117,14 +125,6 @@ class BaseSampler(ABC):
             An ArviZ InferenceData object containing the posterior, posterior predictive,
             and prior samples.
         """
-        if neutra is not None:
-            zs = mcmc.get_samples()["auto_shared_latent"]
-            posterior_samples = neutra.transform_sample(zs)
-        else:
-            posterior_samples = mcmc.get_samples()
-
-        neutra_model = neutra_model if neutra_model is not None else self.model
-
         rng_key = jax.random.PRNGKey(0)
 
         # Posterior predictive
@@ -145,7 +145,7 @@ class BaseSampler(ABC):
         )
 
         # Prior predictive
-        predictive_prior = Predictive(neutra_model, num_samples=1000)(
+        predictive_prior = Predictive(prior_model, num_samples=5000)(
             rng_key,
             template=self.template,
             wave=self.wave,
@@ -163,9 +163,7 @@ class BaseSampler(ABC):
 
         # Compute log-likelihood for each posterior sample
         log_likelihood = Predictive(
-            self.model, 
-            posterior_samples=posterior_samples,
-            return_sites=["total_flux"]
+            self.model, posterior_samples=posterior_samples, return_sites=["total_flux"]
         )(
             rng_key,
             template=self.template,
@@ -178,7 +176,7 @@ class BaseSampler(ABC):
             mcmc,
             posterior_predictive=predictive_post,
             prior=predictive_prior,
-            log_likelihood=log_likelihood
+            log_likelihood=log_likelihood,
         )
 
         return idata
@@ -203,16 +201,18 @@ class BaseSampler(ABC):
         """
         if self._summary is None:
             # Compute the original summary
-            summary = az.summary(
-                self._idata,
-                stat_focus="median",
-                hdi_prob=0.68,
-                var_names=[
-                    x
-                    for x in self._idata.posterior.data_vars
-                    if x not in self._get_ignored_vars()
-                ],
-            )
+            with pd.option_context("display.precision", 10):
+                summary = az.summary(
+                    self._idata,
+                    stat_focus="median",
+                    hdi_prob=0.68,
+                    var_names=[
+                        x
+                        for x in self._idata.posterior.data_vars
+                        if x not in self._get_ignored_vars()
+                    ],
+                    round_to=10,
+                )
 
             col_stat = "hdi" if "hdi_16%" in summary.columns else "eti"
 
@@ -268,6 +268,12 @@ class BaseSampler(ABC):
             for prof in self.template.disk_profiles + self.template.line_profiles
             for param in prof.fixed
         ]
+
+        if self.template.redshift.fixed:
+            fixed_vars.append(self.template.redshift.name)
+
+        if self.template.white_noise.fixed:
+            fixed_vars.append(self.template.white_noise.name)
 
         orphaned_vars = [
             f"{prof.name}_{param.name}"
@@ -354,9 +360,15 @@ class BaseSampler(ABC):
             self._idata,
             self._config.output_path,
             ignored_vars=self._get_ignored_vars(include_shared=True),
+            log_vars=[
+                x.name for x in self.template.all_parameters if "log" in x.distribution
+            ],
         )
         plot_corner_priors(
             self._idata,
             self._config.output_path,
             ignored_vars=self._get_ignored_vars(include_shared=True),
+            log_vars=[
+                x.name for x in self.template.all_parameters if "log" in x.distribution
+            ],
         )
