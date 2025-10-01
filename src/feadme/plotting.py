@@ -95,10 +95,18 @@ def plot_model_fit(
     label : str
         A label for the plot, typically the name of the template or object being modeled.
     """
+    # Retrieve the redshift fitted value
+    redshift = (
+        summary.loc["redshift", "median"]
+        if not template.redshift.fixed
+        else template.redshift.value
+    )
+    rest_wave = wave / (1 + redshift)
+
     fig, ax = plt.subplots(layout="constrained")
 
     ax.errorbar(
-        wave, flux, yerr=flux_err, fmt="o", color="grey", zorder=-10, alpha=0.25
+        rest_wave, flux, yerr=flux_err, fmt="o", color="grey", zorder=-10, alpha=0.25
     )
 
     # Plot the posterior distributions for disk and line flux
@@ -106,7 +114,7 @@ def plot_model_fit(
         var_name = " ".join([x.capitalize() for x in var.split("_")])
         var_dist = idata.posterior_predictive[var].mean(dim=("chain",)).values
         median = np.percentile(var_dist, 50, axis=0)
-        ax.plot(wave, median, label=f"Sampled {var_name}")
+        ax.plot(rest_wave, median, label=f"Sampled {var_name}")
 
     obs_dist = (
         idata.posterior_predictive["total_flux"].stack(sample=("chain", "draw")).values
@@ -115,8 +123,8 @@ def plot_model_fit(
     lower = np.percentile(obs_dist, 16, axis=1)
     upper = np.percentile(obs_dist, 84, axis=1)
 
-    ax.plot(wave, median, label="Sampled Model Fit", color="C3")
-    ax.fill_between(wave, lower, upper, alpha=0.5, color="C3")
+    ax.plot(rest_wave, median, label="Sampled Model Fit", color="C3")
+    ax.fill_between(rest_wave, lower, upper, alpha=0.5, color="C3")
 
     # Reconstruct the model from the median of the posteriors
     fixed_vars = {
@@ -136,14 +144,13 @@ def plot_model_fit(
     param_mods.update(fixed_vars)
     param_mods.update(orphaned_vars)
 
-    new_wave = np.linspace(wave[0], wave[-1], 1000)
+    new_wave = np.linspace(rest_wave[0], rest_wave[-1], 1000)
 
     tot_flux, disk_flux, line_flux = evaluate_model(template, new_wave, param_mods)
 
     ax.plot(new_wave, tot_flux, label="Reconstructed Model", linestyle="--")
     ax.plot(new_wave, disk_flux, label="Reconstructed Disk Flux", linestyle="--")
     ax.plot(new_wave, line_flux, label="Reconstructed Line Flux", linestyle="--")
-
     ax.set_ylabel("Flux [mJy]")
     ax.set_xlabel("Wavelength [AA]")
     ax.set_title(
@@ -159,6 +166,7 @@ def plot_corner(
     idata: InferenceData,
     output_path: str | Path,
     ignored_vars: list[str] = None,
+    log_vars: list[str] = None,
 ):
     """
     Create a corner plot of the posterior distributions of the model parameters.
@@ -186,6 +194,17 @@ def plot_corner(
     # Compute quantiles
     quantiles = [0.16, 0.5, 0.84]
 
+    axes_scale = ["linear"] * len(var_names)
+
+    for i, y in enumerate(var_names):
+        for x in log_vars:
+            if x in y:
+                axes_scale[i] = "log"
+                break
+        else:
+            if "outer_radius" in y:
+                axes_scale[i] = "log"
+
     # Create the corner plot
     fig = corner.corner(
         samples,
@@ -198,10 +217,7 @@ def plot_corner(
         plot_density=True,
         plot_contours=True,
         fill_contours=True,
-        axes_scale=[
-            "log" if "vel_width" in x or "radius" in x or "sigma" in x else "linear"
-            for x in var_names
-        ],
+        axes_scale=axes_scale,
     )
 
     fig.savefig(f"{output_path}/corner_plot.png")
@@ -212,6 +228,7 @@ def plot_corner_priors(
     idata: InferenceData,
     output_path: str | Path,
     ignored_vars: list[str] = None,
+    log_vars: list[str] = None,
 ):
     """
     Create a corner plot of the prior distributions of the model parameters.
@@ -237,6 +254,17 @@ def plot_corner_priors(
     # Compute quantiles
     quantiles = [0.16, 0.5, 0.84]
 
+    axes_scale = ["linear"] * len(var_names)
+
+    for i, y in enumerate(var_names):
+        for x in log_vars:
+            if x in y:
+                axes_scale[i] = "log"
+                break
+        else:
+            if "outer_radius" in y:
+                axes_scale[i] = "log"
+
     # Create the corner plot
     fig = corner.corner(
         samples,
@@ -249,10 +277,7 @@ def plot_corner_priors(
         plot_density=True,
         plot_contours=True,
         fill_contours=True,
-        axes_scale=[
-            "log" if "vel_width" in x or "radius" in x or "sigma" in x else "linear"
-            for x in var_names
-        ],
+        axes_scale=axes_scale,
     )
 
     fig.savefig(f"{output_path}/corner_plot_priors.png")
