@@ -38,7 +38,7 @@ def load_data(data_path: str, template: Template) -> Data:
     )
 
     return Data.create(
-        wave=data_tab["wave"].value, # / (1 + template.redshift.value),
+        wave=data_tab["wave"].value,  # / (1 + template.redshift.value),
         flux=data_tab["flux"].value,
         flux_err=data_tab["flux_err"].value,
         mask=template.mask,
@@ -230,7 +230,7 @@ def cli(
     num_chains: int,
     progress_bar: bool,
     auto_reparam: bool = False,
-    use_neutra: bool = True
+    use_neutra: bool = True,
 ):
     """
     Command-line interface for the `feadme` package. Fits a template to
