@@ -11,10 +11,10 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-fixed_quad = GaussKronrodRule(order=31).integrate
-# fixed_quad = ClenshawCurtisRule(order=64).integrate
+# fixed_quad = GaussKronrodRule(order=31).integrate
+fixed_quad = ClenshawCurtisRule(order=64).integrate
 
-N_xi, N_phi = 50, 50
+N_xi, N_phi = 30, 50
 unit_xi = jnp.linspace(0.0, 1.0, N_xi)
 unit_phi = jnp.linspace(0.0, 1.0, N_phi)
 XI_u, PHI_u = jnp.meshgrid(unit_xi, unit_phi, indexing="ij")
