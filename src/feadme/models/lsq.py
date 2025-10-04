@@ -7,6 +7,8 @@ from astropy.modeling.fitting import (
     model_to_fit_params,
 )
 from astropy.modeling.models import Const1D, Shift, RedshiftScaleFactor
+from pathlib import Path
+import astropy.uncertainty as unc
 
 from ..compose import evaluate_model
 from ..parser import Template, Data
@@ -25,6 +27,8 @@ class DiskProfileModel(Fittable1DModel):
     q = Parameter()
     eccentricity = Parameter()
     apocenter = Parameter()
+    # apocenter_x = Parameter()
+    # apocenter_y = Parameter()
     scale = Parameter()
     offset = Parameter()
 
@@ -108,10 +112,7 @@ class LineProfileModel(Fittable1DModel):
 
 
 def lsq_model_fitter(
-    template: Template,
-    data: Data,
-    force_values=None,
-    show_plot=False,
+    template: Template, data: Data, force_values=None, show_plot=False, out_dir=None
 ):
     """
     Fit a least-squares model to the provided template and data.
@@ -272,7 +273,7 @@ def lsq_model_fitter(
     # Get real redshift
     fit_z = 1 / (1 + fit_mod["redshift"].z) - 1
 
-    if show_plot:
+    if out_dir is not None:
         fig, ax = plt.subplots()
 
         new_rest = np.linspace(
@@ -330,7 +331,10 @@ def lsq_model_fitter(
         )
 
         ax.legend()
-        fig.savefig(f"lsq_fit_{template.name}_{template.obs_date}.png")
+        fig.savefig(Path(out_dir or "") / "model_fit.png")
+
+        if not show_plot:
+            plt.close(fig)
 
     starters = {}
 
@@ -361,7 +365,7 @@ def lsq_model_fitter(
 
         # print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
 
-        std_scale = 5
+        std_scale = 1
 
         if samp_name in indep_params:
             if pn in ["apocenter"]:
@@ -376,7 +380,13 @@ def lsq_model_fitter(
                 starters[f"{samp_name}_x"] = (x, std_scale * xe, plb, pub)
                 starters[f"{samp_name}_y"] = (y, std_scale * ye, plb, pub)
 
-            if pn in ["inner_radius", "delta_radius", "sigma", "vel_width"]:
+            if pn in [
+                "inner_radius",
+                "delta_radius",
+                "sigma",
+                "vel_width",
+                "radius_ratio",
+            ]:
                 upv = 10**upv
                 pv = unp.nominal_values(upv)
                 pe = unp.std_devs(upv)
@@ -389,5 +399,33 @@ def lsq_model_fitter(
                 pe = 1
 
             starters[samp_name] = (pv, pe * std_scale, plb, pub)
+
+    for prof in template.disk_profiles:
+        starters[f"{prof.name}_outer_radius"] = (
+            starters[f"{prof.name}_inner_radius"][0]
+            * starters[f"{prof.name}_radius_ratio"][0],
+            0,
+            1e6,
+        )
+
+        if False:
+            radius_ratio_dist = unc.normal(
+                starters[f"{prof.name}_radius_ratio"][0],
+                std=starters[f"{prof.name}_radius_ratio"][1],
+                n_samples=10000,
+            )
+
+            inner_radius_dist = unc.normal(
+                starters[f"{prof.name}_inner_radius"][0],
+                std=starters[f"{prof.name}_inner_radius"][1],
+                n_samples=10000,
+            )
+
+            starters[f"{prof.name}_outer_radius"] = (
+                (inner_radius_dist * radius_ratio_dist).pdf_median(),
+                (inner_radius_dist * radius_ratio_dist).pdf_std(),
+                0,
+                1e6,
+            )
 
     return starters
