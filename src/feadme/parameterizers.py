@@ -35,9 +35,6 @@ def _sample_no_reparam(samp_name: str, param: Parameter) -> ArrayLike:
         param_samp = numpyro.sample(samp_name, dist.LogUniform(param.low, param.high))
 
     elif param.distribution == Distribution.NORMAL:
-        # low_std = (param.low - param.loc) / param.scale
-        # high_std = (param.high - param.loc) / param.scale
-
         param_samp = numpyro.sample(
             samp_name,
             dist.TruncatedNormal(
@@ -46,38 +43,45 @@ def _sample_no_reparam(samp_name: str, param: Parameter) -> ArrayLike:
         )
 
     elif param.distribution == Distribution.LOG_NORMAL:
-        low_std = (jnp.log(param.low) - jnp.log(param.loc)) / jnp.log(param.scale)
-        high_std = (jnp.log(param.high) - jnp.log(param.loc)) / jnp.log(param.scale)
-
         param_samp = numpyro.sample(
             samp_name,
             dist.TransformedDistribution(
-                dist.TruncatedNormal(0, 1, low=low_std, high=high_std),
+                dist.TruncatedNormal(
+                    jnp.log(param.loc),
+                    jnp.log(param.scale),
+                    low=jnp.log(param.low),
+                    high=jnp.log(param.high),
+                ),
+                dist.transforms.ExpTransform(),
+            ),
+        )
+
+    elif param.distribution == Distribution.HALF_NORMAL:
+        param_samp = numpyro.sample(
+            samp_name,
+            dist.TransformedDistribution(
+                dist.TruncatedDistribution(
+                    dist.Normal(0, param.scale),
+                    low=0,
+                    high=param.high - param.low,
+                ),
+                dist.transforms.AffineTransform(loc=param.low, scale=1.0),
+            ),
+        )
+
+    elif param.distribution == Distribution.LOG_HALF_NORMAL:
+        param_samp = numpyro.sample(
+            samp_name,
+            dist.TransformedDistribution(
+                dist.TruncatedDistribution(
+                    dist.Normal(0, jnp.log(param.scale)),
+                    low=0,
+                    high=jnp.log(param.high) - jnp.log(param.low),
+                ),
                 [
-                    dist.transforms.AffineTransform(
-                        loc=jnp.log(param.loc), scale=jnp.log(param.scale)
-                    ),
+                    dist.transforms.AffineTransform(loc=jnp.log(param.low), scale=1.0),
                     dist.transforms.ExpTransform(),
                 ],
-            ),
-        )
-    elif param.distribution == Distribution.HALF_NORMAL:
-        # high_std = (param.high - param.low) / param.scale
-
-        param_samp = numpyro.sample(
-            samp_name,
-            dist.TruncatedDistribution(
-                dist.HalfNormal(param.scale), low=param.low, high=param.high
-            ),
-        )
-    elif param.distribution == Distribution.LOG_HALF_NORMAL:
-        # high_std = (jnp.log(param.high) - jnp.log(param.low)) / jnp.log(param.scale)
-
-        param_samp = numpyro.sample(
-            samp_name,
-            dist.TransformedDistribution(
-                dist.HalfNormal(jnp.log(param.scale)),
-                dist.transforms.ExpTransform(),
             ),
         )
 
