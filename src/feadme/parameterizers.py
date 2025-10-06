@@ -10,10 +10,11 @@ import numpyro.distributions as dist
 from numpyro.infer.reparam import CircularReparam, TransformReparam
 from numpyro.handlers import reparam
 from jax.typing import ArrayLike
+from jax.scipy.special import erf, erfinv
+from jax.scipy.stats import norm
 
 from .models.disk import quad_jax_integrate, jax_integrate
 from .parser import Distribution, Template, Shape, Parameter
-from .utils import truncnorm_ppf, trunchalfnorm_ppf
 
 ERR = float(np.finfo(np.float32).tiny)
 c_cgs = const.c.cgs.value
@@ -88,6 +89,37 @@ def _sample_no_reparam(samp_name: str, param: Parameter) -> ArrayLike:
     return param_samp
 
 
+def trunchalfnorm_ppf(q, loc, scale, upper_limit):
+    """
+    Compute the percent point function (PPF) of a truncated half-normal distribution.
+    """
+    # CDF at upper boundary
+    standardized_upper = (upper_limit - loc) / (scale * jnp.sqrt(2.0))
+    cdf_upper = erf(standardized_upper)
+
+    # Scale the uniform sample to the truncated range
+    # Since cdf_lower = 0, this is just q * cdf_upper
+    scaled_q = q * cdf_upper
+
+    # Apply inverse CDF
+    return loc + scale * jnp.sqrt(2.0) * erfinv(scaled_q)
+
+
+def truncnorm_ppf(q, loc, scale, lower_limit, upper_limit):
+    """
+    Compute the percent point function (PPF) of a truncated normal distribution.
+    """
+    a = (lower_limit - loc) / scale
+    b = (upper_limit - loc) / scale
+
+    # Compute CDF bounds
+    cdf_a = norm.cdf(a)
+    cdf_b = norm.cdf(b)
+
+    # Compute the truncated normal PPF
+    return norm.ppf(cdf_a + q * (cdf_b - cdf_a)) * scale + loc
+
+
 def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
     param_low = param.low
     param_high = param.high
@@ -112,10 +144,9 @@ def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
         )
         param_samp = numpyro.deterministic(
             samp_name,
-            10
-            ** (
-                jnp.log10(param_low)
-                + log_uniform_base * (jnp.log10(param_high) - jnp.log10(param_low))
+            jnp.exp(
+                jnp.log(param_low)
+                + log_uniform_base * (jnp.log(param_high) - jnp.log(param_low))
             ),
         )
 
@@ -130,13 +161,14 @@ def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
         log_normal_base = numpyro.sample(f"{samp_name}_base", dist.Uniform(0, 1))
         param_samp = numpyro.deterministic(
             samp_name,
-            10
-            ** truncnorm_ppf(
-                log_normal_base,
-                jnp.log10(param_low),
-                jnp.log10(param.scale),
-                jnp.log10(param_low),
-                jnp.log10(param_high),
+            jnp.exp(
+                truncnorm_ppf(
+                    log_normal_base,
+                    jnp.log(param.loc),
+                    jnp.log(param.scale),
+                    jnp.log(param_low),
+                    jnp.log(param_high),
+                )
             ),
         )
 
@@ -144,19 +176,20 @@ def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
         half_normal_base = numpyro.sample(f"{samp_name}_base", dist.Uniform(0, 1))
         param_samp = numpyro.deterministic(
             samp_name,
-            trunchalfnorm_ppf(half_normal_base, param.loc, param.scale, param_high),
+            trunchalfnorm_ppf(half_normal_base, param.low, param.scale, param_high),
         )
 
     elif param.distribution == Distribution.LOG_HALF_NORMAL:
         log_half_normal_base = numpyro.sample(f"{samp_name}_base", dist.Uniform(0, 1))
         param_samp = numpyro.deterministic(
             samp_name,
-            10
-            ** trunchalfnorm_ppf(
-                log_half_normal_base,
-                jnp.log10(param_low),
-                jnp.log10(param.scale),
-                jnp.log10(param_high),
+            jnp.exp(
+                trunchalfnorm_ppf(
+                    log_half_normal_base,
+                    jnp.log(param_low),
+                    jnp.log(param.scale),
+                    jnp.log(param_high),
+                )
             ),
         )
 

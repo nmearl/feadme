@@ -13,8 +13,7 @@ from jax.typing import ArrayLike
 
 from .models.disk import quad_jax_integrate, jax_integrate
 from .parser import Distribution, Template, Shape, Parameter
-from .utils import truncnorm_ppf, trunchalfnorm_ppf
-from .parameterizers import _sample_no_reparam as sample_reparam
+from .parameterizers import _sample_manual_reparam as sample_reparam
 from .parameterizers import create_reparam_config
 
 ERR = float(np.finfo(np.float32).tiny)
