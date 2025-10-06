@@ -27,37 +27,6 @@ def dict_to_namedtuple(name, d):
     return NT(**fields)
 
 
-def trunchalfnorm_ppf(q, loc, scale, upper_limit):
-    """
-    Compute the percent point function (PPF) of a truncated half-normal distribution.
-    """
-    # CDF at upper boundary
-    standardized_upper = (upper_limit - loc) / (scale * jnp.sqrt(2.0))
-    cdf_upper = erf(standardized_upper)
-    
-    # Scale the uniform sample to the truncated range
-    # Since cdf_lower = 0, this is just q * cdf_upper
-    scaled_q = q * cdf_upper
-    
-    # Apply inverse CDF
-    return loc + scale * jnp.sqrt(2.0) * erfinv(scaled_q)
-
-
-def truncnorm_ppf(q, loc, scale, lower_limit, upper_limit):
-    """
-    Compute the percent point function (PPF) of a truncated normal distribution.
-    """
-    a = (lower_limit - loc) / scale
-    b = (upper_limit - loc) / scale
-
-    # Compute CDF bounds
-    cdf_a = norm.cdf(a)
-    cdf_b = norm.cdf(b)
-
-    # Compute the truncated normal PPF
-    return norm.ppf(cdf_a + q * (cdf_b - cdf_a)) * scale + loc
-
-
 class BaseTenTransform(Transform):
     sign = 1
 
