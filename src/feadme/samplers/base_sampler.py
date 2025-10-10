@@ -259,6 +259,17 @@ class BaseSampler(ABC):
 
         return self._summary
 
+    def _get_divergences(self) -> tuple[int, float]:
+        # Access sample statistics
+        sample_stats = self._idata.sample_stats
+
+        # Check divergences
+        divergences = sample_stats["diverging"]
+        num_divergences = divergences.sum().values
+        divergence_rate = 100 * num_divergences / divergences.size
+
+        return num_divergences, divergence_rate
+
     def _get_ignored_vars(self, include_shared=False) -> list[str]:
         """
         Get a list of variables to ignore in the pair plot and summary.

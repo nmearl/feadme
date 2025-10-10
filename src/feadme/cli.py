@@ -145,6 +145,10 @@ def perform_sampling(config: Config):
         logger.info("Sampling completed.")
 
     logger.info("Displaying sampler results:\n" + sampler.summary.to_markdown())
+    logger.info(
+        f"Total divergences: {sampler._get_divergences()[0]} | "
+        f"Rate: {sampler._get_divergences()[1]:.4f}%"
+    )
     sampler.write_results()
 
     logger.info("Generating plots...")
