@@ -331,7 +331,7 @@ def lsq_model_fitter(
         )
 
         ax.legend()
-        fig.savefig(Path(out_dir or "") / "model_fit.png")
+        fig.savefig(Path(out_dir or "") / "lsq_model_fit.png")
 
         if not show_plot:
             plt.close(fig)
@@ -377,8 +377,8 @@ def lsq_model_fitter(
                 y = unp.nominal_values(uy)
                 ye = unp.std_devs(uy)
 
-                starters[f"{samp_name}_x"] = (x, std_scale * xe, plb, pub)
-                starters[f"{samp_name}_y"] = (y, std_scale * ye, plb, pub)
+                starters[f"{samp_name}_x_base"] = (x, std_scale * xe, plb, pub)
+                starters[f"{samp_name}_y_base"] = (y, std_scale * ye, plb, pub)
 
             if pn in [
                 "inner_radius",

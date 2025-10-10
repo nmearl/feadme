@@ -67,7 +67,7 @@ def run_pre_fit(template: Template, template_path: str, data: Data) -> Template:
     with open(Path(template_path), "r") as f:
         template_dict = json.load(f)
 
-    starters = lsq_model_fitter(template, data, show_plot=False)
+    starters = lsq_model_fitter(template, data)
 
     for dprof in template_dict["disk_profiles"] + template_dict["line_profiles"]:
         for _, dparam in dprof.items():
@@ -80,14 +80,9 @@ def run_pre_fit(template: Template, template_path: str, data: Data) -> Template:
                 dparam["loc"] = starters[dname][0].item()
                 dparam["scale"] = (dparam["high"] - dparam["low"]) / 2
 
-                if "log" in dparam["distribution"]:
-                    dparam["scale"] = 10 ** (
-                        (np.log10(dparam["high"]) - np.log10(dparam["low"])) / 2
-                    )
-
-                if dparam["distribution"] == "log_uniform":
+                if dparam["distribution"] in ["log_uniform", "log_half_normal"]:
                     dparam["distribution"] = "log_normal"
-                elif dparam["distribution"] == "uniform":
+                elif dparam["distribution"] in ["uniform", "half_normal"]:
                     dparam["distribution"] = "normal"
 
     return Template.from_dict(template_dict)
@@ -265,6 +260,9 @@ def cli(
     """
     # Parse the template from JSON
     template = Template.from_json(Path(template_path))
+
+    # Run pre-fit to initialize parameters
+    # template = run_pre_fit(template, template_path, load_data(data_path, template))
 
     # Load the data given the template's redshift and mask
     data = load_data(data_path, template)
