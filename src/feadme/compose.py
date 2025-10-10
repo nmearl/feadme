@@ -236,7 +236,7 @@ def disk_model(
             param_mods[samp_name] = param_samp
             line_arrs[param.name] = line_arrs[param.name].at[i].set(param_samp)
 
-    # Enforce inner < outer radius constraint
+    # Define outer radius from inner radius and ratio
     for i, prof in enumerate(template.disk_profiles):
         samp_name = f"{prof.name}_outer_radius"
         param_samp = numpyro.deterministic(
