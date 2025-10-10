@@ -63,6 +63,27 @@ def plot_hdi(
     plt.close(fig)
 
 
+def plot_trace(
+    idata: InferenceData,
+    output_path: str | Path,
+    ignored_vars: list[str] = None,
+):
+    """
+    Plot the trace of the MCMC sampling.
+
+    Parameters
+    ----------
+    idata : InferenceData
+        The inference data containing the posterior samples.
+    output_path : str or Path
+        The path where the trace plot will be saved.
+    """
+    var_names = [var for var in idata.posterior.data_vars if var not in ignored_vars]
+    az.plot_trace(idata, var_names=var_names)
+    plt.savefig(f"{output_path}/trace_plot.png")
+    plt.close()
+
+
 def plot_model_fit(
     idata: InferenceData,
     summary: pd.DataFrame,
@@ -103,10 +124,14 @@ def plot_model_fit(
     )
     rest_wave = wave / (1 + redshift)
 
+    # Retrieve additional white noise
+    white_noise = summary.loc["white_noise", "median"]
+    total_error = jnp.sqrt(flux_err**2 + flux**2 * jnp.exp(2 * white_noise))
+
     fig, ax = plt.subplots(layout="constrained")
 
     ax.errorbar(
-        rest_wave, flux, yerr=flux_err, fmt="o", color="grey", zorder=-10, alpha=0.25
+        rest_wave, flux, yerr=total_error, fmt="o", color="grey", zorder=-10, alpha=0.25
     )
 
     # Plot the posterior distributions for disk and line flux

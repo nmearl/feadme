@@ -16,7 +16,13 @@ from numpyro.infer.reparam import NeuTraReparam
 from numpyro.infer.util import Predictive
 
 from ..parser import Config, Sampler, Template
-from ..plotting import plot_hdi, plot_model_fit, plot_corner, plot_corner_priors
+from ..plotting import (
+    plot_hdi,
+    plot_model_fit,
+    plot_corner,
+    plot_corner_priors,
+    plot_trace,
+)
 from ..utils import parse_circular_parameters
 
 logger = loguru.logger.opt(colors=True)
@@ -382,4 +388,9 @@ class BaseSampler(ABC):
             log_vars=[
                 x.name for x in self.template.all_parameters if "log" in x.distribution
             ],
+        )
+        plot_trace(
+            self._idata,
+            self._config.output_path,
+            ignored_vars=self._get_ignored_vars(include_shared=True),
         )

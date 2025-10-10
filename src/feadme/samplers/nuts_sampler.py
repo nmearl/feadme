@@ -6,10 +6,13 @@ import jax.random as random
 import loguru
 from jax.typing import ArrayLike
 from numpyro import optim
-from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO
+from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO, HMC
 from numpyro.infer import init_to_median, init_to_value
 from numpyro.infer.autoguide import (
     AutoBNAFNormal,
+    AutoIAFNormal,
+    AutoMultivariateNormal,
+    AutoLaplaceApproximation,
 )
 from numpyro.infer.reparam import NeuTraReparam
 
@@ -35,9 +38,10 @@ class NUTSSampler(BaseSampler):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
-        guide = AutoBNAFNormal(self.model, hidden_factors=[8, 8], num_flows=2)
+        guide = AutoBNAFNormal(self.model, hidden_factors=[16, 16, 8], num_flows=4)
         # guide = AutoIAFNormal(self.model, hidden_dims=[32, 32], num_flows=2)
         # guide = AutoMultivariateNormal(self.model)
+        # guide = AutoLaplaceApproximation(self.model)
         optimizer = optim.Adam(0.003)
         svi = SVI(self.model, guide, optimizer, Trace_ELBO())
         svi_result = svi.run(
@@ -92,12 +96,12 @@ class NUTSSampler(BaseSampler):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
-        # starters = lsq_model_fitter(self.template, self._data)
-        # init_values = {
-        #     k: v[0]
-        #     for k, v in starters.items()
-        #     if not k.endswith("_x") and not k.endswith("_y")
-        # }
+        starters = lsq_model_fitter(
+            self.template,
+            self._data,
+            out_dir=f"{self._config.output_path}",
+        )
+        # init_values = {k: v[0] for k, v in starters.items()}
 
         model, init_strategy, neutra = (
             self.model,
