@@ -428,4 +428,4 @@ def lsq_model_fitter(
                 1e6,
             )
 
-    return starters
+    return starters, rest_wave / (1 + fit_z), fit_mod(rest_wave), fit_mod
