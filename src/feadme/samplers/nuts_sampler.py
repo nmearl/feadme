@@ -38,7 +38,7 @@ class NUTSSampler(BaseSampler):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
-        guide = AutoBNAFNormal(self.model, hidden_factors=[16, 16, 8], num_flows=4)
+        guide = AutoBNAFNormal(self.model, hidden_factors=[8, 8], num_flows=2)
         # guide = AutoIAFNormal(self.model, hidden_dims=[32, 32], num_flows=2)
         # guide = AutoMultivariateNormal(self.model)
         # guide = AutoLaplaceApproximation(self.model)
@@ -96,7 +96,7 @@ class NUTSSampler(BaseSampler):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
-        starters = lsq_model_fitter(
+        starters, _, _, _ = lsq_model_fitter(
             self.template,
             self._data,
             out_dir=f"{self._config.output_path}",
