@@ -120,80 +120,50 @@ def truncnorm_ppf(q, loc, scale, lower_limit, upper_limit):
     return norm.ppf(cdf_a + q * (cdf_b - cdf_a)) * scale + loc
 
 
-def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
-    param_low = param.low
-    param_high = param.high
+def _sample_manual_reparam(samp_name: str, param: Parameter):
+    low, high = param.low, param.high
 
     if param.circular:
-        circ_x_base = numpyro.sample(f"{samp_name}_x_base", dist.Normal(0, 1))
-        circ_y_base = numpyro.sample(f"{samp_name}_y_base", dist.Normal(0, 1))
-        param_samp = numpyro.deterministic(
-            samp_name, jnp.arctan2(circ_y_base, circ_x_base) % (2 * jnp.pi)
-        )
+        x = numpyro.sample(f"{samp_name}_x_base", dist.Normal(0.0, 1.0))
+        y = numpyro.sample(f"{samp_name}_y_base", dist.Normal(0.0, 1.0))
+        theta_raw = jnp.arctan2(y, x)
+        theta = (theta_raw - low) % (high - low) + low
+        return numpyro.deterministic(samp_name, theta)
 
-    elif param.distribution == Distribution.UNIFORM:
-        uniform_base = numpyro.sample(f"{samp_name}_base", dist.Uniform(0, 1))
-        param_samp = numpyro.deterministic(
-            samp_name, param_low + uniform_base * (param_high - param_low)
-        )
+    # Scalar base
+    # u = numpyro.sample(f"{samp_name}_base", dist.Uniform(0.0, 1.0))
+    z = numpyro.sample(f"{samp_name}_base", dist.Normal(0.0, 1.0))
+    # u = jax.nn.sigmoid(z)
+    u = norm.cdf(z)
+
+    if param.distribution == Distribution.UNIFORM:
+        val = low + u * (high - low)
 
     elif param.distribution == Distribution.LOG_UNIFORM:
-        log_uniform_base = numpyro.sample(
-            f"{samp_name}_base",
-            dist.Uniform(0, 1),
-        )
-        param_samp = numpyro.deterministic(
-            samp_name,
-            jnp.exp(
-                jnp.log(param_low)
-                + log_uniform_base * (jnp.log(param_high) - jnp.log(param_low))
-            ),
-        )
+        val = jnp.exp(jnp.log(low) + u * (jnp.log(high) - jnp.log(low)))
 
     elif param.distribution == Distribution.NORMAL:
-        normal_base = numpyro.sample(f"{samp_name}_base", dist.Uniform(0, 1))
-        param_samp = numpyro.deterministic(
-            samp_name,
-            truncnorm_ppf(normal_base, param.loc, param.scale, param_low, param_high),
-        )
+        val = truncnorm_ppf(u, param.loc, param.scale, low, high)
 
     elif param.distribution == Distribution.LOG_NORMAL:
-        log_normal_base = numpyro.sample(f"{samp_name}_base", dist.Uniform(0, 1))
-        param_samp = numpyro.deterministic(
-            samp_name,
-            jnp.exp(
-                truncnorm_ppf(
-                    log_normal_base,
-                    jnp.log(param.loc),
-                    jnp.log(param.scale),
-                    jnp.log(param_low),
-                    jnp.log(param_high),
-                )
-            ),
+        y = truncnorm_ppf(
+            u, jnp.log(param.loc), jnp.log(param.scale), jnp.log(low), jnp.log(high)
         )
+        val = jnp.exp(y)
 
     elif param.distribution == Distribution.HALF_NORMAL:
-        half_normal_base = numpyro.sample(f"{samp_name}_base", dist.Uniform(0, 1))
-        param_samp = numpyro.deterministic(
-            samp_name,
-            trunchalfnorm_ppf(half_normal_base, param.low, param.scale, param_high),
-        )
+        val = trunchalfnorm_ppf(u, loc=low, scale=param.scale, upper_limit=high)
 
     elif param.distribution == Distribution.LOG_HALF_NORMAL:
-        log_half_normal_base = numpyro.sample(f"{samp_name}_base", dist.Uniform(0, 1))
-        param_samp = numpyro.deterministic(
-            samp_name,
-            jnp.exp(
-                trunchalfnorm_ppf(
-                    log_half_normal_base,
-                    jnp.log(param_low),
-                    jnp.log(param.scale),
-                    jnp.log(param_high),
-                )
-            ),
-        )
+        mu = jnp.log(low)
+        sigma = jnp.log(param.scale)
+        y = trunchalfnorm_ppf(u, loc=mu, scale=sigma, upper_limit=jnp.log(high))
+        val = jnp.exp(y)
 
-    return param_samp
+    else:
+        raise ValueError(f"Unsupported distribution: {param.distribution}")
+
+    return numpyro.deterministic(samp_name, val)
 
 
 def create_reparam_config(template: Template) -> dict:
