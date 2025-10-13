@@ -142,5 +142,5 @@ class NUTSSampler(BaseSampler):
         posterior_samples = self.get_posterior_samples(mcmc, neutra)
 
         self._idata = self._compose_inference_data(
-            mcmc, posterior_samples, prior_model=model
+            mcmc, posterior_samples, prior_model=self._prior_model
         )
