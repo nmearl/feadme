@@ -67,7 +67,7 @@ def run_pre_fit(template: Template, template_path: str, data: Data) -> Template:
     with open(Path(template_path), "r") as f:
         template_dict = json.load(f)
 
-    starters = lsq_model_fitter(template, data)
+    starters, _, _, _ = lsq_model_fitter(template, data)
 
     for dprof in template_dict["disk_profiles"] + template_dict["line_profiles"]:
         for _, dparam in dprof.items():
@@ -77,8 +77,18 @@ def run_pre_fit(template: Template, template_path: str, data: Data) -> Template:
             dname = f"{dprof['name']}_{dparam['name']}"
 
             if dname in starters:
+                high_lim = dparam["high"]
+                low_lim = dparam["low"]
+
+                if "log" in dparam["distribution"]:
+                    scale = (
+                        10 ** ((np.log10(high_lim) - np.log10(low_lim)) / 4)
+                    ).item()
+                else:
+                    scale = (high_lim - low_lim) / 4
+
                 dparam["loc"] = starters[dname][0].item()
-                dparam["scale"] = (dparam["high"] - dparam["low"]) / 2
+                dparam["scale"] = scale
 
                 if dparam["distribution"] in ["log_uniform", "log_half_normal"]:
                     dparam["distribution"] = "log_normal"
@@ -120,7 +130,8 @@ def perform_sampling(config: Config):
     # Initialize the sampler with the model and configuration
 
     model = construct_model(template, auto_reparam=config.sampler.auto_reparam)
-    sampler = NUTSSampler(model=model, config=config)
+    prior_model = construct_model(template, auto_reparam=False)
+    sampler = NUTSSampler(model=model, config=config, prior_model=prior_model)
 
     # If a results file already exists, load it instead of running the sampler
     if (Path(output_path) / "results.nc").exists():
@@ -262,7 +273,7 @@ def cli(
     template = Template.from_json(Path(template_path))
 
     # Run pre-fit to initialize parameters
-    # template = run_pre_fit(template, template_path, load_data(data_path, template))
+    template = run_pre_fit(template, template_path, load_data(data_path, template))
 
     # Load the data given the template's redshift and mask
     data = load_data(data_path, template)
