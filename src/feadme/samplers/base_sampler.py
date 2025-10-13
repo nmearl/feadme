@@ -52,7 +52,7 @@ class SamplerResult:
 
 
 class BaseSampler(ABC):
-    def __init__(self, model: Callable, config: Config):
+    def __init__(self, model: Callable, config: Config, prior_model: Callable = None):
         """
         Base class for samplers.
 
@@ -65,6 +65,7 @@ class BaseSampler(ABC):
         """
         self._model = model
         self._config = config
+        self._prior_model = prior_model
         self._idata = None
         self._summary = None
 
@@ -151,21 +152,25 @@ class BaseSampler(ABC):
         )
 
         # Prior predictive
-        predictive_prior = Predictive(prior_model, num_samples=5000)(
-            rng_key,
-            template=self.template,
-            wave=self.wave,
-            flux=None,
-            flux_err=self.flux_err,
-        )
+        try:
+            predictive_prior = Predictive(prior_model, num_samples=5000)(
+                rng_key,
+                template=self.template,
+                wave=self.wave,
+                flux=None,
+                flux_err=self.flux_err,
+            )
 
-        predictive_prior.update(
-            {
-                k: jnp.zeros_like(v)
-                for k, v in posterior_samples.items()
-                if k not in predictive_prior
-            }
-        )
+            predictive_prior.update(
+                {
+                    k: jnp.zeros_like(v)
+                    for k, v in posterior_samples.items()
+                    if k not in predictive_prior
+                }
+            )
+        except:
+            predictive_prior = None
+            logger.warning("Prior predictive sampling failed.")
 
         # Compute log-likelihood for each posterior sample
         log_likelihood = Predictive(
@@ -381,14 +386,21 @@ class BaseSampler(ABC):
                 x.name for x in self.template.all_parameters if "log" in x.distribution
             ],
         )
-        plot_corner_priors(
-            self._idata,
-            self._config.output_path,
-            ignored_vars=self._get_ignored_vars(include_shared=True),
-            log_vars=[
-                x.name for x in self.template.all_parameters if "log" in x.distribution
-            ],
-        )
+
+        try:
+            plot_corner_priors(
+                self._idata,
+                self._config.output_path,
+                ignored_vars=self._get_ignored_vars(include_shared=True),
+                log_vars=[
+                    x.name
+                    for x in self.template.all_parameters
+                    if "log" in x.distribution
+                ],
+            )
+        except:
+            logger.warning("Prior corner plot failed.")
+
         plot_trace(
             self._idata,
             self._config.output_path,
