@@ -333,8 +333,8 @@ class Sampler(Writable):
     target_accept_prob: float = 0.9
     max_tree_depth: int = 10
     dense_mass: bool = True
-    auto_reparam: bool = False
-    use_neutra: bool = True
+    use_prefit: bool = True
+    use_neutra: bool = False
 
     @property
     def chain_method(self) -> str:
