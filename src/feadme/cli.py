@@ -82,10 +82,10 @@ def run_pre_fit(template: Template, template_path: str, data: Data) -> Template:
 
                 if "log" in dparam["distribution"]:
                     scale = (
-                        10 ** ((np.log10(high_lim) - np.log10(low_lim)) / 4)
+                        10 ** ((np.log10(high_lim) - np.log10(low_lim)) / 6)
                     ).item()
                 else:
-                    scale = (high_lim - low_lim) / 4
+                    scale = (high_lim - low_lim) / 6
 
                 dparam["loc"] = starters[dname][0].item()
                 dparam["scale"] = scale
@@ -123,13 +123,9 @@ def perform_sampling(config: Config):
         f"with max tree depth of <light-magenta>{config.sampler.max_tree_depth}</light-magenta> and a "
         f"<light-magenta>{'dense' if config.sampler.dense_mass else 'sparse'}</light-magenta> mass matrix."
     )
-    logger.info(
-        f"Auto reparameterization is "
-        f"<light-magenta>{'enabled' if config.sampler.auto_reparam else 'disabled'}</light-magenta>."
-    )
-    # Initialize the sampler with the model and configuration
 
-    model = construct_model(template, auto_reparam=config.sampler.auto_reparam)
+    # Initialize the sampler with the model and configuration
+    model = construct_model(template, auto_reparam=config.sampler.use_prefit)
     prior_model = construct_model(template, auto_reparam=False)
     sampler = NUTSSampler(model=model, config=config, prior_model=prior_model)
 
@@ -219,15 +215,15 @@ def perform_sampling(config: Config):
     help="Display a progress bar during sampling.",
 )
 @click.option(
-    "--auto-reparam",
+    "--use-prefit/--no-prefit",
     is_flag=True,
-    default=False,
-    help="Automatically create reparameterization configuration for parameters.",
+    default=True,
+    help="Perform LSQ pre-fit to initialize parameters.",
 )
 @click.option(
     "--use-neutra/--no-neutra",
     is_flag=True,
-    default=True,
+    default=False,
     help="Perform preprocessing with NeuTra.",
 )
 def cli(
@@ -239,8 +235,8 @@ def cli(
     num_samples: int,
     num_chains: int,
     progress_bar: bool,
-    auto_reparam: bool = False,
-    use_neutra: bool = True,
+    use_prefit: bool = True,
+    use_neutra: bool = False,
 ):
     """
     Command-line interface for the `feadme` package. Fits a template to
@@ -273,7 +269,9 @@ def cli(
     template = Template.from_json(Path(template_path))
 
     # Run pre-fit to initialize parameters
-    template = run_pre_fit(template, template_path, load_data(data_path, template))
+    if use_prefit:
+        logger.info("Running pre-fit to initialize parameters...")
+        template = run_pre_fit(template, template_path, load_data(data_path, template))
 
     # Load the data given the template's redshift and mask
     data = load_data(data_path, template)
@@ -288,7 +286,7 @@ def cli(
             num_samples=num_samples,
             num_chains=num_chains,
             progress_bar=progress_bar,
-            auto_reparam=auto_reparam,
+            use_prefit=use_prefit,
             use_neutra=use_neutra,
         ),
         output_path=output_path,
