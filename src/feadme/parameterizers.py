@@ -124,10 +124,12 @@ def _sample_manual_reparam(samp_name: str, param: Parameter):
     low, high = param.low, param.high
 
     if param.circular:
-        x = numpyro.sample(f"{samp_name}_x_base", dist.Normal(0.0, 1.0))
-        y = numpyro.sample(f"{samp_name}_y_base", dist.Normal(0.0, 1.0))
-        theta_raw = jnp.arctan2(y, x)
-        theta = (theta_raw - low) % (high - low) + low
+        concentration = 1.0 / (param.scale**2)
+        circ_base = numpyro.sample(
+            f"{samp_name}_base",
+            dist.VonMises(loc=param.loc, concentration=concentration),
+        )
+        theta = (circ_base - low) % (high - low) + low
         return numpyro.deterministic(samp_name, theta)
 
     # Scalar base
@@ -176,8 +178,8 @@ def create_reparam_config(template: Template) -> dict:
 
             if param.circular:
                 reparam_config[f"{samp_name}_base"] = CircularReparam()
-            else:
-                reparam_config[samp_name] = TransformReparam()
+            # else:
+            #     reparam_config[samp_name] = TransformReparam()
 
     return reparam_config
 
