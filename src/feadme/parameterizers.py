@@ -123,19 +123,19 @@ def truncnorm_ppf(q, loc, scale, lower_limit, upper_limit):
 def _sample_manual_reparam(samp_name: str, param: Parameter):
     low, high = param.low, param.high
 
-    # if param.circular:
-    #     concentration = 1.0 / (param.scale**2)
-    #     circ_base = numpyro.sample(
-    #         f"{samp_name}_base",
-    #         dist.VonMises(loc=param.loc, concentration=concentration),
-    #     )
-    #     theta = (circ_base - low) % (high - low) + low
-    #     return numpyro.deterministic(samp_name, theta)
+    if param.circular:
+        concentration = 1.0 / (param.scale**2)
+        circ_base = numpyro.sample(
+            f"{samp_name}_base",
+            dist.VonMises(loc=param.loc, concentration=concentration),
+        )
+        theta = (circ_base - low) % (high - low) + low
+        return numpyro.deterministic(samp_name, theta)
 
     # Scalar base
     # u = numpyro.sample(f"{samp_name}_base", dist.Uniform(0.0, 1.0))
-    z = numpyro.sample(f"{samp_name}_base", dist.Normal(0.0, 1.0))
     # u = jax.nn.sigmoid(z)
+    z = numpyro.sample(f"{samp_name}_base", dist.Normal(0.0, 1.0))
     u = norm.cdf(z)
 
     if param.distribution == Distribution.UNIFORM:
