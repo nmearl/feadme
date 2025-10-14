@@ -274,6 +274,10 @@ def parse_circular_parameters(samples):
     """
     # Calculate circular statistics
     circular_mean = stats.circmean(samples)
+    circular_std = stats.circstd(samples)
+    p16, p84 = circular_mean - circular_std, circular_mean + circular_std
+    err_lo, err_hi = circular_std, circular_std
+
     median = circular_median(samples)
     p16, p84 = circular_percentiles(samples, [16, 84])
     err_lo, err_hi = circular_error_bars(median, p16, p84)

@@ -124,13 +124,12 @@ def _sample_manual_reparam(samp_name: str, param: Parameter):
     low, high = param.low, param.high
 
     if param.circular:
-        concentration = 1.0 / (param.scale**2)
-        circ_base = numpyro.sample(
-            f"{samp_name}_base",
-            dist.VonMises(loc=param.loc, concentration=concentration),
+        circ_x_base = numpyro.sample(f"{samp_name}_x_base", dist.Normal(0, 1))
+        circ_y_base = numpyro.sample(f"{samp_name}_y_base", dist.Normal(0, 1))
+        param_samp = numpyro.deterministic(
+            samp_name, jnp.arctan2(circ_y_base, circ_x_base) % (2 * jnp.pi)
         )
-        theta = (circ_base - low) % (high - low) + low
-        return numpyro.deterministic(samp_name, theta)
+        return param_samp
 
     # Scalar base
     # u = numpyro.sample(f"{samp_name}_base", dist.Uniform(0.0, 1.0))
