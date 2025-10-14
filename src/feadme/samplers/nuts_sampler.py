@@ -15,6 +15,7 @@ from numpyro.infer.autoguide import (
     AutoLaplaceApproximation,
 )
 from numpyro.infer.reparam import NeuTraReparam
+import optax
 
 from .base_sampler import BaseSampler
 from ..models.lsq import lsq_model_fitter
@@ -38,15 +39,33 @@ class NUTSSampler(BaseSampler):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
+        starters, _, _, _ = lsq_model_fitter(
+            self.template,
+            self._data,
+            out_dir=f"{self._config.output_path}",
+        )
+        init_values = {k: v[0] for k, v in starters.items()}
+
         guide = AutoBNAFNormal(self.model, hidden_factors=[8, 8], num_flows=2)
         # guide = AutoIAFNormal(self.model, hidden_dims=[32, 32], num_flows=2)
-        # guide = AutoMultivariateNormal(self.model)
+        # guide = AutoMultivariateNormal(
+        #     self.model, init_loc_fn=init_to_value(values=init_values)
+        # )
         # guide = AutoLaplaceApproximation(self.model)
-        optimizer = optim.Adam(0.003)
+        # optimizer = optim.Adam(0.003)
+
+        schedule = optax.exponential_decay(
+            init_value=0.01, transition_steps=1000, decay_rate=0.5
+        )
+        optimizer = optax.adam(learning_rate=schedule)
+
+        # Wrap optax optimizer for NumPyro
+        optimizer = optim.optax_to_numpyro(optimizer)
+
         svi = SVI(self.model, guide, optimizer, Trace_ELBO())
         svi_result = svi.run(
             svi_key,
-            25_000,
+            10_000,
             template=self.template,
             wave=self.wave,
             flux=self.flux,
@@ -89,19 +108,47 @@ class NUTSSampler(BaseSampler):
 
         return neutra_model, init_strategy, neutra
 
-    def sample(self):
-        """
-        Run the NUTS sampler to perform MCMC sampling.
-        """
+    def _sample(self):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
-        rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
         starters, _, _, _ = lsq_model_fitter(
             self.template,
             self._data,
             out_dir=f"{self._config.output_path}",
         )
-        # init_values = {k: v[0] for k, v in starters.items()}
+        init_values = {k: v[0] for k, v in starters.items()}
+
+        guide = AutoBNAFNormal(
+            self.model,
+            hidden_factors=[8, 8],
+            num_flows=2,
+            init_loc_fn=init_to_value(values=init_values),
+        )
+        svi = SVI(self.model, guide, optim.Adam(0.01), Trace_ELBO())
+        svi_result = svi.run(
+            rng_key,
+            15_000,
+            template=self.template,
+            wave=self.wave,
+            flux=self.flux,
+            flux_err=self.flux_err,
+            progress_bar=self.sampler.progress_bar,
+        )
+
+        # Sample from VI posterior
+        posterior_samples = guide.sample_posterior(
+            rng_key, svi_result.params, sample_shape=(4000,)
+        )
+
+        # These ARE your posterior samples
+        self._idata = self._create_idata_from_vi(posterior_samples, svi_result)
+
+    def sample(self):
+        """
+        Run the NUTS sampler to perform MCMC sampling.
+        """
+        rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
+        rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
         model, init_strategy, neutra = (
             self.model,
@@ -142,5 +189,5 @@ class NUTSSampler(BaseSampler):
         posterior_samples = self.get_posterior_samples(mcmc, neutra)
 
         self._idata = self._compose_inference_data(
-            mcmc, posterior_samples, prior_model=self._prior_model
+            mcmc, posterior_samples, prior_model=model
         )
