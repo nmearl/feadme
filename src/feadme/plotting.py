@@ -267,8 +267,8 @@ def plot_corner_priors(
     ignored_vars : list of str, optional
         A list of variable names to ignore in the corner plot. Defaults to None.
     """
-    if ignored_vars is None:
-        ignored_vars = []
+    ignored_vars = ignored_vars or []
+    log_vars = log_vars or []
 
     # Filter out ignored variables
     var_names = [var for var in idata.prior.data_vars if var not in ignored_vars]
