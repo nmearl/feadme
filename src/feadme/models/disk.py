@@ -11,14 +11,6 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-# fixed_quad = GaussKronrodRule(order=31).integrate
-fixed_quad = ClenshawCurtisRule(order=64).integrate
-
-N_xi, N_phi = 30, 50
-unit_xi = jnp.linspace(0.0, 1.0, N_xi)
-unit_phi = jnp.linspace(0.0, 1.0, N_phi)
-XI_u, PHI_u = jnp.meshgrid(unit_xi, unit_phi, indexing="ij")
-
 
 def doppler_factor(
     xi: float, phi: float, inc: float, e: float, phi0: float
@@ -32,9 +24,15 @@ def doppler_factor(
     sinphiphinot = jnp.sin(phi - phi0)
     cosphiphinot = jnp.cos(phi - phi0)
     scale = 1 - 2 / xi
+    one_minus_sinisq_cosphisq = 1 - sini**2 * cosphi**2
+    one_minus_sinisq_cosphisq = jnp.where(
+        one_minus_sinisq_cosphisq < FLOAT_EPSILON,
+        FLOAT_EPSILON,
+        one_minus_sinisq_cosphisq,
+    )
 
     # Eracleous et al, eq 6
-    b_div_r = jnp.sqrt(1 - sini**2 * cosphi**2) * (
+    b_div_r = jnp.sqrt(one_minus_sinisq_cosphisq) * (
         1 + (1 / xi) * (1 - sini * cosphi) / (1 + sini * cosphi)
     )
 
@@ -53,12 +51,21 @@ def doppler_factor(
     db = term_binner**0.5 * e * sinphiphinot
     dc = xi**0.5 * scale ** (3 / 2) * (1 - e * cosphiphinot) ** 0.5
     dd = b_div_r * (1 - e * cosphiphinot) ** 0.5 * sini * sinphi
-    de = xi**0.5 * scale**0.5 * (1 - sini**2 * cosphi**2) ** 0.5
-    de = jnp.where(de < FLOAT_EPSILON, FLOAT_EPSILON, de)
+    de = xi**0.5 * scale**0.5 * one_minus_sinisq_cosphisq**0.5
 
-    inv_dop = gamma * (da - db / dc + dd / de)
+    # dc = jnp.where(dc < FLOAT_EPSILON, FLOAT_EPSILON, dc)
+    # de = jnp.where(de < FLOAT_EPSILON, FLOAT_EPSILON, de)
 
-    return inv_dop**-1
+    dbc = db / dc
+    dde = dd / de
+
+    # dbc = jnp.where(jnp.isnan(dbc), 0.0, dbc)
+    # dde = jnp.where(jnp.isnan(dde), 0.0, dde)
+
+    inv_dop = gamma * (da - dbc + dde)
+    dop = inv_dop**-1
+
+    return dop
 
 
 def intensity(
@@ -113,159 +120,3 @@ def integrand(
     res = xi * I_nu * D**3 * Psi(xi, phi, inc) * trans_fac
 
     return res
-
-
-def _inner_trap(
-    log_xi: float,
-    phi1: float,
-    phi2: float,
-    X: ArrayLike,
-    inc: float,
-    sigma: float,
-    q: float,
-    e: float,
-    phi0: float,
-    nu0: float,
-) -> ArrayLike:
-    """
-    Inner integral over `phi` for a fixed `xi`.
-    """
-    xi = 10**log_xi
-    phi = jnp.linspace(phi1, phi2, 100)
-
-    result = integrand(phi, xi, X[:, None], inc, sigma, q, e, phi0, nu0)
-    return jnp.trapezoid(result, x=phi, axis=-1) * xi * jnp.log(10)
-
-
-def _inner_quad(
-    log_xi: float,
-    phi1: float,
-    phi2: float,
-    X: ArrayLike,
-    inc: float,
-    sigma: float,
-    q: float,
-    e: float,
-    phi0: float,
-    nu0: float,
-) -> ArrayLike:
-    """
-    Inner integral over `phi` for a fixed `xi`.
-    """
-    xi = 10**log_xi
-
-    def transformed_integrand(phi: float, *args) -> ArrayLike:
-        return integrand(phi, *args) * xi * jnp.log(10)
-
-    return fixed_quad(
-        transformed_integrand, phi1, phi2, args=(xi, X, inc, sigma, q, e, phi0, nu0)
-    )[0]
-
-
-@jax.jit
-def quad_jax_integrate(
-    xi1: float,
-    xi2: float,
-    phi1: float,
-    phi2: float,
-    X: ArrayLike,
-    inc: float,
-    sigma: float,
-    q: float,
-    e: float,
-    phi0: float,
-    nu0: float,
-) -> ArrayLike:
-    """
-    Perform a double integral over `xi` and `phi` using Gauss-Kronrod quadrature.
-    """
-    return fixed_quad(
-        _inner_quad,
-        jnp.log10(xi1),
-        jnp.log10(xi2),
-        args=(phi1, phi2, X, inc, sigma, q, e, phi0, nu0),
-    )[0]
-
-
-@jax.jit
-def vmap_jax_integrate(
-    xi1: float,
-    xi2: float,
-    phi1: float,
-    phi2: float,
-    X: ArrayLike,
-    inc: float,
-    sigma: float,
-    q: float,
-    e: float,
-    phi0: float,
-    nu0: float,
-) -> ArrayLike:
-    """
-    Perform a double integral over `xi` and `phi` using trapezoidal rule.
-    """
-    xi_log = jnp.log10(xi1) + (jnp.log10(xi2) - jnp.log10(xi1)) * XI_u
-    xi = 10**xi_log
-    phi = phi1 + (phi2 - phi1) * PHI_u
-
-    jacobian = xi * jnp.log(10)
-
-    res = jax.vmap(
-        lambda phi_arr, xi_arr, jac_arr: integrand(
-            phi_arr, xi_arr, X[:, None], inc, sigma, q, e, phi0, nu0
-        )
-        * jac_arr,
-        in_axes=(0, 0, 0),
-    )(phi, xi, jacobian)
-
-    inner_integral = jnp.trapezoid(res, x=phi[0], axis=2)
-    outer_integral = jnp.trapezoid(inner_integral, x=xi_log[:, 0], axis=0)
-
-    return outer_integral
-
-
-@jax.jit
-def jax_integrate(
-    xi1: float,
-    xi2: float,
-    phi1: float,
-    phi2: float,
-    X: ArrayLike,
-    inc: float,
-    sigma: float,
-    q: float,
-    e: float,
-    phi0: float,
-    nu0: float,
-) -> ArrayLike:
-    """
-    Perform a double integral over `xi` and `phi` using trapezoidal rule.
-    Uses explicit vectorization.
-    """
-    # Create 1D arrays for integration points
-    xi_log = jnp.linspace(jnp.log10(xi1), jnp.log10(xi2), N_xi)
-    phi = jnp.linspace(phi1, phi2, N_phi)
-
-    xi = 10**xi_log
-    jacobian = xi * jnp.log(10)
-
-    # Vectorized computation over both xi and phi simultaneously
-    # This broadcasts xi (N_xi,) and phi (N_phi,) to create (N_xi, N_phi) arrays
-    xi_2d = xi[:, None]  # Shape: (N_xi, 1)
-    phi_2d = phi[None, :]  # Shape: (1, N_phi)
-    jac_2d = jacobian[:, None]  # Shape: (N_xi, 1)
-
-    # Compute integrand for all (xi, phi) combinations at once
-    # X shape: (168,), xi_2d: (N_xi, 1), phi_2d: (1, N_phi)
-    # Need to add dimensions to X to broadcast with (N_xi, N_phi)
-    X_expanded = X[:, None, None]  # Shape: (168, 1, 1)
-
-    integrand_vals = (
-        integrand(phi_2d, xi_2d, X_expanded, inc, sigma, q, e, phi0, nu0) * jac_2d
-    )
-
-    # Integrate using trapezoidal rule
-    inner_integral = jnp.trapezoid(integrand_vals, x=phi, axis=-1)  # Shape: (168, N_xi)
-    outer_integral = jnp.trapezoid(inner_integral, x=xi_log, axis=-1)  # Shape: (168,)
-
-    return outer_integral
