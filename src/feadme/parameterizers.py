@@ -13,10 +13,10 @@ from jax.typing import ArrayLike
 from jax.scipy.special import erf, erfinv
 from jax.scipy.stats import norm
 
-from .models.disk import quad_jax_integrate, jax_integrate
 from .parser import Distribution, Template, Shape, Parameter
 
-ERR = float(np.finfo(np.float32).tiny)
+FLOAT_EPSILON = float(np.finfo(np.float32).tiny)
+ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
@@ -123,13 +123,13 @@ def truncnorm_ppf(q, loc, scale, lower_limit, upper_limit):
 def _sample_manual_reparam(samp_name: str, param: Parameter):
     low, high = param.low, param.high
 
-    if param.circular:
-        circ_x_base = numpyro.sample(f"{samp_name}_x_base", dist.Normal(0, 1))
-        circ_y_base = numpyro.sample(f"{samp_name}_y_base", dist.Normal(0, 1))
-        param_samp = numpyro.deterministic(
-            samp_name, jnp.arctan2(circ_y_base, circ_x_base) % (2 * jnp.pi)
-        )
-        return param_samp
+    # if param.circular:
+    #     circ_x_base = numpyro.sample(f"{samp_name}_x_base", dist.Normal(0, 1))
+    #     circ_y_base = numpyro.sample(f"{samp_name}_y_base", dist.Normal(0, 1))
+    #     param_samp = numpyro.deterministic(
+    #         samp_name, jnp.arctan2(circ_y_base, circ_x_base) % (2 * jnp.pi)
+    #     )
+    #     return param_samp
 
     # Scalar base
     # u = numpyro.sample(f"{samp_name}_base", dist.Uniform(0.0, 1.0))
