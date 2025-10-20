@@ -19,6 +19,7 @@ import optax
 
 from .base_sampler import BaseSampler
 from ..models.lsq import lsq_model_fitter
+from ..utils import lsq_to_base_space
 
 logger = loguru.logger.opt(colors=True)
 
@@ -44,34 +45,56 @@ class NUTSSampler(BaseSampler):
             self._data,
             out_dir=f"{self._config.output_path}",
         )
-        init_values = {k: v[0] for k, v in starters.items()}
+        # init_values = {k: v[0] for k, v in starters.items()}
+        # init_values = lsq_to_base_space(starters, self.template)
 
-        guide = AutoBNAFNormal(self.model, hidden_factors=[8, 8], num_flows=2)
-        # guide = AutoIAFNormal(self.model, hidden_dims=[32, 32], num_flows=2)
         # guide = AutoMultivariateNormal(
-        #     self.model, init_loc_fn=init_to_value(values=init_values)
+        #     self.model, init_loc_fn=init_to_median(num_samples=1000)
         # )
-        # guide = AutoLaplaceApproximation(self.model)
-        # optimizer = optim.Adam(0.003)
 
-        schedule = optax.exponential_decay(
-            init_value=0.01, transition_steps=1000, decay_rate=0.5
-        )
-        optimizer = optax.adam(learning_rate=schedule)
+        # guide = AutoBNAFNormal(
+        #     self.model,
+        #     hidden_factors=[8, 8],
+        #     num_flows=2,
+        #     init_loc_fn=init_to_value(values=init_values),
+        # )
+        guide = AutoLaplaceApproximation(self.model)
+        # guide = AutoIAFNormal(self.model, hidden_dims=[32, 32], num_flows=2)
+        optimizer = optim.Adam(0.003)
+
+        # schedule = optax.exponential_decay(
+        #     init_value=0.01, transition_steps=1000, decay_rate=0.5
+        # )
+        # optimizer = optax.adam(learning_rate=schedule)
 
         # Wrap optax optimizer for NumPyro
-        optimizer = optim.optax_to_numpyro(optimizer)
+        # optimizer = optim.optax_to_numpyro(optimizer)
 
         svi = SVI(self.model, guide, optimizer, Trace_ELBO())
         svi_result = svi.run(
             svi_key,
-            10_000,
+            20_000,
             template=self.template,
             wave=self.wave,
             flux=self.flux,
             flux_err=self.flux_err,
             progress_bar=self.sampler.progress_bar,
         )
+
+        # Sample from the guide to check if it matches LSQ
+        guide_samples = guide.sample_posterior(
+            random.PRNGKey(1), svi_result.params, sample_shape=(1000,)
+        )
+
+        # Compare guide means to LSQ values
+        print("\nGuide vs LSQ comparison:")
+        for key in starters.keys():
+            if key.endswith("_base"):
+                continue
+            if key in guide_samples:
+                guide_mean = jnp.mean(guide_samples[key])
+                lsq_value = starters[key][0]
+                print(f"{key:30}: Guide={guide_mean:.3f}, LSQ={lsq_value:.3f}")
 
         # Convergence check
         recent_losses = svi_result.losses[-1000:]
@@ -82,6 +105,9 @@ class NUTSSampler(BaseSampler):
                 f"SVI may not have converged! Relative std: {relative_std:.4f}"
             )
             # Could add logic to extend SVI or use simpler guide
+        elif jnp.isnan(relative_std):
+            logger.error("SVI failed: NaN encountered in losses. Disabling NeuTra.")
+            return self.model, init_to_median(num_samples=1000), None
         else:
             logger.info(
                 f"SVI converged successfully. Final loss: {svi_result.losses[-1]:.4f}"
@@ -108,41 +134,6 @@ class NUTSSampler(BaseSampler):
 
         return neutra_model, init_strategy, neutra
 
-    def _sample(self):
-        rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
-
-        starters, _, _, _ = lsq_model_fitter(
-            self.template,
-            self._data,
-            out_dir=f"{self._config.output_path}",
-        )
-        init_values = {k: v[0] for k, v in starters.items()}
-
-        guide = AutoBNAFNormal(
-            self.model,
-            hidden_factors=[8, 8],
-            num_flows=2,
-            init_loc_fn=init_to_value(values=init_values),
-        )
-        svi = SVI(self.model, guide, optim.Adam(0.01), Trace_ELBO())
-        svi_result = svi.run(
-            rng_key,
-            15_000,
-            template=self.template,
-            wave=self.wave,
-            flux=self.flux,
-            flux_err=self.flux_err,
-            progress_bar=self.sampler.progress_bar,
-        )
-
-        # Sample from VI posterior
-        posterior_samples = guide.sample_posterior(
-            rng_key, svi_result.params, sample_shape=(4000,)
-        )
-
-        # These ARE your posterior samples
-        self._idata = self._create_idata_from_vi(posterior_samples, svi_result)
-
     def sample(self):
         """
         Run the NUTS sampler to perform MCMC sampling.
@@ -150,15 +141,22 @@ class NUTSSampler(BaseSampler):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
-        model, init_strategy, neutra = (
-            self.model,
-            init_to_median(num_samples=1000),
-            # init_to_value(values=init_values),
-            None,
-        )
-
         if self.sampler.use_neutra:
             model, init_strategy, neutra = self._initialize_neutra()
+        else:
+            starters, _, _, _ = lsq_model_fitter(
+                self.template,
+                self._data,
+                out_dir=f"{self._config.output_path}",
+            )
+            # init_values = {k: v[0] for k, v in starters.items()}
+            init_values = lsq_to_base_space(starters, self.template)
+
+            model, init_strategy, neutra = (
+                self.model,
+                init_to_median(num_samples=1000),
+                None,
+            )
 
         kernel = NUTS(
             model,
