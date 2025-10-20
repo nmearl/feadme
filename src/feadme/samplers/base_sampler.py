@@ -152,25 +152,21 @@ class BaseSampler(ABC):
         )
 
         # Prior predictive
-        try:
-            predictive_prior = Predictive(prior_model, num_samples=5000)(
-                rng_key,
-                template=self.template,
-                wave=self.wave,
-                flux=None,
-                flux_err=self.flux_err,
-            )
+        predictive_prior = Predictive(prior_model, num_samples=5000)(
+            rng_key,
+            template=self.template,
+            wave=self.wave,
+            flux=None,
+            flux_err=self.flux_err,
+        )
 
-            predictive_prior.update(
-                {
-                    k: jnp.zeros_like(v)
-                    for k, v in posterior_samples.items()
-                    if k not in predictive_prior
-                }
-            )
-        except:
-            predictive_prior = None
-            logger.warning("Prior predictive sampling failed.")
+        predictive_prior.update(
+            {
+                k: jnp.zeros_like(v)
+                for k, v in posterior_samples.items()
+                if k not in predictive_prior
+            }
+        )
 
         # Compute log-likelihood for each posterior sample
         log_likelihood = Predictive(
@@ -191,85 +187,6 @@ class BaseSampler(ABC):
         )
 
         return idata
-
-    def _create_idata_from_vi(self, posterior_samples, svi_result):
-        """Create InferenceData from VI samples."""
-        rng_key = jax.random.PRNGKey(0)
-
-        # Reshape samples to (chain, draw) format
-        n_samples = len(next(iter(posterior_samples.values())))
-        n_chains = 4
-        draws_per_chain = n_samples // n_chains
-
-        # Posterior
-        posterior_dict = {}
-        for k, v in posterior_samples.items():
-            posterior_dict[k] = v[: n_chains * draws_per_chain].reshape(
-                n_chains, draws_per_chain, *v.shape[1:]
-            )
-
-        # Posterior predictive
-        predictive_post = Predictive(self.model, posterior_samples=posterior_samples)(
-            rng_key,
-            template=self.template,
-            wave=self.wave,
-            flux=None,
-            flux_err=self.flux_err,
-        )
-
-        predictive_dict = {
-            k: v[: n_chains * draws_per_chain].reshape(
-                n_chains, draws_per_chain, *v.shape[1:]
-            )
-            for k, v in predictive_post.items()
-        }
-
-        # Prior samples - need to shape these too!
-        prior_raw = Predictive(self.model, num_samples=n_chains * draws_per_chain)(
-            rng_key,
-            template=self.template,
-            wave=self.wave,
-            flux=None,
-            flux_err=self.flux_err,
-        )
-
-        prior_dict = {
-            k: v.reshape(n_chains, draws_per_chain, *v.shape[1:])
-            for k, v in prior_raw.items()
-        }
-
-        # Log likelihood
-        log_likelihood = Predictive(
-            self.model, posterior_samples=posterior_samples, return_sites=["total_flux"]
-        )(
-            rng_key,
-            template=self.template,
-            wave=self.wave,
-            flux=self.flux,
-            flux_err=self.flux_err,
-        )
-
-        log_likelihood_dict = {
-            k: v[: n_chains * draws_per_chain].reshape(
-                n_chains, draws_per_chain, *v.shape[1:]
-            )
-            for k, v in log_likelihood.items()
-        }
-
-        # Check for NaN/Inf before creating InferenceData
-        for name, samples in prior_dict.items():
-            if jnp.any(jnp.isnan(samples)) or jnp.any(jnp.isinf(samples)):
-                logger.warning(
-                    f"Prior samples for {name} contain NaN/Inf - excluding from plot"
-                )
-                del prior_dict[name]
-
-        return az.from_dict(
-            posterior=posterior_dict,
-            posterior_predictive=predictive_dict,
-            prior=prior_dict,
-            log_likelihood=log_likelihood_dict,
-        )
 
     @property
     def flat_posterior_samples(self):
