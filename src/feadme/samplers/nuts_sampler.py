@@ -16,6 +16,7 @@ from numpyro.infer.autoguide import (
 )
 from numpyro.infer.reparam import NeuTraReparam
 import optax
+import matplotlib.pyplot as plt
 
 from .base_sampler import BaseSampler
 from ..models.lsq import lsq_model_fitter
@@ -48,27 +49,10 @@ class NUTSSampler(BaseSampler):
         # init_values = {k: v[0] for k, v in starters.items()}
         # init_values = lsq_to_base_space(starters, self.template)
 
-        # guide = AutoMultivariateNormal(
-        #     self.model, init_loc_fn=init_to_median(num_samples=1000)
-        # )
-
-        # guide = AutoBNAFNormal(
-        #     self.model,
-        #     hidden_factors=[8, 8],
-        #     num_flows=2,
-        #     init_loc_fn=init_to_value(values=init_values),
-        # )
-        guide = AutoLaplaceApproximation(self.model)
-        # guide = AutoIAFNormal(self.model, hidden_dims=[32, 32], num_flows=2)
+        guide = AutoMultivariateNormal(
+            self.model, init_loc_fn=init_to_median(num_samples=1000)
+        )
         optimizer = optim.Adam(0.003)
-
-        # schedule = optax.exponential_decay(
-        #     init_value=0.01, transition_steps=1000, decay_rate=0.5
-        # )
-        # optimizer = optax.adam(learning_rate=schedule)
-
-        # Wrap optax optimizer for NumPyro
-        # optimizer = optim.optax_to_numpyro(optimizer)
 
         svi = SVI(self.model, guide, optimizer, Trace_ELBO())
         svi_result = svi.run(
@@ -86,15 +70,18 @@ class NUTSSampler(BaseSampler):
             random.PRNGKey(1), svi_result.params, sample_shape=(1000,)
         )
 
-        # Compare guide means to LSQ values
-        print("\nGuide vs LSQ comparison:")
-        for key in starters.keys():
-            if key.endswith("_base"):
-                continue
-            if key in guide_samples:
-                guide_mean = jnp.mean(guide_samples[key])
-                lsq_value = starters[key][0]
-                print(f"{key:30}: Guide={guide_mean:.3f}, LSQ={lsq_value:.3f}")
+        line_flux = jnp.median(guide_samples["line_flux"], axis=0)
+        disk_flux = jnp.median(guide_samples["disk_flux"], axis=0)
+
+        fig, ax = plt.subplots()
+        ax.errorbar(
+            self.wave, self.flux, yerr=self.flux_err, fmt="o", color="grey", alpha=0.5
+        )
+        ax.plot(self.wave, line_flux, label="Line Flux Median")
+        ax.plot(self.wave, disk_flux, label="Disk Flux Median")
+        ax.plot(self.wave, line_flux + disk_flux, label="Total Flux Median")
+        ax.legend()
+        fig.savefig(f"{self._config.output_path}/guide_model_fit.png")
 
         # Convergence check
         recent_losses = svi_result.losses[-1000:]
