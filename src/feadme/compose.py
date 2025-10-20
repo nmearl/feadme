@@ -11,7 +11,7 @@ from numpyro.infer.reparam import CircularReparam, TransformReparam
 from numpyro.handlers import reparam
 from jax.typing import ArrayLike
 
-from .models.disk import quad_jax_integrate, jax_integrate
+from .integrators import integrator
 from .parser import Distribution, Template, Shape, Parameter
 from .parameterizers import _sample_manual_reparam as sample_reparam
 from .parameterizers import create_reparam_config
@@ -133,7 +133,7 @@ def _compute_disk_flux_single(
     # Convert from velocity to frequency
     local_sigma = sigma * 1e5 * nu0 / c_cgs
 
-    res = jax_integrate(
+    res = integrator(
         inner_radius,
         outer_radius,
         0.0,
