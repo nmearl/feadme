@@ -11,6 +11,53 @@ from numpyro.handlers import seed, trace
 from scipy import stats
 from scipy.optimize import minimize_scalar
 
+from .parser import Template
+
+
+def lsq_to_base_space(lsq_values: dict, template: Template) -> dict:
+    """
+    Convert LSQ parameter values to Normal(0,1) base space for _sample_manual_reparam.
+    LSQ works in uniform space (possibly log-transformed), so we just need to:
+    1. Map from [low, high] to u in [0, 1]
+    2. Map u to z ~ Normal(0, 1) via inverse CDF
+    """
+    from scipy.stats import norm
+    import numpy as np
+
+    base_values = {}
+
+    # Get all independent parameters
+    all_params = []
+    for prof in template.disk_profiles + template.line_profiles:
+        for param in prof.independent:
+            all_params.append((prof.name, param))
+
+    if not template.redshift.fixed:
+        all_params.append((None, template.redshift))
+    if not template.white_noise.fixed:
+        all_params.append((None, template.white_noise))
+
+    for prof_name, param in all_params:
+        samp_name = f"{prof_name}_{param.name}" if prof_name else param.name
+
+        if samp_name not in lsq_values:
+            continue
+
+        val, _, low, high = lsq_values[samp_name]
+
+        # Simple uniform mapping from [low, high] to [0, 1]
+        u = (val - low) / (high - low)
+
+        # Clamp for numerical safety
+        u = np.clip(u, 1e-6, 1 - 1e-6)
+
+        # Convert to Normal(0,1) base space
+        z = norm.ppf(u)
+
+        base_values[f"{samp_name}_base"] = z
+
+    return base_values
+
 
 def dict_to_namedtuple(name, d):
     """
