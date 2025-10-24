@@ -88,11 +88,32 @@ def _compute_disk_flux_vectorized(
     if len(center) == 0:
         return jnp.zeros_like(wave)
 
-    # Use vmap for disk computation with more efficient batching
-    prof_disk_flux = jax.vmap(
-        _compute_disk_flux_single, in_axes=(None, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-    )(
-        wave,
+    def _compute_single(
+        center_i, inner_i, outer_i, sigma_i, inc_i, q_i, ecc_i, apo_i, scale_i, offset_i
+    ):
+        nu = c_cgs / (wave * 1e-8)
+        nu0 = c_cgs / (center_i * 1e-8)
+        X = nu / nu0 - 1
+        local_sigma = sigma_i * 1e5 * nu0 / c_cgs
+
+        res = integrator(
+            inner_i,
+            outer_i,
+            0.0,
+            2 * jnp.pi,
+            jnp.asarray(X),
+            inc_i,
+            local_sigma,
+            q_i,
+            ecc_i,
+            apo_i,
+            nu0,
+        )
+
+        normalized_res = res / jnp.max(res)
+        return normalized_res * scale_i + offset_i
+
+    prof_disk_flux = jax.vmap(_compute_single, in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0))(
         center,
         inner_radius,
         outer_radius,
@@ -106,50 +127,6 @@ def _compute_disk_flux_vectorized(
     )
 
     return jnp.sum(prof_disk_flux, axis=0)
-
-
-@jax.jit
-def _compute_disk_flux_single(
-    wave: ArrayLike,
-    center: float,
-    inner_radius: float,
-    outer_radius: float,
-    sigma: float,
-    inclination: float,
-    q: float,
-    eccentricity: float,
-    apocenter: float,
-    scale: float = 1.0,
-    offset: float = 0.0,
-) -> ArrayLike:
-    """
-    Compute the flux for a single disk profile.
-    """
-    # Pre-compute frequency conversions
-    nu = c_cgs / (wave * 1e-8)
-    nu0 = c_cgs / (center * 1e-8)
-    X = nu / nu0 - 1
-
-    # Convert from velocity to frequency
-    local_sigma = sigma * 1e5 * nu0 / c_cgs
-
-    res = integrator(
-        inner_radius,
-        outer_radius,
-        0.0,
-        2 * jnp.pi - 1e-6,
-        jnp.asarray(X),
-        inclination,
-        local_sigma,
-        q,
-        eccentricity,
-        apocenter,
-        nu0,
-    )
-
-    normalized_res = res / jnp.max(res)
-
-    return normalized_res * scale + offset
 
 
 def disk_model(
@@ -166,7 +143,7 @@ def disk_model(
 
     # Disk model array initialization
     disk_arrs = {
-        k: jnp.zeros(len(template.disk_profiles))
+        k: []
         for k in [
             "center",
             "inner_radius",
@@ -182,62 +159,29 @@ def disk_model(
         ]
     }
 
-    line_arrs = {
-        k: jnp.zeros(len(template.line_profiles))
-        for k in ["center", "vel_width", "amplitude", "shape"]
-    }
+    line_arrs = {k: [] for k in ["center", "vel_width", "amplitude", "shape"]}
 
-    # Sample independent parameters for all profiles
+    # Define line profile shapes
+    line_arrs["shape"] = [
+        prof.shape == Shape.GAUSSIAN for prof in template.line_profiles
+    ]
+
     for i, prof in enumerate(template.disk_profiles):
+        # Sample independent parameters
         for param in prof.independent:
-            samp_name = f"{prof.name}_{param.name}"
+            samp_name = param.qualified_name
             param_samp = sample_reparam(samp_name, param)
             param_mods[samp_name] = param_samp
-            disk_arrs[param.name] = disk_arrs[param.name].at[i].set(param_samp)
+            disk_arrs[param.name].append(param_samp)
 
-    for i, prof in enumerate(template.line_profiles):
-        for param in prof.independent:
-            samp_name = f"{prof.name}_{param.name}"
-            param_samp = sample_reparam(samp_name, param)
-            param_mods[samp_name] = param_samp
-            line_arrs[param.name] = line_arrs[param.name].at[i].set(param_samp)
-
-    # Add fixed parameters
-    for i, prof in enumerate(template.disk_profiles):
+        # Add fixed parameters
         for param in prof.fixed:
-            samp_name = f"{prof.name}_{param.name}"
+            samp_name = param.qualified_name
             param_samp = numpyro.deterministic(samp_name, param.value)
             param_mods[samp_name] = param_samp
-            disk_arrs[param.name] = disk_arrs[param.name].at[i].set(param_samp)
+            disk_arrs[param.name].append(param_samp)
 
-    for i, prof in enumerate(template.line_profiles):
-        for param in prof.fixed:
-            samp_name = f"{prof.name}_{param.name}"
-            param_samp = numpyro.deterministic(samp_name, param.value)
-            param_mods[samp_name] = param_samp
-            line_arrs[param.name] = line_arrs[param.name].at[i].set(param_samp)
-
-    # Add shared parameters
-    for i, prof in enumerate(template.disk_profiles):
-        for param in prof.shared:
-            samp_name = f"{prof.name}_{param.name}"
-            param_samp = numpyro.deterministic(
-                samp_name, param_mods[f"{param.shared}_{param.name}"]
-            )
-            param_mods[samp_name] = param_samp
-            disk_arrs[param.name] = disk_arrs[param.name].at[i].set(param_samp)
-
-    for i, prof in enumerate(template.line_profiles):
-        for param in prof.shared:
-            samp_name = f"{prof.name}_{param.name}"
-            param_samp = numpyro.deterministic(
-                samp_name, param_mods[f"{param.shared}_{param.name}"]
-            )
-            param_mods[samp_name] = param_samp
-            line_arrs[param.name] = line_arrs[param.name].at[i].set(param_samp)
-
-    # Define outer radius from inner radius and ratio
-    for i, prof in enumerate(template.disk_profiles):
+        # Define outer radius from inner radius and ratio
         samp_name = f"{prof.name}_outer_radius"
         param_samp = numpyro.deterministic(
             samp_name,
@@ -245,33 +189,45 @@ def disk_model(
             * param_mods[f"{prof.name}_radius_ratio"],
         )
         param_mods[samp_name] = param_samp
-        disk_arrs["outer_radius"] = disk_arrs["outer_radius"].at[i].set(param_samp)
+        disk_arrs["outer_radius"].append(param_samp)
 
-    # Enforce inner < outer radius constraint
-    # for i, prof in enumerate(template.disk_profiles):
-    #     numpyro.factor(
-    #         f"{prof.name}_radius_constraint",
-    #         jnp.where(
-    #             disk_arrs["outer_radius"][i] > disk_arrs["inner_radius"][i],
-    #             0.0,
-    #             -jnp.inf,
-    #         ),
-    #     )
-
-    # Limit outer radius
-    # for i, prof in enumerate(template.disk_profiles):
-    #     numpyro.factor(
-    #         f"{prof.name}_radius_constraint",
-    #         jnp.where(
-    #             disk_arrs["outer_radius"][i] < 1.0e5,
-    #             0.0,
-    #             -jnp.inf,
-    #         ),
-    #     )
-
-    # Define line profile shapes
     for i, prof in enumerate(template.line_profiles):
-        line_arrs["shape"] = line_arrs["shape"].at[i].set(prof.shape == Shape.GAUSSIAN)
+        # Sample independent parameters
+        for param in prof.independent:
+            samp_name = param.qualified_name
+            param_samp = sample_reparam(samp_name, param)
+            param_mods[samp_name] = param_samp
+            line_arrs[param.name].append(param_samp)
+
+        # Add fixed parameters
+        for param in prof.fixed:
+            samp_name = param.qualified_name
+            param_samp = numpyro.deterministic(samp_name, param.value)
+            param_mods[samp_name] = param_samp
+            line_arrs[param.name].append(param_samp)
+
+    # Add shared parameters
+    for i, prof in enumerate(template.disk_profiles):
+        for param in prof.shared:
+            samp_name = param.qualified_name
+            param_samp = numpyro.deterministic(
+                samp_name, param_mods[f"{param.shared}_{param.name}"]
+            )
+            param_mods[samp_name] = param_samp
+            disk_arrs[param.name].append(param_samp)
+
+    for i, prof in enumerate(template.line_profiles):
+        for param in prof.shared:
+            samp_name = param.qualified_name
+            param_samp = numpyro.deterministic(
+                samp_name, param_mods[f"{param.shared}_{param.name}"]
+            )
+            param_mods[samp_name] = param_samp
+            line_arrs[param.name].append(param_samp)
+
+    # Convert lists to jax arrays
+    disk_arrs = {k: jnp.array(v) for k, v in disk_arrs.items()}
+    line_arrs = {k: jnp.array(v) for k, v in line_arrs.items()}
 
     # Sample white noise with better bounds
     if template.white_noise.fixed:
