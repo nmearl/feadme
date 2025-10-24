@@ -125,7 +125,11 @@ def plot_model_fit(
     rest_wave = wave / (1 + redshift)
 
     # Retrieve additional white noise
-    white_noise = summary.loc["white_noise", "median"]
+    try:
+        white_noise = summary.loc["white_noise", "median"]
+    except KeyError:
+        white_noise = template.white_noise.value
+
     total_error = jnp.sqrt(flux_err**2 + flux**2 * jnp.exp(2 * white_noise))
 
     fig, ax = plt.subplots(layout="constrained")
