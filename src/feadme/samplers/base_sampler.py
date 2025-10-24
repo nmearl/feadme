@@ -152,7 +152,7 @@ class BaseSampler(ABC):
         )
 
         # Prior predictive
-        predictive_prior = Predictive(prior_model, num_samples=5000)(
+        predictive_prior = Predictive(prior_model, num_samples=2000)(
             rng_key,
             template=self.template,
             wave=self.wave,

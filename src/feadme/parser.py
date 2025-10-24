@@ -64,7 +64,7 @@ class Writable:
             ),
         )
 
-        # Process the instance to populate parameter lists
+        # Process the instance to populate parameter lists and names
         return cls._process_profiles(instance)
 
     @classmethod
@@ -117,7 +117,6 @@ DIST_MAP = {
 
 @flax.struct.dataclass
 class Parameter:
-    name: str
     distribution: Distribution = Distribution.UNIFORM
     value: Optional[float] = None
     fixed: Optional[bool] = False
@@ -127,6 +126,32 @@ class Parameter:
     loc: Optional[float] = None
     scale: Optional[float] = None
     circular: Optional[bool] = False
+
+    # Internal fields set during Profile initialization
+    _field_name: Optional[str] = None
+    _qualified_name: Optional[str] = None
+
+    def with_names(self, field_name: str, qualified_name: str):
+        """Return a new Parameter with both field name and qualified name set."""
+        return self.replace(_field_name=field_name, _qualified_name=qualified_name)
+
+    @property
+    def name(self) -> str:
+        """Get the parameter's field name."""
+        if self._field_name is None:
+            raise ValueError(
+                "Parameter name not set. This parameter hasn't been properly initialized in a Profile."
+            )
+        return self._field_name
+
+    @property
+    def qualified_name(self) -> str:
+        """Get the fully qualified parameter name (profile_name_field_name)."""
+        if self._qualified_name is None:
+            raise ValueError(
+                "Parameter qualified name not set. This parameter hasn't been properly initialized in a Profile."
+            )
+        return self._qualified_name
 
 
 @flax.struct.dataclass
@@ -140,75 +165,95 @@ class Profile:
 
     def populate_param_lists(self):
         """
-        Populate parameter lists - returns a new instance with populated lists.
-        This should be called immediately after deserialization.
+        Populate parameter lists and set both field names and qualified names
+        for all parameters. Returns a new instance with populated lists and
+        properly named parameters.
         """
         if self._independent_params or self._shared_params or self._fixed_params:
             return self  # Already populated
 
+        if self.name is None:
+            raise ValueError("Profile must have a name before populating parameters")
+
         # Get all Parameter fields from this instance
-        param_kwargs = {}
+        param_fields = {}
+        updates = {}
+
         for field_name in self.__dataclass_fields__:
             if not field_name.startswith("_") and field_name != "name":
                 field_value = getattr(self, field_name)
                 if isinstance(field_value, Parameter):
-                    param_kwargs[field_name] = field_value
+                    # Set both field name and qualified name
+                    if (
+                        field_value._field_name is None
+                        or field_value._qualified_name is None
+                    ):
+                        qualified_name = f"{self.name}_{field_name}"
+                        updated_param = field_value.with_names(
+                            field_name, qualified_name
+                        )
+                        param_fields[field_name] = updated_param
+                        updates[field_name] = updated_param
+                    else:
+                        param_fields[field_name] = field_value
 
         independent = []
         shared = []
         fixed = []
 
         # First pass: categorize fixed vs non-fixed parameters
-        for field_name, field_value in param_kwargs.items():
-            if field_value.fixed:
-                fixed.append(field_value)
+        for field_name, param in param_fields.items():
+            if param.fixed:
+                fixed.append(param)
             else:
-                independent.append(field_value)
+                independent.append(param)
 
         # Second pass: handle shared parameters
         shared_candidates = []
-        for field_name, field_value in param_kwargs.items():
-            if field_value.shared is not None and not field_value.fixed:
-                shared_candidates.append(field_value)
+        for field_name, param in param_fields.items():
+            if param.shared is not None and not param.fixed:
+                shared_candidates.append(param)
 
         for shared_param in shared_candidates:
             if shared_param in independent:
                 independent.remove(shared_param)
             shared.append(shared_param)
 
-        return self.replace(
-            _independent_params=independent,
-            _shared_params=shared,
-            _fixed_params=fixed,
+        updates.update(
+            {
+                "_independent_params": independent,
+                "_shared_params": shared,
+                "_fixed_params": fixed,
+            }
         )
+
+        return self.replace(**updates)
 
     @classmethod
     def create(cls, name, **kwargs):
-        param_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
+        if name is None:
+            raise ValueError("Profile must have a name")
 
-        independent = []
-        shared = []
-        fixed = []
+        # Separate parameters from other kwargs
+        param_kwargs = {}
+        other_kwargs = {}
 
-        for field_name, field_value in param_kwargs.items():
-            if isinstance(field_value, Parameter):
-                if field_value.fixed:
-                    fixed.append(field_value)
+        for k, v in kwargs.items():
+            if not k.startswith("_"):
+                if isinstance(v, Parameter):
+                    # Set both field name and qualified name
+                    qualified_name = f"{name}_{k}"
+                    param_kwargs[k] = v.with_names(k, qualified_name)
                 else:
-                    independent.append(field_value)
+                    other_kwargs[k] = v
+            else:
+                other_kwargs[k] = v
 
-        for field_name, field_value in param_kwargs.items():
-            if isinstance(field_value, Parameter):
-                if field_value.shared is not None and not field_value.fixed:
-                    shared.append(field_value)
+        # Create instance
+        instance = cls(name=name, **param_kwargs, **other_kwargs)
 
-        return cls(
-            name=name,
-            _independent_params=independent,
-            _shared_params=shared,
-            _fixed_params=fixed,
-            **param_kwargs,
-        )
+        # Populate parameter lists
+        return instance.populate_param_lists()
 
     @property
     def independent(self) -> list[Parameter]:
@@ -233,12 +278,8 @@ class Disk(Profile, Writable):
     q: Optional[Parameter] = None
     eccentricity: Optional[Parameter] = None
     apocenter: Optional[Parameter] = None
-    scale: Parameter = Parameter(
-        name="scale", distribution=Distribution.UNIFORM, low=0, high=2
-    )
-    offset: Parameter = Parameter(
-        name="offset", distribution=Distribution.UNIFORM, low=0, high=2
-    )
+    scale: Parameter = Parameter(distribution=Distribution.UNIFORM, low=0, high=2)
+    offset: Parameter = Parameter(distribution=Distribution.UNIFORM, low=0, high=2)
 
 
 class Shape(str, Enum):
@@ -266,11 +307,11 @@ class Template(Writable):
     disk_profiles: list[Disk] = flax.struct.field(default_factory=list)
     line_profiles: list[Line] = flax.struct.field(default_factory=list)
     redshift: Parameter = Parameter(
-        name="redshift", distribution=Distribution.UNIFORM, low=0, high=1.0
+        distribution=Distribution.UNIFORM, low=0, high=1.0, _field_name="redshift"
     )
     obs_date: float = 0.0
     white_noise: Parameter = Parameter(
-        name="white_noise", distribution=Distribution.UNIFORM, low=-10, high=1
+        distribution=Distribution.UNIFORM, low=-10, high=1, _field_name="white_noise"
     )
     mask: list[Mask] | None = None
 

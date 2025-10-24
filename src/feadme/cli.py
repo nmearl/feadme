@@ -125,7 +125,7 @@ def perform_sampling(config: Config):
     )
 
     # Initialize the sampler with the model and configuration
-    model = construct_model(template, auto_reparam=False)
+    model = construct_model(template, auto_reparam=True)
     sampler = NUTSSampler(model=model, config=config, prior_model=None)
 
     # If a results file already exists, load it instead of running the sampler
@@ -146,10 +146,15 @@ def perform_sampling(config: Config):
         logger.info("Sampling completed.")
 
     logger.info("Displaying sampler results:\n" + sampler.summary.to_markdown())
-    logger.info(
-        f"Total divergences: {sampler._get_divergences()[0]} | "
-        f"Rate: {sampler._get_divergences()[1]:.4f}%"
-    )
+
+    try:
+        logger.info(
+            f"Total divergences: {sampler._get_divergences()[0]} | "
+            f"Rate: {sampler._get_divergences()[1]:.4f}%"
+        )
+    except:
+        pass
+
     sampler.write_results()
 
     logger.info("Generating plots...")
