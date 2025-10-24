@@ -23,13 +23,15 @@ c_kms = const.c.to(u.km / u.s).value
 
 def _sample_no_reparam(samp_name: str, param: Parameter) -> ArrayLike:
     if param.circular:
-        circ_x_base = numpyro.sample(f"{samp_name}_x_base", dist.Normal(0, 1))
-        circ_y_base = numpyro.sample(f"{samp_name}_y_base", dist.Normal(0, 1))
-        param_samp = numpyro.deterministic(
-            samp_name, jnp.arctan2(circ_y_base, circ_x_base) % (2 * jnp.pi)
+        circ_base = numpyro.sample(
+            f"{samp_name}_base",
+            dist.VonMises(loc=param.loc, concentration=1e-3),
         )
+        param_samp = numpyro.deterministic(samp_name, circ_base % (2 * jnp.pi))
 
-    elif param.distribution == Distribution.UNIFORM:
+        return param_samp
+
+    if param.distribution == Distribution.UNIFORM:
         param_samp = numpyro.sample(samp_name, dist.Uniform(param.low, param.high))
 
     elif param.distribution == Distribution.LOG_UNIFORM:
@@ -120,22 +122,25 @@ def truncnorm_ppf(q, loc, scale, lower_limit, upper_limit):
     return norm.ppf(cdf_a + q * (cdf_b - cdf_a)) * scale + loc
 
 
-def _sample_manual_reparam(samp_name: str, param: Parameter):
-    low, high = param.low, param.high
+def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
+    if param.circular:
+        # circ_base = numpyro.sample(f"{samp_name}_base", dist.Normal(0, 1).expand([2]))
+        # param_samp = numpyro.deterministic(
+        #     samp_name, jnp.mod(jnp.arctan2(circ_base[1], circ_base[0]), 2 * jnp.pi)
+        # )
 
-    # if param.circular:
-    #     circ_x_base = numpyro.sample(f"{samp_name}_x_base", dist.Normal(0, 1))
-    #     circ_y_base = numpyro.sample(f"{samp_name}_y_base", dist.Normal(0, 1))
-    #     param_samp = numpyro.deterministic(
-    #         samp_name, jnp.arctan2(circ_y_base, circ_x_base) % (2 * jnp.pi)
-    #     )
-    #     return param_samp
+        circ_base = numpyro.sample(
+            f"{samp_name}_base",
+            dist.VonMises(loc=param.loc, concentration=1e-3),
+        )
+        param_samp = numpyro.deterministic(samp_name, circ_base % (2 * jnp.pi))
+
+        return param_samp
 
     # Scalar base
-    # u = numpyro.sample(f"{samp_name}_base", dist.Uniform(0.0, 1.0))
-    # u = jax.nn.sigmoid(z)
     z = numpyro.sample(f"{samp_name}_base", dist.Normal(0.0, 1.0))
-    u = norm.cdf(z)
+    u = jnp.clip(norm.cdf(z), 1e-6, 1 - 1e-6)
+    low, high = param.low, param.high
 
     if param.distribution == Distribution.UNIFORM:
         val = low + u * (high - low)
