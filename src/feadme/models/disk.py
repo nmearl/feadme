@@ -30,6 +30,12 @@ def doppler_factor(
         FLOAT_EPSILON,
         one_minus_sinisq_cosphisq,
     )
+    one_minus_e_cosphiphinot = 1 - e * cosphiphinot
+    one_minus_e_cosphiphinot = jnp.where(
+        one_minus_e_cosphiphinot < FLOAT_EPSILON,
+        FLOAT_EPSILON,
+        one_minus_e_cosphiphinot,
+    )
 
     # Eracleous et al, eq 6
     b_div_r = jnp.sqrt(one_minus_sinisq_cosphisq) * (
@@ -39,8 +45,8 @@ def doppler_factor(
     # Eracleous et al, eq 16
     gamma = (
         1
-        - (e**2 * sinphiphinot**2 + scale * (1 - e * cosphiphinot) ** 2)
-        / (xi * scale**2 * (1 - e * cosphiphinot))
+        - (e**2 * sinphiphinot**2 + scale * one_minus_e_cosphiphinot**2)
+        / (xi * scale**2 * one_minus_e_cosphiphinot)
     ) ** -0.5
 
     term_binner = 1 - b_div_r**2 * scale
@@ -49,8 +55,8 @@ def doppler_factor(
     # Eracleous et al, eq 15
     da = scale**-0.5
     db = term_binner**0.5 * e * sinphiphinot
-    dc = xi**0.5 * scale ** (3 / 2) * (1 - e * cosphiphinot) ** 0.5
-    dd = b_div_r * (1 - e * cosphiphinot) ** 0.5 * sini * sinphi
+    dc = xi**0.5 * scale ** (3 / 2) * one_minus_e_cosphiphinot**0.5
+    dd = b_div_r * one_minus_e_cosphiphinot**0.5 * sini * sinphi
     de = xi**0.5 * scale**0.5 * one_minus_sinisq_cosphisq**0.5
 
     # dc = jnp.where(dc < FLOAT_EPSILON, FLOAT_EPSILON, dc)
@@ -77,7 +83,7 @@ def intensity(
     # Eracleous et al, eq 18; returned units are erg / cm^2
     # exponent = -((1 + X - D) ** 2) / (2 * D**2) * (c_cgs / sigma) ** 2
     exponent = -((1 + X - D) ** 2 * nu0**2) / (2 * D**2 * sigma**2)
-    exponent = jnp.clip(exponent, min=-37)
+    exponent = jnp.maximum(exponent, -37.0)
 
     # res = (xi**-q * c_cgs) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
     res = (xi**-q) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
@@ -90,9 +96,11 @@ def Psi(xi: float, phi: float, inc: float) -> ArrayLike:
     `Psi` function for the disk model, as defined in Eracleous et al. (1995).
     """
     # Eracleous et al, eq 8
-    return 1 + (1 / xi) * (
-        (1 - jnp.sin(inc) * jnp.cos(phi)) / (1 + jnp.sin(inc) * jnp.cos(phi))
-    )
+    numerator = 1 - jnp.sin(inc) * jnp.cos(phi)
+    denominator = 1 + jnp.sin(inc) * jnp.cos(phi)
+    denominator = jnp.where(denominator < FLOAT_EPSILON, FLOAT_EPSILON, denominator)
+
+    return 1 + (1 / xi) * (numerator / denominator)
 
 
 def integrand(
@@ -110,13 +118,22 @@ def integrand(
     Integrand for the double integral over `xi` and `phi`.
     """
     # Eracleous et al, eq 10
-    trans_fac = (1 + e) / (1 - e * jnp.cos(phi - phi0))
+    trans_fac_denominator = 1 - e * jnp.cos(phi - phi0)
+    trans_fac_denominator = jnp.where(
+        trans_fac_denominator < FLOAT_EPSILON, FLOAT_EPSILON, trans_fac_denominator
+    )
+    trans_fac = (1 + e) / trans_fac_denominator
     xi = xi_tilde * trans_fac
 
     D = doppler_factor(xi, phi, inc, e, phi0)
     I_nu = intensity(xi, X, D, sigma, q, nu0)
+    Psi_ = Psi(xi, phi, inc)
+
+    # jax.debug.print("{} {} {}", jnp.mean(D), jnp.mean(I_nu), jnp.mean(Psi_))
 
     # Eracleous et al, eq 7
-    res = xi * I_nu * D**3 * Psi(xi, phi, inc) * trans_fac
+    res = xi * I_nu * D**3 * Psi_ * trans_fac
+
+    # res = jnp.where(jnp.isnan(res) | jnp.isinf(res), 0.0, res)
 
     return res
