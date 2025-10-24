@@ -1,3 +1,4 @@
+import jax
 import loguru
 import time
 
@@ -52,12 +53,12 @@ class NUTSSampler(BaseSampler):
         guide = AutoMultivariateNormal(
             self.model, init_loc_fn=init_to_median(num_samples=1000)
         )
-        optimizer = optim.Adam(0.003)
+        optimizer = optim.Adam(0.001)
 
         svi = SVI(self.model, guide, optimizer, Trace_ELBO())
         svi_result = svi.run(
             svi_key,
-            20_000,
+            25_000,
             template=self.template,
             wave=self.wave,
             flux=self.flux,
@@ -121,6 +122,23 @@ class NUTSSampler(BaseSampler):
 
         return neutra_model, init_strategy, neutra
 
+    def _initialize_basic(self):
+        starters, _, _, _ = lsq_model_fitter(
+            self.template,
+            self._data,
+            out_dir=f"{self._config.output_path}",
+        )
+        # init_values = {k: v[0] for k, v in starters.items()}
+        # init_values = lsq_to_base_space(starters, self.template)
+
+        model, init_strategy, neutra = (
+            self.model,
+            init_to_median(num_samples=1000),
+            None,
+        )
+
+        return model, init_strategy, neutra
+
     def sample(self):
         """
         Run the NUTS sampler to perform MCMC sampling.
@@ -131,19 +149,7 @@ class NUTSSampler(BaseSampler):
         if self.sampler.use_neutra:
             model, init_strategy, neutra = self._initialize_neutra()
         else:
-            starters, _, _, _ = lsq_model_fitter(
-                self.template,
-                self._data,
-                out_dir=f"{self._config.output_path}",
-            )
-            # init_values = {k: v[0] for k, v in starters.items()}
-            init_values = lsq_to_base_space(starters, self.template)
-
-            model, init_strategy, neutra = (
-                self.model,
-                init_to_median(num_samples=1000),
-                None,
-            )
+            model, init_strategy, neutra = self._initialize_basic()
 
         kernel = NUTS(
             model,
@@ -176,3 +182,5 @@ class NUTSSampler(BaseSampler):
         self._idata = self._compose_inference_data(
             mcmc, posterior_samples, prior_model=model
         )
+
+        jax.clear_caches()
