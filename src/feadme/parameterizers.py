@@ -23,11 +23,15 @@ c_kms = const.c.to(u.km / u.s).value
 
 def _sample_no_reparam(samp_name: str, param: Parameter) -> ArrayLike:
     if param.circular:
-        circ_base = numpyro.sample(
-            f"{samp_name}_base",
-            dist.VonMises(loc=param.loc, concentration=1e-3),
+        circ_base = numpyro.sample(f"{samp_name}_base", dist.Normal(0, 1).expand([2]))
+        param_samp = numpyro.deterministic(
+            samp_name, jnp.mod(jnp.arctan2(circ_base[1], circ_base[0]), 2 * jnp.pi)
         )
-        param_samp = numpyro.deterministic(samp_name, circ_base % (2 * jnp.pi))
+        # circ_base = numpyro.sample(
+        #     f"{samp_name}_base",
+        #     dist.VonMises(loc=param.loc, concentration=1e-3),
+        # )
+        # param_samp = numpyro.deterministic(samp_name, circ_base % (2 * jnp.pi))
 
         return param_samp
 
