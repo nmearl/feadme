@@ -12,6 +12,7 @@ from .compose import construct_model
 from .models.lsq import lsq_model_fitter
 from .parser import Config, Template, Data, Sampler
 from .samplers.nuts_sampler import NUTSSampler
+from .utils import rebin_spectrum
 
 logger = loguru.logger.opt(colors=True)
 
@@ -37,10 +38,22 @@ def load_data(data_path: str, template: Template) -> Data:
         data_path, format="ascii.csv", names=["wave", "flux", "flux_err"]
     )
 
+    wave, flux, flux_err = (
+        data_tab["wave"].value,
+        data_tab["flux"].value,
+        data_tab["flux_err"].value,
+    )
+
+    pre_data = Data.create(wave, flux, flux_err, template.mask)
+
+    bin_wave, bin_flux, bin_flux_err = rebin_spectrum(wave, flux, flux_err, dv=100)
+
+    post_data = Data.create(bin_wave, bin_flux, bin_flux_err, template.mask)
+
     return Data.create(
-        wave=data_tab["wave"].value,  # / (1 + template.redshift.value),
-        flux=data_tab["flux"].value,
-        flux_err=data_tab["flux_err"].value,
+        wave=bin_wave,
+        flux=bin_flux,
+        flux_err=bin_flux_err,
         mask=template.mask,
     )
 

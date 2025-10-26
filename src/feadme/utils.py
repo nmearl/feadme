@@ -10,8 +10,83 @@ from numpyro.distributions.transforms import Transform
 from numpyro.handlers import seed, trace
 from scipy import stats
 from scipy.optimize import minimize_scalar
+import astropy.constants as const
 
 from .parser import Template
+
+c_cgs = const.c.cgs.value
+c_kms = const.c.to("km/s").value
+
+
+def rebin_spectrum(wave, flux, flux_err, dv=100.0, rest=False, z=0.0):
+    """
+    Rebin a spectrum in wavelength space, conserving total flux
+    and propagating uncertainties via inverse-variance weighting.
+
+    Parameters
+    ----------
+    wave : array_like
+        Wavelength array in Angstroms.
+    flux : array_like
+        Flux array (same units throughout; flux density, not integrated flux).
+    flux_err : array_like
+        1σ uncertainty array, same shape as `flux`.
+    dv : float, optional
+        Velocity width per bin in km/s. Default = 100 km/s.
+    rest : bool, optional
+        If True, treat `wave` as rest-frame; if False, interpret as observed.
+        Used only if you pass a redshift `z`.
+    z : float, optional
+        Redshift of the source. If nonzero and rest=False, converts to rest-frame
+        wavelength before computing bin edges.
+
+    Returns
+    -------
+    wave_bin : ndarray
+        Central wavelength of each bin.
+    flux_bin : ndarray
+        Weighted mean flux in each bin.
+    flux_err_bin : ndarray
+        Propagated uncertainty per bin.
+    """
+
+    # Convert to rest-frame if necessary
+    if not rest and z != 0.0:
+        wave_eff = wave / (1.0 + z)
+    else:
+        wave_eff = wave.copy()
+
+    # Compute bin edges in log-lambda space (constant Δv bins)
+    dloglam = dv / c_kms
+    loglam = np.log(wave_eff)
+    loglam_edges = np.arange(loglam.min(), loglam.max() + dloglam, dloglam)
+
+    # Assign each wavelength to a bin
+    inds = np.digitize(loglam, loglam_edges) - 1
+    nbins = len(loglam_edges) - 1
+
+    flux_bin = np.zeros(nbins)
+    ivar_bin = np.zeros(nbins)
+    wave_bin = np.zeros(nbins)
+
+    ivar = 1.0 / flux_err**2
+    for i in range(nbins):
+        m = inds == i
+        if not np.any(m):
+            flux_bin[i] = np.nan
+            ivar_bin[i] = 0.0
+            continue
+        w = ivar[m]
+        flux_bin[i] = np.sum(w * flux[m]) / np.sum(w)
+        ivar_bin[i] = np.sum(w)
+        wave_bin[i] = np.exp(np.mean(loglam[m]))
+
+    flux_err_bin = np.zeros_like(flux_bin)
+    mask = ivar_bin > 0
+    flux_err_bin[mask] = np.sqrt(1.0 / ivar_bin[mask])
+    flux_err_bin[~mask] = np.nan
+
+    return wave_bin[mask], flux_bin[mask], flux_err_bin[mask]
 
 
 def lsq_to_base_space(lsq_values: dict, template: Template) -> dict:
