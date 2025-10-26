@@ -50,15 +50,18 @@ class NUTSSampler(BaseSampler):
         # init_values = {k: v[0] for k, v in starters.items()}
         # init_values = lsq_to_base_space(starters, self.template)
 
-        guide = AutoMultivariateNormal(
-            self.model, init_loc_fn=init_to_median(num_samples=1000)
-        )
+        guide = AutoMultivariateNormal(self.model, init_loc_fn=init_to_median())
         optimizer = optim.Adam(0.001)
 
-        svi = SVI(self.model, guide, optimizer, Trace_ELBO())
+        svi = SVI(
+            self.model,
+            guide,
+            optimizer,
+            Trace_ELBO(),
+        )
         svi_result = svi.run(
             svi_key,
-            25_000,
+            50_000,
             template=self.template,
             wave=self.wave,
             flux=self.flux,
