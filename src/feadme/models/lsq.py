@@ -63,14 +63,12 @@ class DiskProfileModel(Fittable1DModel):
             np.isinf(list(pars.values()))
         ):
             print(f"Invalid parameters for {self.name}: {pars}")
-            raise ValueError()
 
         if np.any(np.isnan(res)) or np.any(np.isinf(res)):
             print(f"Invalid model evaluation for {self.name}")
             from pprint import pprint
 
             pprint(pars)
-            raise ValueError()
 
         return res
 
