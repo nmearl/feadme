@@ -110,7 +110,7 @@ def _compute_disk_flux_vectorized(
             nu0,
         )
 
-        normalized_res = res / jnp.max(res)
+        normalized_res = jnp.where(res > 0.0, res / jnp.max(res), 0.0)
 
         return normalized_res * scale_i + offset_i
 

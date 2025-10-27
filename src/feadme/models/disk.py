@@ -107,9 +107,9 @@ def integrand(
     """
     # Eracleous et al, eq 10
     trans_fac_denominator = 1 - e * jnp.cos(phi - phi0)
-    trans_fac_denominator = jnp.sign(trans_fac_denominator) * jnp.maximum(
-        trans_fac_denominator, 1e-15
-    )
+    # trans_fac_denominator = jnp.sign(trans_fac_denominator) * jnp.maximum(
+    #     trans_fac_denominator, 1e-15
+    # )
     trans_fac = (1 + e) / trans_fac_denominator
     xi = xi_tilde * trans_fac
 
