@@ -25,17 +25,11 @@ def doppler_factor(
     cosphiphinot = jnp.cos(phi - phi0)
     scale = 1 - 2 / xi
     one_minus_sinisq_cosphisq = 1 - sini**2 * cosphi**2
-    one_minus_sinisq_cosphisq = jnp.sign(one_minus_sinisq_cosphisq) * jnp.maximum(
-        one_minus_sinisq_cosphisq, 1e-15
-    )
+    # one_minus_sinisq_cosphisq = jnp.maximum(one_minus_sinisq_cosphisq, 1e-15)
     one_minus_e_cosphiphinot = 1 - e * cosphiphinot
-    one_minus_e_cosphiphinot = jnp.sign(one_minus_e_cosphiphinot) * jnp.maximum(
-        one_minus_e_cosphiphinot, 1e-15
-    )
+    # one_minus_e_cosphiphinot = jnp.maximum(one_minus_e_cosphiphinot, 1e-15)
     one_plus_sini_cosphi = 1 + sini * cosphi
-    one_plus_sini_cosphi = jnp.sign(one_plus_sini_cosphi) * jnp.maximum(
-        one_plus_sini_cosphi, 1e-15
-    )
+    # one_plus_sini_cosphi = jnp.maximum(one_plus_sini_cosphi, 1e-15)
 
     # Eracleous et al, eq 6
     b_div_r = jnp.sqrt(one_minus_sinisq_cosphisq) * (
@@ -50,7 +44,7 @@ def doppler_factor(
     ) ** -0.5
 
     term_binner = 1 - b_div_r**2 * scale
-    term_binner = jnp.maximum(term_binner, 0.0)
+    # term_binner = jnp.maximum(term_binner, 0.0)
 
     # Eracleous et al, eq 15
     da = scale**-0.5
@@ -59,8 +53,8 @@ def doppler_factor(
     dd = b_div_r * one_minus_e_cosphiphinot**0.5 * sini * sinphi
     de = xi**0.5 * scale**0.5 * one_minus_sinisq_cosphisq**0.5
 
-    dc = jnp.sign(dc) * jnp.maximum(dc, 1e-15)
-    de = jnp.sign(de) * jnp.maximum(de, 1e-15)
+    # dc = jnp.sign(dc) * jnp.maximum(dc, 1e-15)
+    # de = jnp.sign(de) * jnp.maximum(de, 1e-15)
 
     inv_dop = gamma * (da - db / dc + dd / de)
     dop = inv_dop**-1
@@ -92,7 +86,7 @@ def Psi(xi: float, phi: float, inc: float) -> ArrayLike:
     # Eracleous et al, eq 8
     numerator = 1 - jnp.sin(inc) * jnp.cos(phi)
     denominator = 1 + jnp.sin(inc) * jnp.cos(phi)
-    denominator = jnp.sign(denominator) * jnp.maximum(denominator, 1e-15)
+    # denominator = jnp.sign(denominator) * jnp.maximum(denominator, 1e-15)
 
     return 1 + (1 / xi) * (numerator / denominator)
 
