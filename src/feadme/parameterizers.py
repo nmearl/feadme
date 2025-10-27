@@ -143,7 +143,7 @@ def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
 
     # Scalar base
     z = numpyro.sample(f"{samp_name}_base", dist.Normal(0.0, 1.0))
-    u = jnp.clip(norm.cdf(z), 1e-6, 1 - 1e-6)
+    u = jnp.clip(norm.cdf(z), 1e-3, 1 - 1e-3)
     low, high = param.low, param.high
 
     if param.distribution == Distribution.UNIFORM:
