@@ -50,20 +50,8 @@ class NUTSSampler(BaseSampler):
         # init_values = {k: v[0] for k, v in starters.items()}
         # init_values = lsq_to_base_space(starters, self.template)
 
-        guide = AutoMultivariateNormal(self.model, init_loc_fn=init_to_median())
-        optimizer = optax.chain(
-            optax.clip_by_global_norm(1.0),  # Clip gradients to prevent NaN explosion
-            optax.scale_by_adam(),  # Adam's moment estimates
-            optax.scale_by_schedule(  # Adaptive learning rate
-                optax.exponential_decay(
-                    init_value=0.01,
-                    transition_steps=5000,
-                    decay_rate=0.5,
-                    transition_begin=1000,  # Warmup before decay
-                )
-            ),
-            optax.scale(-1.0),  # Gradient descent (negative for minimization)
-        )
+        guide = AutoLaplaceApproximation(self.model, init_loc_fn=init_to_median())
+        optimizer = optim.Adam(step_size=1e-3)
 
         svi = SVI(
             self.model,
@@ -87,7 +75,9 @@ class NUTSSampler(BaseSampler):
         )
 
         line_flux = jnp.median(guide_samples["line_flux"], axis=0)
+        line_flux = jnp.where(jnp.isfinite(line_flux), line_flux, 0.0)
         disk_flux = jnp.median(guide_samples["disk_flux"], axis=0)
+        disk_flux = jnp.where(jnp.isfinite(disk_flux), disk_flux, 0.0)
 
         fig, ax = plt.subplots()
         ax.errorbar(
@@ -190,6 +180,7 @@ class NUTSSampler(BaseSampler):
             wave=self.wave,
             flux=self.flux,
             flux_err=self.flux_err,
+            extra_fields=("num_steps",),
         )
 
         posterior_samples = self.get_posterior_samples(mcmc, neutra)
@@ -198,4 +189,14 @@ class NUTSSampler(BaseSampler):
             mcmc, posterior_samples, prior_model=model
         )
 
-        jax.clear_caches()
+        def report_treedepth(mcmc, nuts_kernel):
+            info = mcmc.get_extra_fields()
+            num_steps = info["num_steps"]
+            tree_depth = jnp.log2(num_steps).astype(int) + 1
+            max_depth = nuts_kernel._max_tree_depth
+            frac = (tree_depth >= max_depth).mean()
+            logger.info(
+                f"Treedepth hits: {100*frac:.2f}% at depth {max_depth} ({jnp.min(tree_depth)}, {jnp.max(tree_depth)})"
+            )
+
+        report_treedepth(mcmc, kernel)
