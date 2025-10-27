@@ -44,7 +44,7 @@ def doppler_factor(
     ) ** -0.5
 
     term_binner = 1 - b_div_r**2 * scale
-    # term_binner = jnp.maximum(term_binner, 0.0)
+    term_binner = jnp.maximum(term_binner, 0.0)
 
     # Eracleous et al, eq 15
     da = scale**-0.5

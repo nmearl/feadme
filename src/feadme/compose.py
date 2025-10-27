@@ -110,7 +110,7 @@ def _compute_disk_flux_vectorized(
             nu0,
         )
 
-        normalized_res = jnp.where(res > 0.0, res / jnp.max(res), 0.0)
+        normalized_res = jnp.where(res > 0.0, res / jnp.max(res), res)
 
         return normalized_res * scale_i + offset_i
 
@@ -343,6 +343,6 @@ def evaluate_model(template: Template, wave: ArrayLike, param_mods: Dict[str, fl
 
     # Combine fluxes
     total_flux = total_disk_flux + total_line_flux
-    total_flux = jnp.where(jnp.isfinite(total_flux), total_flux, 0.0)
+    # total_flux = jnp.where(jnp.isfinite(total_flux), total_flux, 0.0)
 
     return total_flux, total_disk_flux, total_line_flux

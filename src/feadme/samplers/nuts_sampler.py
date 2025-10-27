@@ -42,11 +42,11 @@ class NUTSSampler(BaseSampler):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
-        # starters, _, _, _ = lsq_model_fitter(
-        #     self.template,
-        #     self._data,
-        #     out_dir=f"{self._config.output_path}",
-        # )
+        starters, _, _, _ = lsq_model_fitter(
+            self.template,
+            self._data,
+            out_dir=f"{self._config.output_path}",
+        )
         # init_values = {k: v[0] for k, v in starters.items()}
         # init_values = lsq_to_base_space(starters, self.template)
 
