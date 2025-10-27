@@ -13,7 +13,7 @@ from jax.typing import ArrayLike
 
 from .integrators import integrator
 from .parser import Distribution, Template, Shape, Parameter
-from .parameterizers import _sample_no_reparam as sample_reparam
+from .parameterizers import _sample_manual_reparam as sample_reparam
 from .parameterizers import create_reparam_config
 
 ERR = float(np.finfo(np.float32).tiny)
@@ -111,6 +111,7 @@ def _compute_disk_flux_vectorized(
         )
 
         normalized_res = res / jnp.max(res)
+
         return normalized_res * scale_i + offset_i
 
     prof_disk_flux = jax.vmap(_compute_single, in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0))(
@@ -224,6 +225,17 @@ def disk_model(
             )
             param_mods[samp_name] = param_samp
             line_arrs[param.name].append(param_samp)
+
+    # Limit outer radius
+    for i, prof in enumerate(template.disk_profiles):
+        numpyro.factor(
+            f"{prof.name}_radius_constraint",
+            jnp.where(
+                disk_arrs["outer_radius"][i] < 5.0e4,
+                0.0,
+                -jnp.inf,
+            ),
+        )
 
     # Convert lists to jax arrays
     disk_arrs = {k: jnp.array(v) for k, v in disk_arrs.items()}

@@ -17,7 +17,7 @@ from .utils import rebin_spectrum
 logger = loguru.logger.opt(colors=True)
 
 
-def load_data(data_path: str, template: Template) -> Data:
+def load_data(data_path: str, template: Template, rebin: bool = False) -> Data:
     """
     Load data from a CSV file and adjust the wavelength based on the
     template's redshift.
@@ -44,16 +44,13 @@ def load_data(data_path: str, template: Template) -> Data:
         data_tab["flux_err"].value,
     )
 
-    pre_data = Data.create(wave, flux, flux_err, template.mask)
-
-    bin_wave, bin_flux, bin_flux_err = rebin_spectrum(wave, flux, flux_err, dv=100)
-
-    post_data = Data.create(bin_wave, bin_flux, bin_flux_err, template.mask)
+    if rebin:
+        wave, flux, flux_err = rebin_spectrum(wave, flux, flux_err, dv=100)
 
     return Data.create(
-        wave=bin_wave,
-        flux=bin_flux,
-        flux_err=bin_flux_err,
+        wave=wave,
+        flux=flux,
+        flux_err=flux_err,
         mask=template.mask,
     )
 
@@ -138,7 +135,7 @@ def perform_sampling(config: Config):
     )
 
     # Initialize the sampler with the model and configuration
-    model = construct_model(template, auto_reparam=False)
+    model = construct_model(template, auto_reparam=True)
     sampler = NUTSSampler(model=model, config=config, prior_model=None)
 
     # If a results file already exists, load it instead of running the sampler

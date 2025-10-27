@@ -51,7 +51,19 @@ class NUTSSampler(BaseSampler):
         # init_values = lsq_to_base_space(starters, self.template)
 
         guide = AutoMultivariateNormal(self.model, init_loc_fn=init_to_median())
-        optimizer = optim.Adam(0.001)
+        optimizer = optax.chain(
+            optax.clip_by_global_norm(1.0),  # Clip gradients to prevent NaN explosion
+            optax.scale_by_adam(),  # Adam's moment estimates
+            optax.scale_by_schedule(  # Adaptive learning rate
+                optax.exponential_decay(
+                    init_value=0.01,
+                    transition_steps=5000,
+                    decay_rate=0.5,
+                    transition_begin=1000,  # Warmup before decay
+                )
+            ),
+            optax.scale(-1.0),  # Gradient descent (negative for minimization)
+        )
 
         svi = SVI(
             self.model,
@@ -61,7 +73,7 @@ class NUTSSampler(BaseSampler):
         )
         svi_result = svi.run(
             svi_key,
-            50_000,
+            25_000,
             template=self.template,
             wave=self.wave,
             flux=self.flux,
