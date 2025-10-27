@@ -226,8 +226,9 @@ def disk_model(
             param_mods[samp_name] = param_samp
             line_arrs[param.name].append(param_samp)
 
-    # Limit outer radius
+    # Apply physical constraints via factors
     for i, prof in enumerate(template.disk_profiles):
+        # Limit outer radius
         numpyro.factor(
             f"{prof.name}_radius_constraint",
             jnp.where(
@@ -342,5 +343,6 @@ def evaluate_model(template: Template, wave: ArrayLike, param_mods: Dict[str, fl
 
     # Combine fluxes
     total_flux = total_disk_flux + total_line_flux
+    total_flux = jnp.where(jnp.isfinite(total_flux), total_flux, 0.0)
 
     return total_flux, total_disk_flux, total_line_flux
