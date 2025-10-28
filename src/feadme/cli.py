@@ -135,7 +135,7 @@ def perform_sampling(config: Config):
     )
 
     # Initialize the sampler with the model and configuration
-    model = construct_model(template, auto_reparam=True)
+    model = construct_model(template, auto_reparam=False)
     sampler = NUTSSampler(model=model, config=config, prior_model=None)
 
     # If a results file already exists, load it instead of running the sampler
