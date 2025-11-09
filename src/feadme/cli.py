@@ -139,7 +139,10 @@ def perform_sampling(config: Config):
     sampler = NUTSSampler(model=model, config=config, prior_model=None)
 
     # If a results file already exists, load it instead of running the sampler
-    if (Path(output_path) / "results.nc").exists():
+    results_exist = (Path(output_path) / "results.nc").exists()
+    run_sampling = True
+
+    if results_exist:
         delta_time = None
 
         logger.info(
@@ -149,7 +152,24 @@ def perform_sampling(config: Config):
         sampler._idata = az.from_netcdf(
             f"{output_path}/results.nc",
         )
-    else:
+
+        # Parse the average r-hat from the sampler summary
+        rhat_value = sampler.summary["r_hat"].mean()
+
+        if rhat_value > 1.1:
+            logger.warning(
+                f"Warning: Average R-hat value is <light-red>{rhat_value}</light-red>, "
+                "indicating potential non-convergence."
+            )
+        else:
+            run_sampling = False
+
+            logger.info(
+                f"Average R-hat value is <light-green>{rhat_value}</light-green>, "
+                "indicating good convergence."
+            )
+
+    if run_sampling:
         start_time = Time.now()
         sampler.run()
         delta_time = (Time.now() - start_time).to_datetime()
