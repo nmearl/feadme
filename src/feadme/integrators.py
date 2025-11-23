@@ -223,4 +223,4 @@ def trap_jax_integrate(
     return jax.vmap(integrate_single_wavelength)(X)
 
 
-integrator = quad_jax_integrate
+integrator = trap_jax_integrate
