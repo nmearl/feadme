@@ -37,6 +37,21 @@ class Writable:
         with open(path, "w") as f:
             json.dump(serializable, f, indent=4)
 
+        return serializable
+
+    def to_dict(self):
+        """
+        Serialize the object to a JSON file.
+        """
+        raw = flax.struct.dataclasses.asdict(self)
+
+        serializable = tree_map(
+            lambda v: v.tolist() if hasattr(v, "tolist") else v,
+            raw,
+        )
+
+        return serializable
+
     @classmethod
     def from_json(cls, path: str | Path):
         """
@@ -272,7 +287,7 @@ class Profile:
 class Disk(Profile, Writable):
     center: Optional[Parameter] = None
     inner_radius: Optional[Parameter] = None
-    radius_ratio: Optional[Parameter] = None
+    radius_scale: Optional[Parameter] = None
     inclination: Optional[Parameter] = None
     sigma: Optional[Parameter] = None
     q: Optional[Parameter] = None
@@ -372,9 +387,9 @@ class Sampler(Writable):
     progress_bar: bool = True
     # TODO: Currently only NUTS is supported
     target_accept_prob: float = 0.9
-    max_tree_depth: int = 10
+    max_tree_depth: int = 11
     dense_mass: bool = True
-    use_prefit: bool = True
+    use_prefit: bool = False
     use_neutra: bool = False
 
     @property
