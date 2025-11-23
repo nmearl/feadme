@@ -20,6 +20,7 @@ import optax
 import matplotlib.pyplot as plt
 
 from .base_sampler import BaseSampler
+from ..compose import evaluate_model
 from ..models.lsq import lsq_model_fitter
 from ..utils import lsq_to_base_space
 
@@ -38,7 +39,7 @@ class NUTSSampler(BaseSampler):
 
         return posterior_samples
 
-    def _initialize_neutra(self) -> tuple:
+    def _initialize_svi(self) -> tuple:
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
@@ -50,8 +51,19 @@ class NUTSSampler(BaseSampler):
         # init_values = {k: v[0] for k, v in starters.items()}
         # init_values = lsq_to_base_space(starters, self.template)
 
-        guide = AutoLaplaceApproximation(self.model, init_loc_fn=init_to_median())
-        optimizer = optim.Adam(step_size=1e-3)
+        # guide = AutoLaplaceApproximation(self.model, init_loc_fn=init_to_median())
+        guide = AutoBNAFNormal(
+            self.model,
+            hidden_factors=[8, 8],
+            num_flows=1,  # init_loc_fn=init_to_median()
+        )
+
+        # optimizer = optim.Adam(step_size=1e-3)
+        schedule = optax.exponential_decay(0.001, 25000, 0.1)
+        optimizer = optax.chain(
+            optax.clip_by_global_norm(1.0),
+            optax.adam(learning_rate=schedule),  # Clip gradients
+        )
 
         svi = SVI(
             self.model,
@@ -67,6 +79,7 @@ class NUTSSampler(BaseSampler):
             flux=self.flux,
             flux_err=self.flux_err,
             progress_bar=self.sampler.progress_bar,
+            stable_update=True,
         )
 
         # Sample from the guide to check if it matches LSQ
@@ -79,32 +92,66 @@ class NUTSSampler(BaseSampler):
         disk_flux = jnp.median(guide_samples["disk_flux"], axis=0)
         disk_flux = jnp.where(jnp.isfinite(disk_flux), disk_flux, 0.0)
 
+        param_mods = {
+            k: jnp.median(v)
+            for k, v in guide_samples.items()
+            if "_flux" not in k and "_base" not in k
+        }
+        q_tot_flux, q_disk_flux, q_line_flux = evaluate_model(
+            self.template, self.wave / (1 + param_mods.get("redshift", 0.0)), param_mods
+        )
+
         fig, ax = plt.subplots()
+        tot_err = jnp.sqrt(
+            self.flux_err**2 + self.flux**2 * jnp.exp(2 * param_mods["white_noise"])
+        )
         ax.errorbar(
-            self.wave, self.flux, yerr=self.flux_err, fmt="o", color="grey", alpha=0.5
+            self.wave, self.flux, yerr=tot_err, fmt="o", color="grey", alpha=0.5
         )
         ax.plot(self.wave, line_flux, label="Line Flux Median")
         ax.plot(self.wave, disk_flux, label="Disk Flux Median")
         ax.plot(self.wave, line_flux + disk_flux, label="Total Flux Median")
+
+        ax.plot(self.wave, q_line_flux, linestyle="--")
+        ax.plot(self.wave, q_disk_flux, linestyle="--")
+        ax.plot(self.wave, q_tot_flux, linestyle="--")
+
         ax.legend()
         fig.savefig(f"{self._config.output_path}/guide_model_fit.png")
+        plt.close(fig)
 
         # Convergence check
         recent_losses = svi_result.losses[-1000:]
-        relative_std = jnp.std(recent_losses) / jnp.abs(jnp.mean(recent_losses))
+        relative_std = jnp.nanstd(recent_losses) / jnp.abs(jnp.nanmean(recent_losses))
 
         if relative_std > 0.01:
             logger.warning(
                 f"SVI may not have converged! Relative std: {relative_std:.4f}"
             )
             # Could add logic to extend SVI or use simpler guide
-        elif jnp.isnan(relative_std):
-            logger.error("SVI failed: NaN encountered in losses. Disabling NeuTra.")
-            return self.model, init_to_median(num_samples=1000), None
+        elif jnp.any(jnp.isnan(recent_losses)):
+            logger.error(
+                f"SVI encountered NaNs in losses. Relative std: {relative_std:.4f}"
+            )
+            # return self.model, init_to_median(num_samples=1000), None
         else:
             logger.info(
                 f"SVI converged successfully. Final loss: {svi_result.losses[-1]:.4f}"
             )
+
+        # Initialize from VI posterior
+        init_key, mcmc_key = random.split(mcmc_key)
+        chain_init_params = guide.sample_posterior(init_key, svi_result.params)
+
+        init_strategy = init_to_value(values=chain_init_params)
+
+        return self.model, init_strategy, None, guide, svi_result
+
+    def _initialize_neutra(self) -> tuple:
+        rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
+        rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
+
+        _, _, _, guide, svi_result = self._initialize_svi()
 
         neutra = NeuTraReparam(guide, svi_result.params)
         neutra_model = neutra.reparam(self.model)
@@ -152,7 +199,8 @@ class NUTSSampler(BaseSampler):
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
         if self.sampler.use_neutra:
-            model, init_strategy, neutra = self._initialize_neutra()
+            # model, init_strategy, neutra = self._initialize_neutra()
+            model, init_strategy, neutra, _, _ = self._initialize_svi()
         else:
             model, init_strategy, neutra = self._initialize_basic()
 
@@ -186,7 +234,7 @@ class NUTSSampler(BaseSampler):
         posterior_samples = self.get_posterior_samples(mcmc, neutra)
 
         self._idata = self._compose_inference_data(
-            mcmc, posterior_samples, prior_model=model
+            mcmc, posterior_samples, prior_model=self._prior_model
         )
 
         def report_treedepth(mcmc, nuts_kernel):
