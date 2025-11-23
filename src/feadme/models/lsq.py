@@ -21,7 +21,8 @@ class DiskProfileModel(Fittable1DModel):
     inner_radius = Parameter()
     # delta_radius = Parameter()
     # outer_radius = Parameter()
-    radius_ratio = Parameter()
+    # radius_ratio = Parameter()
+    radius_scale = Parameter()
     inclination = Parameter()
     sigma = Parameter()
     q = Parameter()
@@ -41,7 +42,13 @@ class DiskProfileModel(Fittable1DModel):
         for i, pn in enumerate(self.param_names):
             pars[f"{self._name}_{pn}"] = args[i].item()
 
-            if pn in ["inner_radius", "delta_radius", "sigma", "radius_ratio"]:
+            if pn in [
+                "inner_radius",
+                "outer_radius",
+                "delta_radius",
+                "sigma",
+                "radius_ratio",
+            ]:
                 pars[f"{self._name}_{pn}"] = 10 ** pars[f"{self._name}_{pn}"]
 
         # pars[f"{self.name}_outer_radius"] = (
@@ -49,13 +56,22 @@ class DiskProfileModel(Fittable1DModel):
         # )
         # del pars[f"{self.name}_delta_radius"]
 
-        pars[f"{self._name}_outer_radius"] = (
-            pars[f"{self._name}_inner_radius"] * pars[f"{self._name}_radius_ratio"]
-        )
-        del pars[f"{self._name}_radius_ratio"]
+        # pars[f"{self._name}_outer_radius"] = (
+        #     pars[f"{self._name}_inner_radius"] * pars[f"{self._name}_radius_ratio"]
+        # )
+        # del pars[f"{self._name}_radius_ratio"]
 
         # if pars[f"{self._name}_inner_radius"] >= pars[f"{self._name}_outer_radius"]:
         #     raise np.zeros(x.shape)
+
+        inner_radius = pars[f"{self.name}_inner_radius"]
+        radius_scale = pars[f"{self.name}_radius_scale"]
+
+        pars[f"{self.name}_outer_radius"] = 10 ** (
+            np.log10(inner_radius)
+            + (np.log10(5e4) - np.log10(inner_radius)) * radius_scale
+        )
+        del pars[f"{self.name}_radius_scale"]
 
         res = evaluate_model(self._template, x, pars)[0]
 
@@ -151,7 +167,13 @@ def lsq_model_fitter(
             param_low = param.low
             param_high = param.high
 
-            if param.name in ["inner_radius", "delta_radius", "sigma", "radius_ratio"]:
+            if param.name in [
+                "inner_radius",
+                "outer_radius",
+                "delta_radius",
+                "sigma",
+                "radius_ratio",
+            ]:
                 param_low = np.log10(param_low)
                 param_high = np.log10(param_high)
 
@@ -165,7 +187,13 @@ def lsq_model_fitter(
                 param_val = (
                     np.log10(param_val)
                     if param.name
-                    in ["inner_radius", "delta_radius", "sigma", "radius_ratio"]
+                    in [
+                        "inner_radius",
+                        "outer_radius",
+                        "delta_radius",
+                        "sigma",
+                        "radius_ratio",
+                    ]
                     else param_val
                 )
                 in_par_values[param.name] = param_val
@@ -331,8 +359,7 @@ def lsq_model_fitter(
         ax.legend()
         fig.savefig(Path(out_dir or "") / "lsq_model_fit.png")
 
-        if not show_plot:
-            plt.close(fig)
+        plt.close(fig)
 
     starters = {}
 
@@ -380,6 +407,7 @@ def lsq_model_fitter(
 
             if pn in [
                 "inner_radius",
+                "outer_radius",
                 "delta_radius",
                 "sigma",
                 "vel_width",
@@ -401,29 +429,30 @@ def lsq_model_fitter(
     for prof in template.disk_profiles:
         starters[f"{prof.name}_outer_radius"] = (
             starters[f"{prof.name}_inner_radius"][0]
-            * starters[f"{prof.name}_radius_ratio"][0],
+            + (5e4 - starters[f"{prof.name}_inner_radius"][0])
+            * starters[f"{prof.name}_radius_scale"][0],
             0,
             1e6,
         )
 
-        if False:
-            radius_ratio_dist = unc.normal(
-                starters[f"{prof.name}_radius_ratio"][0],
-                std=starters[f"{prof.name}_radius_ratio"][1],
-                n_samples=10000,
-            )
-
-            inner_radius_dist = unc.normal(
-                starters[f"{prof.name}_inner_radius"][0],
-                std=starters[f"{prof.name}_inner_radius"][1],
-                n_samples=10000,
-            )
-
-            starters[f"{prof.name}_outer_radius"] = (
-                (inner_radius_dist * radius_ratio_dist).pdf_median(),
-                (inner_radius_dist * radius_ratio_dist).pdf_std(),
-                0,
-                1e6,
-            )
+        # if False:
+        #     radius_ratio_dist = unc.normal(
+        #         starters[f"{prof.name}_radius_ratio"][0],
+        #         std=starters[f"{prof.name}_radius_ratio"][1],
+        #         n_samples=10000,
+        #     )
+        #
+        #     inner_radius_dist = unc.normal(
+        #         starters[f"{prof.name}_inner_radius"][0],
+        #         std=starters[f"{prof.name}_inner_radius"][1],
+        #         n_samples=10000,
+        #     )
+        #
+        #     starters[f"{prof.name}_outer_radius"] = (
+        #         (inner_radius_dist * radius_ratio_dist).pdf_median(),
+        #         (inner_radius_dist * radius_ratio_dist).pdf_std(),
+        #         0,
+        #         1e6,
+        #     )
 
     return starters, rest_wave / (1 + fit_z), fit_mod(rest_wave), fit_mod
