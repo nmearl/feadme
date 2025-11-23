@@ -13,8 +13,11 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-fixed_quad_xi = ClenshawCurtisRule(order=32).integrate
-fixed_quad_phi = ClenshawCurtisRule(order=64).integrate
+XI_ORDER = 24
+PHI_ORDER = 48
+
+fixed_quad_xi = ClenshawCurtisRule(order=XI_ORDER).integrate
+fixed_quad_phi = ClenshawCurtisRule(order=PHI_ORDER).integrate
 # fixed_quad_xi = GaussKronrodRule(order=31).integrate
 # fixed_quad_phi = GaussKronrodRule(order=61).integrate
 # fixed_quad_xi = TanhSinhRule(order=63).integrate
@@ -220,4 +223,4 @@ def trap_jax_integrate(
     return jax.vmap(integrate_single_wavelength)(X)
 
 
-integrator = trap_jax_integrate
+integrator = quad_jax_integrate
