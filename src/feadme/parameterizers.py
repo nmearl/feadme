@@ -33,6 +33,18 @@ def _sample_no_reparam(samp_name: str, param: Parameter) -> ArrayLike:
 
         return param_samp
 
+    if param.name == "inclination":
+        # param.low, param.high are the inclination bounds (in radians)
+        i_min, i_max = param.low, param.high
+
+        # cos(i) decreases with i, so the interval is [cos(i_max), cos(i_min)]
+        mu = numpyro.sample(
+            f"{samp_name}_base",
+            dist.Uniform(jnp.cos(i_max), jnp.cos(i_min)),
+        )
+        incl = jnp.arccos(mu)
+        return numpyro.deterministic(samp_name, incl)
+
     if param.distribution == Distribution.UNIFORM:
         param_samp = numpyro.sample(samp_name, dist.Uniform(param.low, param.high))
 
@@ -153,19 +165,6 @@ def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
 
         return numpyro.deterministic(samp_name, val)
 
-    if param.distribution in [
-        Distribution.UNIFORM,
-        Distribution.NORMAL,
-        Distribution.HALF_NORMAL,
-    ]:
-        val = lower_limit + u * (upper_limit - lower_limit)
-    else:
-        log_low = jnp.log(lower_limit)
-        log_high = jnp.log(upper_limit)
-        val = jnp.exp(log_low + u * (log_high - log_low))
-
-    return numpyro.deterministic(samp_name, val)
-
     if param.distribution == Distribution.UNIFORM:
         val = lower_limit + u * (upper_limit - lower_limit)
 
@@ -242,33 +241,6 @@ def _sample_auto_reparam(samp_name: str, param: Parameter) -> ArrayLike:
         )
         incl = jnp.arccos(mu)
         return numpyro.deterministic(samp_name, incl)
-
-    if param.distribution in [
-        Distribution.UNIFORM,
-        Distribution.NORMAL,
-        Distribution.HALF_NORMAL,
-    ]:
-        base = dist.Uniform(0.0, 1.0)
-        transform = dist.transforms.AffineTransform(
-            loc=param.low, scale=param.high - param.low
-        )
-
-    else:
-        base = dist.Uniform(0.0, 1.0)
-        transform = dist.transforms.ComposeTransform(
-            [
-                dist.transforms.AffineTransform(
-                    loc=jnp.log(param.low),
-                    scale=jnp.log(param.high) - jnp.log(param.low),
-                ),
-                dist.transforms.ExpTransform(),
-            ]
-        )
-
-    return numpyro.sample(
-        samp_name,
-        dist.TransformedDistribution(base, transform),
-    )
 
     if param.distribution == Distribution.UNIFORM:
         base = dist.Uniform(0.0, 1.0)
