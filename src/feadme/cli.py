@@ -135,13 +135,12 @@ def perform_sampling(config: Config):
     )
 
     # Initialize the sampler with the model and configuration
+    prior_model = construct_model(template, auto_reparam=False)
     model = construct_model(template, auto_reparam=False)
-    sampler = NUTSSampler(model=model, config=config, prior_model=None)
+    sampler = NUTSSampler(model=model, config=config, prior_model=prior_model)
+    results_exist = (Path(output_path) / "results.nc").exists()
 
     # If a results file already exists, load it instead of running the sampler
-    results_exist = (Path(output_path) / "results.nc").exists()
-    run_sampling = True
-
     if results_exist:
         delta_time = None
 
@@ -152,24 +151,7 @@ def perform_sampling(config: Config):
         sampler._idata = az.from_netcdf(
             f"{output_path}/results.nc",
         )
-
-        # Parse the average r-hat from the sampler summary
-        rhat_value = sampler.summary["r_hat"].mean()
-
-        if rhat_value > 1.1:
-            logger.warning(
-                f"Warning: Average R-hat value is <light-red>{rhat_value}</light-red>, "
-                "indicating potential non-convergence."
-            )
-        else:
-            run_sampling = False
-
-            logger.info(
-                f"Average R-hat value is <light-green>{rhat_value}</light-green>, "
-                "indicating good convergence."
-            )
-
-    if run_sampling:
+    else:
         start_time = Time.now()
         sampler.run()
         delta_time = (Time.now() - start_time).to_datetime()
@@ -185,7 +167,8 @@ def perform_sampling(config: Config):
     except:
         pass
 
-    sampler.write_results()
+    if not results_exist:
+        sampler.write_results()
 
     logger.info("Generating plots...")
     sampler.plot_results()
@@ -300,6 +283,11 @@ def cli(
         Perform NeuTra preprocessing to improve sampling.
     """
     # Parse the template from JSON
+    # with open(template_path, "r") as f:
+    #     template_dict = json.load(f)
+    #     template_dict["white_noise"]["fixed"] = True
+    #
+    # template = Template.from_dict(template_dict)
     template = Template.from_json(Path(template_path))
 
     # Run pre-fit to initialize parameters

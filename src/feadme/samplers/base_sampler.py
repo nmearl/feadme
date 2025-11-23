@@ -346,11 +346,11 @@ class BaseSampler(ABC):
 
         out_path = Path(f"{self._config.output_path}/results.nc")
 
-        if not out_path.exists():
-            logger.info(
-                f"Results written to <green>{self._config.output_path}/results.nc</green>."
-            )
-            az.to_netcdf(self._idata, str(out_path))
+        # if not out_path.exists():
+        logger.info(
+            f"Results written to <green>{self._config.output_path}/results.nc</green>."
+        )
+        az.to_netcdf(self._idata, str(out_path))
 
         self.summary.to_csv(
             f"{self._config.output_path}/summary.csv",
