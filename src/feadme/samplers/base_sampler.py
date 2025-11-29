@@ -7,6 +7,7 @@ import flax.struct
 import jax
 import jax.numpy as jnp
 import loguru
+import numpy as np
 import pandas as pd
 import xarray as xr
 from jax.typing import ArrayLike
@@ -68,6 +69,7 @@ class BaseSampler(ABC):
         self._prior_model = prior_model or model
         self._idata = None
         self._summary = None
+        self._template = None
 
     @property
     def model(self):
@@ -91,7 +93,7 @@ class BaseSampler(ABC):
 
     @property
     def template(self) -> Template:
-        return self._config.template
+        return self._template or self._config.template
 
     @property
     def sampler(self) -> Sampler:
@@ -220,6 +222,15 @@ class BaseSampler(ABC):
                     ],
                     round_to=10,
                 )
+                # summary["fixed"] = [x in self._get_fixed_vars() for x in summary.index]
+
+            # Rename index column to "parameter", then remove index
+            summary.index.name = "parameter"
+
+            # Sort table so fixed variables are at the bottom, then sort by index
+            # summary = summary.sort_values(
+            #     by=["fixed", "parameter"], ascending=[True, True]
+            # )
 
             col_stat = "hdi" if "hdi_16%" in summary.columns else "eti"
 
@@ -277,10 +288,7 @@ class BaseSampler(ABC):
 
         return num_divergences, divergence_rate
 
-    def _get_ignored_vars(self, include_shared=False) -> list[str]:
-        """
-        Get a list of variables to ignore in the pair plot and summary.
-        """
+    def _get_fixed_vars(self) -> list[str]:
         fixed_vars = [
             f"{prof.name}_{param.name}"
             for prof in self.template.disk_profiles + self.template.line_profiles
@@ -292,6 +300,40 @@ class BaseSampler(ABC):
 
         if self.template.white_noise.fixed:
             fixed_vars.append(self.template.white_noise.name)
+
+        # If inner radius and radius scale are both fixed, fix outer radius
+        for prof in self.template.disk_profiles:
+            if prof.inner_radius.fixed and prof.radius_scale.fixed:
+                fixed_vars.append(f"{prof.name}_outer_radius")
+
+        # Post-hoc fixed values
+        post_hoc = [
+            var
+            for var in self._idata.posterior.data_vars
+            if np.std(self._idata.posterior[var].values) < 1e-8
+        ]
+
+        return [
+            x for x in self._idata.posterior.data_vars if x in fixed_vars + post_hoc
+        ]
+
+    def _get_nuisance_vars(self) -> list[str]:
+        nuisance_vars = [
+            x
+            for x in self._idata.posterior.data_vars
+            if x.endswith("_flux")
+            or x.endswith("_base")
+            or x.endswith("_unwrapped")
+            or "auto_shared_latent" in x
+        ]
+
+        return nuisance_vars
+
+    def _get_ignored_vars(self, include_shared=False) -> list[str]:
+        """
+        Get a list of variables to ignore in the pair plot and summary.
+        """
+        fixed_vars = self._get_fixed_vars()
 
         orphaned_vars = [
             f"{prof.name}_{param.name}"
@@ -307,14 +349,12 @@ class BaseSampler(ABC):
             if f"{param.shared}_{param.name}" not in fixed_vars + orphaned_vars
         ]
 
+        nuisance_vars = self._get_nuisance_vars()
+
         ignored_vars = [
             x
             for x in self._idata.posterior.data_vars
-            if x.endswith("_flux")
-            or x.endswith("_base")
-            or x.endswith("_unwrapped")
-            or "auto_shared_latent" in x
-            or x in fixed_vars + orphaned_vars
+            if x in nuisance_vars + fixed_vars + orphaned_vars
         ]
 
         if include_shared:
@@ -335,7 +375,11 @@ class BaseSampler(ABC):
             if param.circular
         ]
 
-        return [x for x in self._idata.posterior.data_vars if x in circ_vars]
+        return [
+            x
+            for x in self._idata.posterior.data_vars
+            if x in circ_vars and x not in self._get_fixed_vars()
+        ]
 
     def write_results(self):
         """
