@@ -13,10 +13,10 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-fixed_quad_xi = ClenshawCurtisRule(order=48).integrate
-fixed_quad_phi = ClenshawCurtisRule(order=96).integrate
-# fixed_quad_xi = GaussKronrodRule(order=31).integrate
-# fixed_quad_phi = GaussKronrodRule(order=61).integrate
+# fixed_quad_xi = ClenshawCurtisRule(order=48).integrate
+# fixed_quad_phi = ClenshawCurtisRule(order=96).integrate
+fixed_quad_xi = GaussKronrodRule(order=61).integrate
+fixed_quad_phi = GaussKronrodRule(order=61).integrate
 # fixed_quad_xi = TanhSinhRule(order=63).integrate
 # fixed_quad_phi = TanhSinhRule(order=127).integrate
 

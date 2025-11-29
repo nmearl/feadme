@@ -142,9 +142,10 @@ def truncnorm_ppf(q, loc, scale, lower_limit, upper_limit):
 
 def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
     if param.circular:
-        circ_base = numpyro.sample(f"{samp_name}_base", dist.Normal(0, 1).expand([2]))
+        circ_base_x = numpyro.sample(f"{samp_name}_base_x", dist.Normal(0, 1.0))
+        circ_base_y = numpyro.sample(f"{samp_name}_base_y", dist.Normal(0, 1.0))
         param_samp = numpyro.deterministic(
-            samp_name, jnp.mod(jnp.arctan2(circ_base[1], circ_base[0]), 2 * jnp.pi)
+            samp_name, jnp.mod(jnp.arctan2(circ_base_y, circ_base_x), 2 * jnp.pi)
         )
         return param_samp
 
