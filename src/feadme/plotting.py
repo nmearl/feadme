@@ -162,6 +162,14 @@ def plot_model_fit(
         for param in prof.fixed
     }
 
+    # If inner radius and radius scale are both fixed, fix outer radius
+    for prof in template.disk_profiles:
+        if prof.inner_radius.fixed and prof.radius_scale.fixed:
+            fixed_vars[f"{prof.name}_outer_radius"] = 10 ** (
+                np.log10(fixed_vars[f"{prof.name}_inner_radius"])
+                * prof.radius_scale.value
+            )
+
     orphaned_vars = {
         f"{prof.name}_{param.name}": fixed_vars[f"{param.shared}_{param.name}"]
         for prof in template.disk_profiles + template.line_profiles
@@ -275,10 +283,15 @@ def plot_corner_priors(
     log_vars = log_vars or []
 
     # Filter out ignored variables
-    var_names = [var for var in idata.prior.data_vars if var not in ignored_vars]
+    var_names = [
+        var for var in idata.prior.data_vars if var not in ignored_vars + ["total_flux"]
+    ]
 
     samples_ds = az.extract(idata, group="prior", var_names=var_names, combined=True)
     samples = np.vstack([samples_ds[var].values for var in var_names]).T
+
+    # Remove all inf/nan values from samples
+    samples = samples[np.all(np.isfinite(samples), axis=1)]
 
     # Compute quantiles
     quantiles = [0.16, 0.5, 0.84]
