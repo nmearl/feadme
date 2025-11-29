@@ -12,6 +12,7 @@ from .compose import construct_model
 from .models.lsq import lsq_model_fitter
 from .parser import Config, Template, Data, Sampler
 from .samplers.nuts_sampler import NUTSSampler
+from .samplers.svi_sampler import SVISampler
 from .utils import rebin_spectrum
 
 logger = loguru.logger.opt(colors=True)
@@ -137,7 +138,15 @@ def perform_sampling(config: Config):
     # Initialize the sampler with the model and configuration
     prior_model = construct_model(template, auto_reparam=False)
     model = construct_model(template, auto_reparam=False)
-    sampler = NUTSSampler(model=model, config=config, prior_model=prior_model)
+    # sampler = NUTSSampler(model=model, config=config, prior_model=prior_model)
+    # sampler = DynestySampler(model=model, config=config, prior_model=prior_model)
+    # sampler = JAXNSSampler(model=model, config=config, prior_model=prior_model)
+    sampler = SVISampler(
+        model=model,
+        config=config,
+        prior_model=prior_model,
+        num_posterior_samples=2000,
+    )
     results_exist = (Path(output_path) / "results.nc").exists()
 
     # If a results file already exists, load it instead of running the sampler
@@ -286,6 +295,7 @@ def cli(
     # with open(template_path, "r") as f:
     #     template_dict = json.load(f)
     #     template_dict["white_noise"]["fixed"] = True
+    #     template_dict["redshift"]["fixed"] = True
     #
     # template = Template.from_dict(template_dict)
     template = Template.from_json(Path(template_path))
