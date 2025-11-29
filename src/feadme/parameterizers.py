@@ -35,7 +35,7 @@ def _sample_no_reparam(samp_name: str, param: Parameter) -> ArrayLike:
 
     if param.name == "inclination":
         # param.low, param.high are the inclination bounds (in radians)
-        i_min, i_max = param.low, param.high
+        i_min, i_max = param.low, 1.5
 
         # cos(i) decreases with i, so the interval is [cos(i_max), cos(i_min)]
         mu = numpyro.sample(
