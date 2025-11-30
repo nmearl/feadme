@@ -109,7 +109,9 @@ class SVISampler(BaseSampler):
         # Check convergence
         while self._check_convergence() and check_count < 3:
             check_count += 1
-            logger.info(f"Re-running SVI to improve convergence (attempt {check_count})...")
+            logger.info(
+                f"Re-running SVI to improve convergence (attempt {check_count})..."
+            )
 
             self._svi_result = self._svi.run(
                 svi_key,
@@ -159,7 +161,7 @@ class SVISampler(BaseSampler):
                 f"Relative std: {relative_std:.6f}"
             )
 
-        return not jnp.any(jnp.isnan(recent_losses))
+        return not (relative_std > 0.01 or jnp.any(jnp.isnan(recent_losses)))
 
     def _plot_convergence(self):
         """Plot SVI loss convergence"""
