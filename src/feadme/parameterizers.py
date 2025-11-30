@@ -141,12 +141,11 @@ def truncnorm_ppf(q, loc, scale, lower_limit, upper_limit):
 
 def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
     if param.circular:
-        circ_base_x = numpyro.sample(f"{samp_name}_base_x", dist.Normal(0, 1.0))
-        circ_base_y = numpyro.sample(f"{samp_name}_base_y", dist.Normal(0, 1.0))
-        param_samp = numpyro.deterministic(
-            samp_name, jnp.mod(jnp.arctan2(circ_base_y, circ_base_x), 2 * jnp.pi)
+        circ_base = numpyro.sample(
+            f"{samp_name}_base",
+            dist.VonMises(loc=0.0, concentration=1e-3),  # ~uniform on circle
         )
-        return param_samp
+        return numpyro.deterministic(samp_name, circ_base % (2 * jnp.pi))
 
     z = numpyro.sample(f"{samp_name}_base", dist.Normal(0.0, 1.0))
 
@@ -199,7 +198,7 @@ def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
     return numpyro.deterministic(samp_name, val)
 
 
-def create_reparam_config(template: Template) -> dict:
+def create_reparam_config(template: Template, circ_only: bool = False) -> dict:
     """Create reparameterization configuration for parameters."""
     reparam_config = {}
 
@@ -209,15 +208,16 @@ def create_reparam_config(template: Template) -> dict:
 
             if param.circular:
                 reparam_config[f"{samp_name}_base"] = CircularReparam()
-            else:
+            elif not circ_only:
                 reparam_config[samp_name] = TransformReparam()
 
     # Template-level parameters
-    if not template.redshift.fixed:
-        reparam_config["redshift"] = TransformReparam()
+    if not circ_only:
+        if not template.redshift.fixed:
+            reparam_config["redshift"] = TransformReparam()
 
-    if not template.white_noise.fixed:
-        reparam_config["white_noise"] = TransformReparam()
+        if not template.white_noise.fixed:
+            reparam_config["white_noise"] = TransformReparam()
 
     return reparam_config
 
