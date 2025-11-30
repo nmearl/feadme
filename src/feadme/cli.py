@@ -146,6 +146,7 @@ def perform_sampling(config: Config):
         config=config,
         prior_model=prior_model,
         num_posterior_samples=2000,
+        num_steps=20000,
     )
     results_exist = (Path(output_path) / "results.nc").exists()
 
