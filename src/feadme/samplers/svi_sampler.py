@@ -9,7 +9,7 @@ import numpy as np
 import optax
 from jax.typing import ArrayLike
 from numpyro import optim
-from numpyro.infer import SVI, Trace_ELBO
+from numpyro.infer import SVI, Trace_ELBO, init_to_median
 from numpyro.infer.autoguide import AutoBNAFNormal
 
 from .base_sampler import BaseSampler
@@ -55,10 +55,10 @@ class SVISampler(BaseSampler):
         # SVI parameters
         num_steps = self.svi_kwargs.get("num_steps", 25000)
         learning_rate = self.svi_kwargs.get("learning_rate", 0.001)
-        decay_rate = self.svi_kwargs.get("decay_rate", 0.1)
-        decay_steps = self.svi_kwargs.get("decay_steps", num_steps // 2)
-        num_flows = self.svi_kwargs.get("num_flows", 2)
-        hidden_factors = self.svi_kwargs.get("hidden_factors", [8, 8])
+        decay_rate = self.svi_kwargs.get("decay_rate", 0.5)
+        decay_steps = self.svi_kwargs.get("decay_steps", int(num_steps * 0.7))
+        num_flows = self.svi_kwargs.get("num_flows", 4)
+        hidden_factors = self.svi_kwargs.get("hidden_factors", [16, 16])
 
         logger.info(
             f"Starting SVI with {num_steps} steps, "
@@ -68,20 +68,12 @@ class SVISampler(BaseSampler):
         rng_key = jax.random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key = jax.random.split(rng_key)
 
-        # Optional: Initialize from LSQ
-        if self.sampler.use_prefit:
-            logger.info("Running LSQ pre-fit for initialization...")
-            starters, _, _, _ = lsq_model_fitter(
-                self.template,
-                self._data,
-                out_dir=f"{self._config.output_path}",
-            )
-
         # Create guide
         self._guide = AutoBNAFNormal(
             self.model,
             hidden_factors=hidden_factors,
             num_flows=num_flows,
+            init_loc_fn=init_to_median(),
         )
 
         # Setup optimizer with learning rate schedule
@@ -156,7 +148,7 @@ class SVISampler(BaseSampler):
         """Plot SVI loss convergence"""
         fig, ax = plt.subplots(figsize=(10, 4))
 
-        losses = self._svi_result.losses
+        losses = self._svi_result.losses[1000:]
         ax.plot(losses, alpha=0.6, label="Loss")
 
         # Plot moving average
@@ -170,8 +162,6 @@ class SVISampler(BaseSampler):
                 linewidth=2,
                 label=f"Moving avg (window={window})",
             )
-
-        ax.set_yscale("log")
 
         ax.set_xlabel("Iteration")
         ax.set_ylabel("ELBO Loss")

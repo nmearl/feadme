@@ -34,13 +34,12 @@ def _sample_no_reparam(samp_name: str, param: Parameter) -> ArrayLike:
         return param_samp
 
     if param.name == "inclination":
-        # param.low, param.high are the inclination bounds (in radians)
-        i_min, i_max = param.low, 1.5
+        mu_min = jnp.cos(1.5)  # cos(i_max)
+        mu_max = jnp.cos(param.low)  # cos(i_min)
 
-        # cos(i) decreases with i, so the interval is [cos(i_max), cos(i_min)]
         mu = numpyro.sample(
             f"{samp_name}_base",
-            dist.Uniform(jnp.cos(i_max), jnp.cos(i_min)),
+            dist.Uniform(mu_min, mu_max),
         )
         incl = jnp.arccos(mu)
         return numpyro.deterministic(samp_name, incl)
