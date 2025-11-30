@@ -31,35 +31,51 @@ def _compute_line_flux_vectorized(
 ) -> ArrayLike:
     """
     Compute the line flux for multiple spectral lines in a vectorized manner.
+
+    Parameters
+    ----------
+    wave : ArrayLike
+        Wavelength array
+    center : ArrayLike
+        Line centers in wavelength units
+    vel_width : ArrayLike
+        Velocity dispersion (sigma_v) in km/s
+    amplitude : ArrayLike
+        Line amplitudes
+    shape : ArrayLike
+        Boolean array: True for Gaussian, False for Lorentzian
     """
     if len(center) == 0:
         return jnp.zeros_like(wave)
 
-    # Pre-compute constants to avoid repeated calculations
-    fwhm_factor = 1.0 / 2.35482  # Gaussian FWHM to sigma conversion
-    lorentz_factor = 0.5
-
     # Broadcast for vectorized computation: (n_wave, n_lines)
     wave_bc = wave[:, None]
     centers_bc = center[None, :]
-    vel_widths_bc = vel_width[None, :]
+    vel_widths_bc = vel_width[None, :]  # This is sigma_v, not FWHM
     amplitudes_bc = amplitude[None, :]
     shapes_bc = shape[None, :]
 
-    # Compute delta_lamb and fwhm once
+    # Compute wavelength offset
     delta_lamb = wave_bc - centers_bc
-    fwhm = vel_widths_bc / c_kms * centers_bc
 
-    # More efficient Gaussian computation
-    sigma = fwhm * fwhm_factor
-    gau_exp = -0.5 * (delta_lamb / sigma) ** 2
+    # Convert velocity dispersion (sigma_v) to wavelength dispersion (sigma_lambda)
+    # sigma_lambda = (sigma_v / c) * lambda_0
+    sigma_lambda = vel_widths_bc / c_kms * centers_bc
+
+    # Gaussian profile: exp[-(x - x0)^2 / (2 * sigma^2)]
+    gau_exp = -0.5 * (delta_lamb / sigma_lambda) ** 2
     gau = amplitudes_bc * jnp.exp(gau_exp)
 
-    # More efficient Lorentzian computation
-    hwhm = fwhm * lorentz_factor
-    lor = amplitudes_bc * hwhm / (delta_lamb**2 + hwhm**2)
+    # Lorentzian profile
+    # For Lorentzian, HWHM is more natural, but we have sigma
+    # Convert sigma to FWHM, then to HWHM
+    # FWHM_gaussian = 2.35482 * sigma
+    # For Lorentzian with same width perception, use same FWHM
+    fwhm_lambda = 2.35482 * sigma_lambda
+    hwhm_lambda = 0.5 * fwhm_lambda
+    lor = amplitudes_bc * hwhm_lambda / (delta_lamb**2 + hwhm_lambda**2)
 
-    # Select based on shape
+    # Select based on shape (True = Gaussian, False = Lorentzian)
     line_fluxes = jnp.where(shapes_bc, gau, lor)
 
     # Sum over all lines
@@ -104,7 +120,7 @@ def _compute_disk_flux_vectorized(
             inner_i,
             outer_i,
             0.0,
-            2 * jnp.pi,
+            2 * jnp.pi - 1e-5,
             jnp.asarray(X),
             inc_i,
             local_sigma,
@@ -114,7 +130,7 @@ def _compute_disk_flux_vectorized(
             nu0,
         )
 
-        normalized_res = jnp.where(res > 0.0, res / jnp.max(res), res)
+        normalized_res = res / jnp.max(res)
 
         return normalized_res * scale_i + offset_i
 
@@ -270,9 +286,11 @@ def disk_model(
         numpyro.sample("total_flux", dist.Normal(total_flux, total_error), obs=flux)
 
 
-def construct_model(template: Template, auto_reparam: bool = False):
+def construct_model(
+    template: Template, auto_reparam: bool = False, circ_only: bool = False
+):
     if auto_reparam:
-        reparam_config = create_reparam_config(template)
+        reparam_config = create_reparam_config(template, circ_only=circ_only)
         return reparam(disk_model, config=reparam_config)
     else:
         return disk_model
