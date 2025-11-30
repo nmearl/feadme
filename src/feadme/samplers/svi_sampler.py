@@ -104,9 +104,12 @@ class SVISampler(BaseSampler):
             stable_update=True,
         )
 
+        check_count = 0
+
         # Check convergence
-        while self._check_convergence():
-            logger.warning("SVI did not converge properly.")
+        while self._check_convergence() and check_count < 3:
+            check_count += 1
+            logger.info(f"Re-running SVI to improve convergence (attempt {check_count})...")
 
             self._svi_result = self._svi.run(
                 svi_key,
