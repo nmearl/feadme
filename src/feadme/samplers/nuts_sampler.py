@@ -1,28 +1,23 @@
-import jax
-import loguru
 import time
+from typing import Callable
 
+import arviz as az
 import jax.numpy as jnp
 import jax.random as random
 import loguru
+import matplotlib.pyplot as plt
+import optax
 from jax.typing import ArrayLike
-from numpyro import optim
-from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO, HMC
+from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO
 from numpyro.infer import init_to_median, init_to_value
 from numpyro.infer.autoguide import (
     AutoBNAFNormal,
-    AutoIAFNormal,
-    AutoMultivariateNormal,
-    AutoLaplaceApproximation,
 )
 from numpyro.infer.reparam import NeuTraReparam
-import optax
-import matplotlib.pyplot as plt
 
 from .base_sampler import BaseSampler
 from ..compose import evaluate_model
 from ..models.lsq import lsq_model_fitter
-from ..utils import lsq_to_base_space
 
 logger = loguru.logger.opt(colors=True)
 
@@ -38,6 +33,25 @@ class NUTSSampler(BaseSampler):
             posterior_samples = mcmc.get_samples()
 
         return posterior_samples
+
+    def _compose_inference_data(
+        self,
+        mcmc: MCMC,
+        posterior_samples: dict[str, ArrayLike],
+        prior_model: Callable = None,
+    ) -> az.InferenceData:
+        predictive_post, predictive_prior, log_likelihood = self._inference_data(
+            posterior_samples, prior_model
+        )
+
+        idata = az.from_numpyro(
+            mcmc,
+            posterior_predictive=predictive_post,
+            prior=predictive_prior,
+            log_likelihood=log_likelihood,
+        )
+
+        return idata
 
     def _initialize_svi(self) -> tuple:
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)

@@ -113,26 +113,27 @@ class BaseSampler(ABC):
         """
         self.sample()
 
-    def _compose_inference_data(
+    def _inference_data(
         self,
-        mcmc: MCMC,
         posterior_samples: dict[str, ArrayLike],
         prior_model: Callable = None,
-    ) -> az.InferenceData:
+    ) -> tuple[dict, dict, dict]:
         """
-        Create an ArviZ `InferenceData` object from a NumPyro MCMC run.
-        Includes posterior, posterior predictive, and prior samples.
+        Create inference data for posterior predictive, prior predictive, and
+        log-likelihood.
 
         Parameters
         ----------
-        mcmc : MCMC
-            The MCMC object containing the sampling results.
+        posterior_samples: dict[str, ArrayLike]
+            Posterior samples obtained from the sampler.
+        prior_model: Callable, optional
+            The prior model to use for prior predictive checks. If None, uses
+            the main model.
 
         Returns
         -------
-        az.InferenceData
-            An ArviZ InferenceData object containing the posterior, posterior predictive,
-            and prior samples.
+            A tuple containing posterior predictive, prior predictive, and
+            log-likelihood data.
         """
         rng_key = jax.random.PRNGKey(0)
 
@@ -181,14 +182,7 @@ class BaseSampler(ABC):
             flux_err=self.flux_err,
         )
 
-        idata = az.from_numpyro(
-            mcmc,
-            posterior_predictive=predictive_post,
-            prior=predictive_prior,
-            log_likelihood=log_likelihood,
-        )
-
-        return idata
+        return predictive_post, predictive_prior, log_likelihood
 
     @property
     def flat_posterior_samples(self):
@@ -405,9 +399,11 @@ class BaseSampler(ABC):
         """
         Plot the results of the sampling, including HDI, model fit, and pair plots.
         """
+        logger.info(f"Plotting HDI...")
         plot_hdi(
             self._idata, self.wave, self.flux, self.flux_err, self._config.output_path
         )
+        logger.info(f"Plotting model fit...")
         plot_model_fit(
             self._idata,
             self.summary,
@@ -418,6 +414,7 @@ class BaseSampler(ABC):
             self._config.output_path,
             label=self.template.name,
         )
+        logger.info(f"Plotting corner plot...")
         plot_corner(
             self._idata,
             self._config.output_path,
@@ -427,6 +424,7 @@ class BaseSampler(ABC):
             ],
         )
 
+        logger.info(f"Plotting prior corner plot...")
         plot_corner_priors(
             self._idata,
             self._config.output_path,
@@ -436,6 +434,7 @@ class BaseSampler(ABC):
             ],
         )
 
+        logger.info(f"Plotting trace plot...")
         plot_trace(
             self._idata,
             self._config.output_path,
