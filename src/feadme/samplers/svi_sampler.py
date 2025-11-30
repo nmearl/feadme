@@ -107,7 +107,7 @@ class SVISampler(BaseSampler):
         check_count = 0
 
         # Check convergence
-        while not self._check_convergence() and check_count < 3:
+        while not self._check_convergence() and check_count < 2:
             check_count += 1
             logger.info(
                 f"Re-running SVI to improve convergence (attempt {check_count})..."
