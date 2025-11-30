@@ -13,14 +13,14 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-fixed_quad_xi = ClenshawCurtisRule(order=64).integrate
+fixed_quad_xi = ClenshawCurtisRule(order=128).integrate
 fixed_quad_phi = ClenshawCurtisRule(order=80).integrate
 # fixed_quad_xi = GaussKronrodRule(order=61).integrate
 # fixed_quad_phi = GaussKronrodRule(order=61).integrate
 # fixed_quad_xi = TanhSinhRule(order=63).integrate
 # fixed_quad_phi = TanhSinhRule(order=127).integrate
 
-N_xi, N_phi = 32, 128
+N_xi, N_phi = 32, 256
 unit_xi = jnp.linspace(0.0, 1.0, N_xi)
 unit_phi = jnp.linspace(0.0, 1.0, N_phi)
 XI_u, PHI_u = jnp.meshgrid(unit_xi, unit_phi, indexing="ij")
