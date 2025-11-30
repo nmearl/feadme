@@ -105,7 +105,19 @@ class SVISampler(BaseSampler):
         )
 
         # Check convergence
-        self._check_convergence()
+        while self._check_convergence():
+            logger.warning("SVI did not converge properly.")
+
+            self._svi_result = self._svi.run(
+                svi_key,
+                num_steps,
+                template=self.template,
+                wave=self.wave,
+                flux=self.flux,
+                flux_err=self.flux_err,
+                progress_bar=self.sampler.progress_bar,
+                stable_update=True,
+            )
 
         # Plot convergence
         self._plot_convergence()
@@ -125,7 +137,7 @@ class SVISampler(BaseSampler):
 
         logger.info("SVI completed successfully")
 
-    def _check_convergence(self):
+    def _check_convergence(self) -> bool:
         """Check if SVI has converged"""
         recent_losses = self._svi_result.losses[-1000:]
         relative_std = jnp.nanstd(recent_losses) / jnp.abs(jnp.nanmean(recent_losses))
@@ -143,6 +155,8 @@ class SVISampler(BaseSampler):
                 f"SVI converged. Final loss: {self._svi_result.losses[-1]:.4f}, "
                 f"Relative std: {relative_std:.6f}"
             )
+
+        return not jnp.any(jnp.isnan(recent_losses))
 
     def _plot_convergence(self):
         """Plot SVI loss convergence"""
