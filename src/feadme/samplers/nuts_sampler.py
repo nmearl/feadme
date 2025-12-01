@@ -62,18 +62,17 @@ class NUTSSampler(BaseSampler):
             self._data,
             out_dir=f"{self._config.output_path}",
         )
-        # init_values = {k: v[0] for k, v in starters.items()}
-        # init_values = lsq_to_base_space(starters, self.template)
 
         # guide = AutoLaplaceApproximation(self.model, init_loc_fn=init_to_median())
         guide = AutoBNAFNormal(
             self.model,
-            hidden_factors=[8, 8],
-            num_flows=1,  # init_loc_fn=init_to_median()
+            hidden_factors=[4],
+            num_flows=1,
+            init_loc_fn=init_to_median(num_samples=1000),
         )
 
         # optimizer = optim.Adam(step_size=1e-3)
-        schedule = optax.exponential_decay(0.001, 25000, 0.1)
+        schedule = optax.exponential_decay(0.001, 10_000, 0.1)
         optimizer = optax.chain(
             optax.clip_by_global_norm(1.0),
             optax.adam(learning_rate=schedule),  # Clip gradients
@@ -87,7 +86,7 @@ class NUTSSampler(BaseSampler):
         )
         svi_result = svi.run(
             svi_key,
-            25_000,
+            20_000,
             template=self.template,
             wave=self.wave,
             flux=self.flux,
