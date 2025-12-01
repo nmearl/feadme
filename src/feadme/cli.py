@@ -10,10 +10,10 @@ import numpy as np
 
 from .compose import construct_model
 from .models.lsq import lsq_model_fitter
-from .parser import Config, Template, Data, Sampler
+from .parser import Config, Template, Data, NUTSSamplerSettings, SVISamplerSettings
+from .utils import rebin_spectrum
 from .samplers.nuts_sampler import NUTSSampler
 from .samplers.svi_sampler import SVISampler
-from .utils import rebin_spectrum
 
 logger = loguru.logger.opt(colors=True)
 
@@ -125,29 +125,32 @@ def perform_sampling(config: Config):
     # Start the fitting process
     logger.info(
         f"Starting fit of <cyan>{template.name}</cyan> using "
-        f"<magenta>{config.sampler.chain_method}</magenta> method with "
-        f"<light-magenta>{config.sampler.num_chains}</light-magenta> chains "
-        f"and <light-magenta>{config.sampler.num_samples}</light-magenta> samples."
+        f"<magenta>{config.sampler_settings.chain_method}</magenta> method with "
+        f"<light-magenta>{config.sampler_settings.num_chains}</light-magenta> chains "
+        f"and <light-magenta>{config.sampler_settings.num_samples}</light-magenta> samples."
     )
     logger.info(
-        f"Targetting acceptance probability of <light-magenta>{config.sampler.target_accept_prob}</light-magenta> "
-        f"with max tree depth of <light-magenta>{config.sampler.max_tree_depth}</light-magenta> and a "
-        f"<light-magenta>{'dense' if config.sampler.dense_mass else 'sparse'}</light-magenta> mass matrix."
+        f"Targetting acceptance probability of <light-magenta>{config.sampler_settings.target_accept_prob}</light-magenta> "
+        f"with max tree depth of <light-magenta>{config.sampler_settings.max_tree_depth}</light-magenta> and a "
+        f"<light-magenta>{'dense' if config.sampler_settings.dense_mass else 'sparse'}</light-magenta> mass matrix."
     )
 
     # Initialize the sampler with the model and configuration
     prior_model = construct_model(template, auto_reparam=False)
     model = construct_model(template, auto_reparam=False, circ_only=True)
-    # sampler = NUTSSampler(model=model, config=config, prior_model=prior_model)
+
+    if config.sampler_settings.sampler_type == "nuts":
+        sampler = NUTSSampler(model=model, config=config, prior_model=prior_model)
+    elif config.sampler_settings.sampler_type == "svi":
+        sampler = SVISampler(model=model, config=config, prior_model=prior_model)
+    else:
+        raise ValueError(
+            f"Unknown sampler type: {config.sampler_settings.sampler_type}"
+        )
+
     # sampler = DynestySampler(model=model, config=config, prior_model=prior_model)
     # sampler = JAXNSSampler(model=model, config=config, prior_model=prior_model)
-    sampler = SVISampler(
-        model=model,
-        config=config,
-        prior_model=prior_model,
-        num_posterior_samples=2000,
-        num_steps=20000,
-    )
+
     results_exist = (Path(output_path) / "results.nc").exists()
 
     # If a results file already exists, load it instead of running the sampler
@@ -192,30 +195,30 @@ def perform_sampling(config: Config):
         logger.info(f"Results loaded for <cyan>{template.name}</cyan>.")
 
 
-@click.command()
-@click.argument(
-    "template-path",
+@click.group()
+def cli():
+    """FEADME disk modeling CLI."""
+    pass
+
+
+@cli.command("nuts")
+@click.option(
+    "--template-path",
     type=click.Path(exists=True),
     required=True,
-    # help="Path to the template file.",
+    help="Path to the template file.",
 )
-@click.argument(
-    "data-path",
+@click.option(
+    "--data-path",
     type=click.Path(exists=True),
     required=True,
-    # help="Path to the data file.",
+    help="Path to the data file.",
 )
 @click.option(
     "--output-path",
     type=click.Path(),
     default="output",
     help="Directory to save output files and plots. Defaults to './output'.",
-)
-@click.option(
-    "--sampler-type",
-    type=click.Choice(["nuts"], case_sensitive=False),
-    default="nuts",
-    help="Type of NumPyro sampler to use.",
 )
 @click.option(
     "--num-warmup",
@@ -227,7 +230,7 @@ def perform_sampling(config: Config):
     "--num-samples",
     type=int,
     default=1000,
-    help="Number of samples to draw from the posterior distribution.",
+    help="Number of warmup steps for the MCMC sampler.",
 )
 @click.option(
     "--num-chains",
@@ -236,61 +239,57 @@ def perform_sampling(config: Config):
     help="Number of MCMC chains to run.",
 )
 @click.option(
+    "--target-accept-prob",
+    type=float,
+    default=0.8,
+    help="Target acceptance probability for the NUTS sampler.",
+)
+@click.option(
+    "--max-tree-depth",
+    type=int,
+    default=10,
+    help="Maximum tree depth for the NUTS sampler.",
+)
+@click.option(
+    "--dense-mass/--sparse-mass",
+    is_flag=True,
+    default=False,
+    help="Use dense mass matrix for the NUTS sampler.",
+)
+@click.option(
+    "--prefit",
+    is_flag=True,
+    default=False,
+    help="Run a pre-fit to initialize parameters.",
+)
+@click.option(
+    "--neutra",
+    is_flag=True,
+    default=False,
+    help="Use Neutra initialization for the NUTS sampler.",
+)
+@click.option(
     "--progress-bar/--no-progress-bar",
     is_flag=True,
     default=True,
     help="Display a progress bar during sampling.",
 )
-@click.option(
-    "--use-prefit/--no-prefit",
-    is_flag=True,
-    default=True,
-    help="Perform LSQ pre-fit to initialize parameters.",
-)
-@click.option(
-    "--use-neutra/--no-neutra",
-    is_flag=True,
-    default=False,
-    help="Perform preprocessing with NeuTra.",
-)
-def cli(
+def nuts_cmd(
     template_path: str,
     data_path: str,
     output_path: str,
-    sampler_type: str,
     num_warmup: int,
     num_samples: int,
     num_chains: int,
+    target_accept_prob: float,
+    max_tree_depth: int,
+    dense_mass: bool,
+    prefit: bool,
+    neutra: bool,
     progress_bar: bool,
-    use_prefit: bool = True,
-    use_neutra: bool = False,
 ):
     """
-    Command-line interface for the `feadme` package. Fits a template to
-    spectral data using Jax and NumPyro.
-
-    Parameters
-    ----------
-    template_path : str
-        Path to the template JSON file.
-    data_path : str
-        Path to the data CSV file containing wavelength, flux, and flux error.
-    output_path : str
-        Directory to save output files and plots. Defaults to './output'.
-    sampler_type : str
-        Type of NumPyro sampler to use (currently only 'nuts' is supported).
-    num_warmup : int
-        Number of warmup steps for the MCMC sampler. Defaults to 1000.
-    num_samples : int
-        Number of samples to draw from the posterior distribution. Defaults to 1000.
-    num_chains : int
-        Number of MCMC chains to run. Defaults to 1.
-    progress_bar : bool
-        Display a progress bar during sampling. Defaults to True.
-    auto_reparam : bool
-        Automatically create reparameterization configuration for parameters.
-    use_neutra : bool
-        Perform NeuTra preprocessing to improve sampling.
+    Fit to spectral data using the NUTS sampler.
     """
     # Parse the template from JSON
     # with open(template_path, "r") as f:
@@ -301,10 +300,131 @@ def cli(
     # template = Template.from_dict(template_dict)
     template = Template.from_json(Path(template_path))
 
-    # Run pre-fit to initialize parameters
-    if use_prefit:
-        logger.info("Running pre-fit to initialize parameters...")
-        template = run_pre_fit(template, template_path, load_data(data_path, template))
+    # Load the data given the template's redshift and mask
+    data = load_data(data_path, template)
+
+    # Create configuration object
+    config = Config(
+        template=template,
+        data=data,
+        sampler_settings=NUTSSamplerSettings(
+            num_warmup=num_warmup,
+            num_samples=num_samples,
+            num_chains=num_chains,
+            target_accept_prob=target_accept_prob,
+            max_tree_depth=max_tree_depth,
+            dense_mass=dense_mass,
+            prefit=prefit,
+            neutra=neutra,
+            progress_bar=progress_bar,
+        ),
+        output_path=output_path,
+        template_path=template_path,
+        data_path=data_path,
+    )
+
+    # Ensure the output directory exists
+    output_path = Path(output_path)
+
+    if not output_path.exists():
+        output_path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Created output directory: <light-red>{output_path}</light-red>")
+
+    # Perform the sampling with the given configuration
+    perform_sampling(config)
+
+
+@click.command("svi")
+@click.option(
+    "--template-path",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to the template file.",
+)
+@click.option(
+    "--data-path",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to the data file.",
+)
+@click.option(
+    "--output-path",
+    type=click.Path(),
+    default="output",
+    help="Directory to save output files and plots. Defaults to './output'.",
+)
+@click.option(
+    "--num-steps",
+    type=int,
+    default=25000,
+    help="Number of optimization steps for SVI.",
+)
+@click.option(
+    "--num-posterior-samples",
+    type=int,
+    default=2000,
+    help="Number of posterior samples to draw after SVI optimization.",
+)
+@click.option(
+    "--learning-rate",
+    type=float,
+    default=1e-3,
+    help="Learning rate for the SVI optimizer.",
+)
+@click.option(
+    "--decay-rate",
+    type=float,
+    default=0.1,
+    help="Decay rate for the learning rate scheduler.",
+)
+@click.option(
+    "--decay-steps",
+    type=int,
+    default=20000,
+    help="Number of steps before applying learning rate decay.",
+)
+@click.option(
+    "--hidden-factors",
+    type=list[int],
+    default=[8, 8],
+    help="List of hidden layer sizes for the normalizing flow guide.",
+)
+@click.option(
+    "--num-flows",
+    type=int,
+    default=2,
+    help="Number of flows in the normalizing flow guide.",
+)
+@click.option(
+    "--progress-bar/--no-progress-bar",
+    is_flag=True,
+    default=True,
+    help="Display a progress bar during sampling.",
+)
+def svi_cmd(
+    template_path: str,
+    data_path: str,
+    output_path: str,
+    num_steps: int,
+    num_posterior_samples: int,
+    learning_rate: float,
+    decay_rate: float,
+    decay_steps: int,
+    hidden_factors: list[int],
+    num_flows: int,
+    progress_bar: bool,
+):
+    """
+    Fit to spectral data using Stochastic Variational Inference (SVI).
+    """
+    # Parse the template from JSON
+    # with open(template_path, "r") as f:
+    #     template_dict = json.load(f)
+    #     template_dict["white_noise"]["fixed"] = True
+    #     template_dict["redshift"]["fixed"] = True
+    #
+    # template = Template.from_dict(template_dict)
+    template = Template.from_json(Path(template_path))
 
     # Load the data given the template's redshift and mask
     data = load_data(data_path, template)
@@ -313,14 +433,15 @@ def cli(
     config = Config(
         template=template,
         data=data,
-        sampler=Sampler(
-            sampler_type=sampler_type,
-            num_warmup=num_warmup,
-            num_samples=num_samples,
-            num_chains=num_chains,
+        sampler_settings=SVISamplerSettings(
+            num_steps=num_steps,
+            num_posterior_samples=num_posterior_samples,
+            learning_rate=learning_rate,
+            decay_rate=decay_rate,
+            decay_steps=decay_steps,
+            hidden_factors=hidden_factors,
+            num_flows=num_flows,
             progress_bar=progress_bar,
-            use_prefit=use_prefit,
-            use_neutra=use_neutra,
         ),
         output_path=output_path,
         template_path=template_path,
