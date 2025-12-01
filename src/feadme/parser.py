@@ -379,18 +379,9 @@ class Data(Writable):
 
 
 @flax.struct.dataclass
-class Sampler(Writable):
+class SamplerSettings(Writable):
     sampler_type: str
-    num_warmup: int = 1000
-    num_samples: int = 1000
-    num_chains: int = 1
     progress_bar: bool = True
-    # TODO: Currently only NUTS is supported
-    target_accept_prob: float = 0.9
-    max_tree_depth: int = 11
-    dense_mass: bool = True
-    use_prefit: bool = False
-    use_neutra: bool = False
 
     @property
     def chain_method(self) -> str:
@@ -398,10 +389,35 @@ class Sampler(Writable):
 
 
 @flax.struct.dataclass
+class NUTSSamplerSettings(SamplerSettings):
+    sampler_type: str = "nuts"
+    num_warmup: int = 1000
+    num_samples: int = 1000
+    num_chains: int = 1
+    target_accept_prob: float = 0.8
+    max_tree_depth: int = 10
+    dense_mass: bool = False
+    prefit: bool = False
+    neutra: bool = False
+
+
+@flax.struct.dataclass
+class SVISamplerSettings(SamplerSettings):
+    sampler_type: str = "svi"
+    num_steps: int = 25000
+    num_posterior_samples: int = 2000
+    learning_rate: float = 1e-3
+    decay_rate: float = 0.3
+    decay_steps: int = 20000
+    hidden_factors: list[int] = flax.struct.field(default_factory=lambda: [16, 16])
+    num_flows: int = 4
+
+
+@flax.struct.dataclass
 class Config(Writable):
     template: Template
     data: Data
-    sampler: Sampler
+    sampler_settings: SamplerSettings
     output_path: str
     template_path: str
     data_path: str
