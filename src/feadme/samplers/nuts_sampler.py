@@ -12,21 +12,28 @@ from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO
 from numpyro.infer import init_to_median, init_to_value
 from numpyro.infer.autoguide import (
     AutoBNAFNormal,
+    AutoContinuous,
 )
 from numpyro.infer.reparam import NeuTraReparam
+from typing import cast
 
 from .base_sampler import BaseSampler
 from ..compose import evaluate_model
 from ..models.lsq import lsq_model_fitter
+from ..parser import NUTSSamplerSettings
 
 logger = loguru.logger.opt(colors=True)
 
 
 class NUTSSampler(BaseSampler):
+    @property
+    def sampler_settings(self) -> NUTSSamplerSettings:
+        return cast(NUTSSamplerSettings, self._config.sampler_settings)
+
     def get_posterior_samples(
         self, mcmc: MCMC, neutra: NeuTraReparam = None
     ) -> dict[str, ArrayLike]:
-        if self.sampler.use_neutra and neutra is not None:
+        if self.sampler_settings.neutra and neutra is not None:
             zs = mcmc.get_samples()["auto_shared_latent"]
             posterior_samples = neutra.transform_sample(zs)
         else:
@@ -53,48 +60,7 @@ class NUTSSampler(BaseSampler):
 
         return idata
 
-    def _initialize_svi(self) -> tuple:
-        rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
-        rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
-
-        starters, _, _, _ = lsq_model_fitter(
-            self.template,
-            self._data,
-            out_dir=f"{self._config.output_path}",
-        )
-
-        # guide = AutoLaplaceApproximation(self.model, init_loc_fn=init_to_median())
-        guide = AutoBNAFNormal(
-            self.model,
-            hidden_factors=[4],
-            num_flows=1,
-            init_loc_fn=init_to_median(num_samples=1000),
-        )
-
-        # optimizer = optim.Adam(step_size=1e-3)
-        schedule = optax.exponential_decay(0.001, 10_000, 0.1)
-        optimizer = optax.chain(
-            optax.clip_by_global_norm(1.0),
-            optax.adam(learning_rate=schedule),  # Clip gradients
-        )
-
-        svi = SVI(
-            self.model,
-            guide,
-            optimizer,
-            Trace_ELBO(),
-        )
-        svi_result = svi.run(
-            svi_key,
-            20_000,
-            template=self.template,
-            wave=self.wave,
-            flux=self.flux,
-            flux_err=self.flux_err,
-            progress_bar=self.sampler.progress_bar,
-            stable_update=True,
-        )
-
+    def _plot_guide_samples(self, guide: AutoContinuous, svi_result):
         # Sample from the guide to check if it matches LSQ
         guide_samples = guide.sample_posterior(
             random.PRNGKey(1), svi_result.params, sample_shape=(1000,)
@@ -132,6 +98,54 @@ class NUTSSampler(BaseSampler):
         ax.legend()
         fig.savefig(f"{self._config.output_path}/guide_model_fit.png")
         plt.close(fig)
+
+    def _initialize_svi(self) -> tuple:
+        """
+        Initialize the model using Stochastic Variational Inference (SVI).
+
+        Returns
+        -------
+
+        """
+        rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
+        rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
+
+        # Define the guide
+        guide = AutoBNAFNormal(
+            self.model,
+            hidden_factors=[4],
+            num_flows=1,
+            init_loc_fn=init_to_median(num_samples=1000),
+        )
+
+        # Define the optimization strategy
+        # optimizer = optim.Adam(step_size=1e-3)
+        schedule = optax.exponential_decay(0.001, 10_000, 0.1)
+        optimizer = optax.chain(
+            optax.clip_by_global_norm(1.0),
+            optax.adam(learning_rate=schedule),  # Clip gradients
+        )
+
+        # Setup and run the SVI
+        svi = SVI(
+            self.model,
+            guide,
+            optimizer,
+            Trace_ELBO(),
+        )
+        svi_result = svi.run(
+            svi_key,
+            20_000,
+            template=self.template,
+            wave=self.wave,
+            flux=self.flux,
+            flux_err=self.flux_err,
+            progress_bar=self.sampler_settings.progress_bar,
+            stable_update=True,
+        )
+
+        # Plot guide samples
+        self._plot_guide_samples(guide, svi_result)
 
         # Convergence check
         recent_losses = svi_result.losses[-1000:]
@@ -172,37 +186,18 @@ class NUTSSampler(BaseSampler):
         # Initialize from VI posterior
         init_key, mcmc_key = random.split(mcmc_key)
 
-        if self.sampler.num_chains > 1:
-            # Sample one set of parameters per chain
-            init_params = guide.sample_posterior(
-                init_key, svi_result.params, sample_shape=(self.sampler.num_chains,)
-            )
-            # init_params now has shape (num_chains, ...) for each parameter
-            chain_init_params = init_params
-        else:
-            # Single chain - sample one set of parameters
-            chain_init_params = guide.sample_posterior(init_key, svi_result.params)
+        chain_init_params = guide.sample_posterior(init_key, svi_result.params)
 
         init_strategy = init_to_value(values=chain_init_params)
 
         return neutra_model, init_strategy, neutra
 
-    def _initialize_basic(self):
-        starters, _, _, _ = lsq_model_fitter(
-            self.template,
-            self._data,
-            out_dir=f"{self._config.output_path}",
-        )
-        # init_values = {k: v[0] for k, v in starters.items()}
-        # init_values = lsq_to_base_space(starters, self.template)
-
-        model, init_strategy, neutra = (
+    def _initialize_basic(self) -> tuple:
+        return (
             self.model,
             init_to_median(num_samples=1000),
             None,
         )
-
-        return model, init_strategy, neutra
 
     def sample(self):
         """
@@ -211,28 +206,39 @@ class NUTSSampler(BaseSampler):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
-        if self.sampler.use_neutra:
-            # model, init_strategy, neutra = self._initialize_neutra()
+        # Generate a figure to demonstrate LSQ fit
+        starters, _, _, _ = lsq_model_fitter(
+            self.template,
+            self._data,
+            out_dir=f"{self._config.output_path}",
+        )
+
+        # Setup model and initialization strategy
+        if self.sampler_settings.neutra:
+            model, init_strategy, neutra = self._initialize_neutra()
+        elif self.sampler_settings.prefit:
             model, init_strategy, neutra, _, _ = self._initialize_svi()
         else:
             model, init_strategy, neutra = self._initialize_basic()
 
+        # Construct NUTS kernel
         kernel = NUTS(
             model,
             init_strategy=init_strategy,
-            target_accept_prob=self.sampler.target_accept_prob,
-            max_tree_depth=self.sampler.max_tree_depth,
-            dense_mass=self.sampler.dense_mass,
+            target_accept_prob=self.sampler_settings.target_accept_prob,
+            max_tree_depth=self.sampler_settings.max_tree_depth,
+            dense_mass=self.sampler_settings.dense_mass,
             find_heuristic_step_size=True,
         )
 
+        # Setup and run MCMC sampler
         mcmc = MCMC(
             kernel,
-            num_warmup=self.sampler.num_warmup,
-            num_samples=self.sampler.num_samples,
-            num_chains=self.sampler.num_chains,
-            chain_method=self.sampler.chain_method,
-            progress_bar=self.sampler.progress_bar,
+            num_warmup=self.sampler_settings.num_warmup,
+            num_samples=self.sampler_settings.num_samples,
+            num_chains=self.sampler_settings.num_chains,
+            chain_method=self.sampler_settings.chain_method,
+            progress_bar=self.sampler_settings.progress_bar,
         )
 
         mcmc.run(
@@ -244,12 +250,14 @@ class NUTSSampler(BaseSampler):
             extra_fields=("num_steps",),
         )
 
+        # Get posterior samples
         posterior_samples = self.get_posterior_samples(mcmc, neutra)
 
         self._idata = self._compose_inference_data(
-            mcmc, posterior_samples, prior_model=self._prior_model
+            mcmc, posterior_samples, prior_model=model
         )
 
+        # Report treedepth statistics
         def report_treedepth(mcmc, nuts_kernel):
             info = mcmc.get_extra_fields()
             num_steps = info["num_steps"]
@@ -257,7 +265,8 @@ class NUTSSampler(BaseSampler):
             max_depth = nuts_kernel._max_tree_depth
             frac = (tree_depth >= max_depth).mean()
             logger.info(
-                f"Treedepth hits: {100*frac:.2f}% at depth {max_depth} ({jnp.min(tree_depth)}, {jnp.max(tree_depth)})"
+                f"Treedepth hits: {100*frac:.2f}% at depth {max_depth} "
+                f"({jnp.min(tree_depth)}, {jnp.max(tree_depth)})"
             )
 
         report_treedepth(mcmc, kernel)

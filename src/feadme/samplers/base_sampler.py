@@ -16,7 +16,7 @@ from numpyro.infer.mcmc import MCMCKernel, MCMC
 from numpyro.infer.reparam import NeuTraReparam
 from numpyro.infer.util import Predictive
 
-from ..parser import Config, Sampler, Template
+from ..parser import Config, SamplerSettings, Template
 from ..plotting import (
     plot_hdi,
     plot_model_fit,
@@ -96,15 +96,15 @@ class BaseSampler(ABC):
         return self._template or self._config.template
 
     @property
-    def sampler(self) -> Sampler:
-        return self._config.sampler
+    def sampler_settings(self) -> SamplerSettings:
+        return self._config.sampler_settings
 
     @abstractmethod
     def sample(self):
         pass
 
     @abstractmethod
-    def get_posterior_samples(self, mcmc: MCMC) -> ArrayLike:
+    def get_posterior_samples(self, *args) -> ArrayLike:
         pass
 
     def run(self):

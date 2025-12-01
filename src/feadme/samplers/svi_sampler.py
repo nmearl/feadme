@@ -7,15 +7,12 @@ import loguru
 import matplotlib.pyplot as plt
 import numpy as np
 import optax
-from jax.typing import ArrayLike
-from numpyro import optim
 from numpyro.infer import SVI, Trace_ELBO, init_to_median
 from numpyro.infer.autoguide import AutoBNAFNormal
-from typing import Callable
+from typing import cast
 
 from .base_sampler import BaseSampler
-from ..compose import evaluate_model
-from ..models.lsq import lsq_model_fitter
+from ..parser import SVISamplerSettings
 
 logger = loguru.logger.opt(colors=True)
 
@@ -25,41 +22,24 @@ class SVISampler(BaseSampler):
     Variational inference sampler using AutoBNAFNormal guide.
     """
 
-    def __init__(self, model, config, prior_model=None, **svi_kwargs):
-        """
-        Parameters
-        ----------
-        model : Callable
-            NumPyro model function
-        config : Config
-            Configuration object
-        prior_model : Callable, optional
-            Prior model for generating prior samples
-        **svi_kwargs : dict
-            SVI settings:
-            - num_steps: int (default 50000)
-            - learning_rate: float (default 0.001)
-            - decay_rate: float (default 0.1)
-            - decay_steps: int (default num_steps // 2)
-            - num_flows: int (default 2)
-            - hidden_factors: list (default [8, 8])
-            - num_posterior_samples: int (default 10000)
-        """
+    def __init__(self, model, config, prior_model=None):
         super().__init__(model, config, prior_model)
-        self.svi_kwargs = svi_kwargs
         self._svi = None
         self._svi_result = None
         self._guide = None
 
+    @property
+    def sampler_settings(self) -> SVISamplerSettings:
+        return cast(SVISamplerSettings, self._config.sampler_settings)
+
     def sample(self):
         """Run SVI to approximate posterior"""
-        # SVI parameters
-        num_steps = self.svi_kwargs.get("num_steps", 25000)
-        learning_rate = self.svi_kwargs.get("learning_rate", 0.001)
-        decay_rate = self.svi_kwargs.get("decay_rate", 0.5)
-        decay_steps = self.svi_kwargs.get("decay_steps", int(num_steps * 0.7))
-        num_flows = self.svi_kwargs.get("num_flows", 4)
-        hidden_factors = self.svi_kwargs.get("hidden_factors", [16, 16])
+        num_steps = self.sampler_settings.num_steps
+        learning_rate = self.sampler_settings.learning_rate
+        decay_rate = self.sampler_settings.decay_rate
+        decay_steps = self.sampler_settings.decay_steps
+        num_flows = self.sampler_settings.num_flows
+        hidden_factors = self.sampler_settings.hidden_factors
 
         logger.info(
             f"Starting SVI with {num_steps} steps, "
@@ -101,7 +81,7 @@ class SVISampler(BaseSampler):
             wave=self.wave,
             flux=self.flux,
             flux_err=self.flux_err,
-            progress_bar=self.sampler.progress_bar,
+            progress_bar=self.sampler_settings.progress_bar,
             stable_update=True,
         )
 
@@ -121,7 +101,7 @@ class SVISampler(BaseSampler):
                 wave=self.wave,
                 flux=self.flux,
                 flux_err=self.flux_err,
-                progress_bar=self.sampler.progress_bar,
+                progress_bar=self.sampler_settings.progress_bar,
                 stable_update=True,
             )
 
@@ -129,14 +109,7 @@ class SVISampler(BaseSampler):
         self._plot_convergence()
 
         # Sample from guide
-        num_posterior_samples = self.svi_kwargs.get("num_posterior_samples", 10000)
-        logger.info(f"Sampling {num_posterior_samples} from variational posterior...")
-
-        posterior_samples = self._guide.sample_posterior(
-            jax.random.PRNGKey(42),
-            self._svi_result.params,
-            sample_shape=(num_posterior_samples,),
-        )
+        posterior_samples = self.get_posterior_samples()
 
         # Convert to arviz format
         self._idata = self._convert_to_arviz(posterior_samples)
@@ -192,16 +165,19 @@ class SVISampler(BaseSampler):
         fig.savefig(f"{self._config.output_path}/svi_convergence.png", dpi=150)
         plt.close(fig)
 
-    def get_posterior_samples(self, mcmc=None, neutra=None):
+    def get_posterior_samples(self) -> dict:
         """Get posterior samples from the guide"""
         if self._guide is None or self._svi_result is None:
             raise ValueError("No results available. Run sample() first.")
 
-        num_samples = self.svi_kwargs.get("num_posterior_samples", 10000)
+        num_posterior_samples = self.sampler_settings.num_posterior_samples
+
+        logger.info(f"Sampling {num_posterior_samples} from variational posterior...")
+
         return self._guide.sample_posterior(
             jax.random.PRNGKey(42),
             self._svi_result.params,
-            sample_shape=(num_samples,),
+            sample_shape=(num_posterior_samples,),
         )
 
     def _convert_to_arviz(self, posterior_samples):
@@ -313,7 +289,3 @@ class SVISampler(BaseSampler):
         )
 
         return idata
-
-    def run(self):
-        """Run the sampler"""
-        self.sample()
