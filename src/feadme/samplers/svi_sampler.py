@@ -74,7 +74,7 @@ class SVISampler(BaseSampler):
             self.model,
             hidden_factors=hidden_factors,
             num_flows=num_flows,
-            init_loc_fn=init_to_median(),
+            init_loc_fn=init_to_median(num_samples=100),
         )
 
         # Setup optimizer with learning rate schedule

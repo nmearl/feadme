@@ -137,7 +137,7 @@ def perform_sampling(config: Config):
 
     # Initialize the sampler with the model and configuration
     prior_model = construct_model(template, auto_reparam=False)
-    model = construct_model(template, auto_reparam=True, circ_only=True)
+    model = construct_model(template, auto_reparam=False, circ_only=True)
     # sampler = NUTSSampler(model=model, config=config, prior_model=prior_model)
     # sampler = DynestySampler(model=model, config=config, prior_model=prior_model)
     # sampler = JAXNSSampler(model=model, config=config, prior_model=prior_model)

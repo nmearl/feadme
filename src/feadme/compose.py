@@ -114,13 +114,13 @@ def _compute_disk_flux_vectorized(
         local_sigma = sigma_i * 1e5 * nu0 / c_cgs
 
         # ecc_i = jnp.minimum(ecc_i, 1.0 - 1e-3)
-        # inc_i = jnp.minimum(inc_i, jnp.pi / 2 - 1e-3)
+        inc_i = jnp.minimum(inc_i, jnp.pi / 2 - 1e-5)
 
         res = integrator(
             inner_i,
             outer_i,
             0.0,
-            2 * jnp.pi - 1e-5,
+            2 * jnp.pi,
             jnp.asarray(X),
             inc_i,
             local_sigma,
