@@ -124,16 +124,21 @@ def perform_sampling(config: Config):
 
     # Start the fitting process
     logger.info(
-        f"Starting fit of <cyan>{template.name}</cyan> using "
-        f"<magenta>{config.sampler_settings.chain_method}</magenta> method with "
-        f"<light-magenta>{config.sampler_settings.num_chains}</light-magenta> chains "
-        f"and <light-magenta>{config.sampler_settings.num_samples}</light-magenta> samples."
+        f"Starting fit of <cyan>{template.name}</cyan> using the "
+        f"<magenta>{config.sampler_settings.sampler_type}</magenta> sampler."
     )
-    logger.info(
-        f"Targetting acceptance probability of <light-magenta>{config.sampler_settings.target_accept_prob}</light-magenta> "
-        f"with max tree depth of <light-magenta>{config.sampler_settings.max_tree_depth}</light-magenta> and a "
-        f"<light-magenta>{'dense' if config.sampler_settings.dense_mass else 'sparse'}</light-magenta> mass matrix."
-    )
+
+    if config.sampler_settings.sampler_type == "nuts":
+        logger.info(
+            f"<magenta>Proceeding using the {config.sampler_settings.chain_method}</magenta> method with "
+            f"<light-magenta>{config.sampler_settings.num_chains}</light-magenta> chains "
+            f"and <light-magenta>{config.sampler_settings.num_samples}</light-magenta> samples."
+        )
+        logger.info(
+            f"Targetting acceptance probability of <light-magenta>{config.sampler_settings.target_accept_prob}</light-magenta> "
+            f"with max tree depth of <light-magenta>{config.sampler_settings.max_tree_depth}</light-magenta> and a "
+            f"<light-magenta>{'dense' if config.sampler_settings.dense_mass else 'sparse'}</light-magenta> mass matrix."
+        )
 
     # Initialize the sampler with the model and configuration
     prior_model = construct_model(template, auto_reparam=False)
@@ -334,7 +339,7 @@ def nuts_cmd(
     perform_sampling(config)
 
 
-@click.command("svi")
+@cli.command("svi")
 @click.option(
     "--template-path",
     type=click.Path(exists=True),
@@ -385,7 +390,8 @@ def nuts_cmd(
 )
 @click.option(
     "--hidden-factors",
-    type=list[int],
+    multiple=True,
+    type=int,
     default=[8, 8],
     help="List of hidden layer sizes for the normalizing flow guide.",
 )

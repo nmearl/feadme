@@ -10,7 +10,7 @@ from src.feadme.parser import (
     Disk,
     Line,
     Template,
-    Sampler,
+    SamplerSettings,
     Config,
 )
 
@@ -61,10 +61,10 @@ def serializes_and_deserializes_template_correctly(tmp_path):
 
 
 def creates_sampler_with_correct_chain_method():
-    sampler = Sampler(sampler_type="NUTS", num_chains=2)
+    sampler = SamplerSettings(sampler_type="NUTS", num_chains=2)
 
     assert sampler.chain_method == "parallel"
 
-    sampler_single_chain = Sampler(sampler_type="NUTS", num_chains=1)
+    sampler_single_chain = SamplerSettings(sampler_type="NUTS", num_chains=1)
 
     assert sampler_single_chain.chain_method == "vectorized"
