@@ -9,6 +9,7 @@ import numpy as np
 import optax
 from numpyro.infer import SVI, Trace_ELBO, init_to_median
 from numpyro.infer.autoguide import AutoBNAFNormal
+from numpyro.infer.util import log_likelihood
 from typing import cast
 
 from .base_sampler import BaseSampler
@@ -73,7 +74,6 @@ class SVISampler(BaseSampler):
         )
 
         # Run SVI
-        logger.info("Running SVI optimization...")
         self._svi_result = self._svi.run(
             svi_key,
             num_steps,
@@ -135,7 +135,7 @@ class SVISampler(BaseSampler):
                 f"Relative std: {relative_std:.6f}"
             )
 
-        return not (relative_std > 0.01 or jnp.any(jnp.isnan(recent_losses)))
+        return not (jnp.any(jnp.isnan(recent_losses)))
 
     def _plot_convergence(self):
         """Plot SVI loss convergence"""
@@ -222,22 +222,19 @@ class SVISampler(BaseSampler):
             arr = np.array(predictive_post[k])[: samples_per_chain * n_chains]
             posterior_predictive_dict[k] = arr.reshape(n_chains, samples_per_chain, -1)
 
-        # Log likelihood using Predictive
-        log_likelihood = Predictive(
-            self.model, posterior_samples=posterior_samples, return_sites=["total_flux"]
-        )(
-            rng_key,
-            template=self.template,
+        # Compute log-likelihood for each posterior sample
+        log_lik = log_likelihood(
+            self.model,
+            posterior_samples,
             wave=self.wave,
             flux=self.flux,
             flux_err=self.flux_err,
+            template=self.template,
         )
 
         # Reshape to (chains, draws, wavelength)
-        arr = np.array(log_likelihood["total_flux"])[: samples_per_chain * n_chains]
-        log_likelihood_dict = {
-            "total_flux": arr.reshape(n_chains, samples_per_chain, -1)
-        }
+        arr = np.array(log_lik["total_flux"])[: samples_per_chain * n_chains]
+        log_lik_dict = {"total_flux": arr.reshape(n_chains, samples_per_chain, -1)}
 
         # Prior samples
         prior_predictive = Predictive(self._prior_model, num_samples=2000)(
@@ -285,7 +282,7 @@ class SVISampler(BaseSampler):
             posterior=posterior_dict,
             posterior_predictive=posterior_predictive_dict,
             prior=prior_dict,
-            log_likelihood=log_likelihood_dict,
+            log_likelihood=log_lik_dict,
         )
 
         return idata

@@ -15,6 +15,7 @@ from numpyro.handlers import reparam
 from numpyro.infer.mcmc import MCMCKernel, MCMC
 from numpyro.infer.reparam import NeuTraReparam
 from numpyro.infer.util import Predictive
+from numpyro.infer.util import log_likelihood
 
 from ..parser import Config, SamplerSettings, Template
 from ..plotting import (
@@ -27,29 +28,6 @@ from ..plotting import (
 from ..utils import parse_circular_parameters
 
 logger = loguru.logger.opt(colors=True)
-
-
-@flax.struct.dataclass
-class SamplerResult:
-    """
-    A dataclass to hold the results of the sampling process.
-
-    Attributes
-    ----------
-    samples : dict
-        Dictionary containing the sampled parameters.
-    summary : dict
-        Summary statistics of the sampled parameters.
-    diagnostics : dict
-        Diagnostics of the sampling process.
-    sampler_state : any, optional
-        State of the sampler, if applicable.
-    """
-
-    samples: dict
-    summary: dict
-    diagnostics: dict
-    sampler_state: any = None
 
 
 class BaseSampler(ABC):
@@ -172,17 +150,16 @@ class BaseSampler(ABC):
         )
 
         # Compute log-likelihood for each posterior sample
-        log_likelihood = Predictive(
-            self.model, posterior_samples=posterior_samples, return_sites=["total_flux"]
-        )(
-            rng_key,
-            template=self.template,
+        log_lik = log_likelihood(
+            self.model,
+            posterior_samples,
             wave=self.wave,
             flux=self.flux,
             flux_err=self.flux_err,
+            template=self.template,
         )
 
-        return predictive_post, predictive_prior, log_likelihood
+        return predictive_post, predictive_prior, log_lik
 
     @property
     def flat_posterior_samples(self):
