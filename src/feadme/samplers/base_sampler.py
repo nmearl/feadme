@@ -1,52 +1,37 @@
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Callable
 
 import arviz as az
-import numpy as np
-import pandas as pd
-from scipy.stats import circmean
 import flax.struct
 import jax
 import jax.numpy as jnp
-import pandas as pd
-from numpyro.infer.mcmc import MCMCKernel, MCMC
-from numpyro.infer.util import Predictive
-import xarray as xr
-from pathlib import Path
 import loguru
+import numpy as np
+import pandas as pd
+import xarray as xr
+from jax.typing import ArrayLike
+from numpyro.handlers import reparam
+from numpyro.infer.mcmc import MCMCKernel, MCMC
+from numpyro.infer.reparam import NeuTraReparam
+from numpyro.infer.util import Predictive
+from numpyro.infer.util import log_likelihood
 
-from ..parser import Config, Sampler, Template
-from ..plotting import plot_hdi, plot_model_fit, plot_corner, plot_corner_priors
+from ..parser import Config, SamplerSettings, Template
+from ..plotting import (
+    plot_hdi,
+    plot_model_fit,
+    plot_corner,
+    plot_corner_priors,
+    plot_trace,
+)
 from ..utils import parse_circular_parameters
 
 logger = loguru.logger.opt(colors=True)
 
 
-@flax.struct.dataclass
-class SamplerResult:
-    """
-    A dataclass to hold the results of the sampling process.
-
-    Attributes
-    ----------
-    samples : dict
-        Dictionary containing the sampled parameters.
-    summary : dict
-        Summary statistics of the sampled parameters.
-    diagnostics : dict
-        Diagnostics of the sampling process.
-    sampler_state : any, optional
-        State of the sampler, if applicable.
-    """
-
-    samples: dict
-    summary: dict
-    diagnostics: dict
-    sampler_state: any = None
-
-
 class BaseSampler(ABC):
-    def __init__(self, model: Callable, config: Config):
+    def __init__(self, model: Callable, config: Config, prior_model: Callable = None):
         """
         Base class for samplers.
 
@@ -59,39 +44,45 @@ class BaseSampler(ABC):
         """
         self._model = model
         self._config = config
+        self._prior_model = prior_model or model
         self._idata = None
         self._summary = None
+        self._template = None
 
     @property
     def model(self):
         return self._model
 
     @property
-    def wave(self) -> jnp.ndarray:
+    def _data(self):
+        return self._config.data
+
+    @property
+    def wave(self) -> ArrayLike:
         return self._config.data.masked_wave
 
     @property
-    def flux(self) -> jnp.ndarray:
+    def flux(self) -> ArrayLike:
         return self._config.data.masked_flux
 
     @property
-    def flux_err(self) -> jnp.ndarray:
+    def flux_err(self) -> ArrayLike:
         return self._config.data.masked_flux_err
 
     @property
     def template(self) -> Template:
-        return self._config.template
+        return self._template or self._config.template
 
     @property
-    def sampler(self) -> Sampler:
-        return self._config.sampler
+    def sampler_settings(self) -> SamplerSettings:
+        return self._config.sampler_settings
 
     @abstractmethod
     def sample(self):
         pass
 
     @abstractmethod
-    def get_kernel(self) -> MCMCKernel:
+    def get_posterior_samples(self, *args) -> ArrayLike:
         pass
 
     def run(self):
@@ -100,32 +91,37 @@ class BaseSampler(ABC):
         """
         self.sample()
 
-    def _compose_inference_data(self, mcmc: MCMC) -> az.InferenceData:
+    def _inference_data(
+        self,
+        posterior_samples: dict[str, ArrayLike],
+        prior_model: Callable = None,
+    ) -> tuple[dict, dict, dict]:
         """
-        Create an ArviZ `InferenceData` object from a NumPyro MCMC run.
-        Includes posterior, posterior predictive, and prior samples.
+        Create inference data for posterior predictive, prior predictive, and
+        log-likelihood.
 
         Parameters
         ----------
-        mcmc : MCMC
-            The MCMC object containing the sampling results.
+        posterior_samples: dict[str, ArrayLike]
+            Posterior samples obtained from the sampler.
+        prior_model: Callable, optional
+            The prior model to use for prior predictive checks. If None, uses
+            the main model.
 
         Returns
         -------
-        az.InferenceData
-            An ArviZ InferenceData object containing the posterior, posterior predictive,
-            and prior samples.
+            A tuple containing posterior predictive, prior predictive, and
+            log-likelihood data.
         """
-        posterior_samples = mcmc.get_samples()
-
         rng_key = jax.random.PRNGKey(0)
 
+        # Posterior predictive
         predictive_post = Predictive(self.model, posterior_samples=posterior_samples)(
             rng_key,
+            template=self.template,
             wave=self.wave,
             flux=None,
             flux_err=self.flux_err,
-            # template=self.template,
         )
 
         predictive_post.update(
@@ -136,12 +132,13 @@ class BaseSampler(ABC):
             }
         )
 
-        predictive_prior = Predictive(self.model, num_samples=1000)(
+        # Prior predictive
+        predictive_prior = Predictive(prior_model, num_samples=2000)(
             rng_key,
+            template=self.template,
             wave=self.wave,
             flux=None,
             flux_err=self.flux_err,
-            # template=self.template,
         )
 
         predictive_prior.update(
@@ -152,13 +149,17 @@ class BaseSampler(ABC):
             }
         )
 
-        idata = az.from_numpyro(
-            mcmc,
-            posterior_predictive=predictive_post,
-            prior=predictive_prior,
+        # Compute log-likelihood for each posterior sample
+        log_lik = log_likelihood(
+            self.model,
+            posterior_samples,
+            wave=self.wave,
+            flux=self.flux,
+            flux_err=self.flux_err,
+            template=self.template,
         )
 
-        return idata
+        return predictive_post, predictive_prior, log_lik
 
     @property
     def flat_posterior_samples(self):
@@ -180,16 +181,27 @@ class BaseSampler(ABC):
         """
         if self._summary is None:
             # Compute the original summary
-            summary = az.summary(
-                self._idata,
-                stat_focus="median",
-                hdi_prob=0.68,
-                var_names=[
-                    x
-                    for x in self._idata.posterior.data_vars
-                    if x not in self._get_ignored_vars()
-                ],
-            )
+            with pd.option_context("display.precision", 10):
+                summary = az.summary(
+                    self._idata,
+                    stat_focus="median",
+                    hdi_prob=0.68,
+                    var_names=[
+                        x
+                        for x in self._idata.posterior.data_vars
+                        if x not in self._get_ignored_vars()
+                    ],
+                    round_to=10,
+                )
+                # summary["fixed"] = [x in self._get_fixed_vars() for x in summary.index]
+
+            # Rename index column to "parameter", then remove index
+            summary.index.name = "parameter"
+
+            # Sort table so fixed variables are at the bottom, then sort by index
+            # summary = summary.sort_values(
+            #     by=["fixed", "parameter"], ascending=[True, True]
+            # )
 
             col_stat = "hdi" if "hdi_16%" in summary.columns else "eti"
 
@@ -197,22 +209,7 @@ class BaseSampler(ABC):
             summary["err_hi"] = summary[f"{col_stat}_84%"] - summary["median"]
 
             # Extract posterior samples of the circular parameters
-            circ_vars = list(
-                set(
-                    [
-                        x.replace("_circ_x_base", "").replace("_circ_y_base", "")
-                        for x in [
-                            x for x in self._idata.posterior.data_vars if "circ" in x
-                        ]
-                    ]
-                )
-            )
-            circ_vars = [
-                x
-                for x in self._idata.posterior.data_vars
-                for y in circ_vars
-                if y.endswith(x)
-            ]
+            circ_vars = self._get_circular_vars()
 
             if len(circ_vars) > 0:
                 posterior = az.extract(
@@ -223,7 +220,7 @@ class BaseSampler(ABC):
                     posterior = posterior.to_dataset(name=posterior.name)
 
                 for var in circ_vars:
-                    theta = posterior[var].values  # shape: (n_samples,)
+                    theta = posterior[var].values
 
                     theta_circ = parse_circular_parameters(theta)
                     theta_median = theta_circ["circular_median"]
@@ -236,7 +233,7 @@ class BaseSampler(ABC):
                     # Update the summary DataFrame
                     row = summary.loc[var].copy()
                     row["mean"] = theta_mean
-                    row["median"] = theta_median
+                    row["median"] = theta_mean
                     row["err_lo"] = theta_err_lo
                     row["err_hi"] = theta_err_hi
 
@@ -251,15 +248,63 @@ class BaseSampler(ABC):
 
         return self._summary
 
-    def _get_ignored_vars(self, include_shared=False) -> list[str]:
-        """
-        Get a list of variables to ignore in the pair plot and summary.
-        """
+    def _get_divergences(self) -> tuple[int, float]:
+        # Access sample statistics
+        sample_stats = self._idata.sample_stats
+
+        # Check divergences
+        divergences = sample_stats["diverging"]
+        num_divergences = divergences.sum().values
+        divergence_rate = 100 * num_divergences / divergences.size
+
+        return num_divergences, divergence_rate
+
+    def _get_fixed_vars(self) -> list[str]:
         fixed_vars = [
             f"{prof.name}_{param.name}"
             for prof in self.template.disk_profiles + self.template.line_profiles
             for param in prof.fixed
         ]
+
+        if self.template.redshift.fixed:
+            fixed_vars.append(self.template.redshift.name)
+
+        if self.template.white_noise.fixed:
+            fixed_vars.append(self.template.white_noise.name)
+
+        # If inner radius and radius scale are both fixed, fix outer radius
+        for prof in self.template.disk_profiles:
+            if prof.inner_radius.fixed and prof.radius_scale.fixed:
+                fixed_vars.append(f"{prof.name}_outer_radius")
+
+        # Post-hoc fixed values
+        post_hoc = [
+            var
+            for var in self._idata.posterior.data_vars
+            if np.std(self._idata.posterior[var].values) < 1e-8
+        ]
+
+        return [
+            x for x in self._idata.posterior.data_vars if x in fixed_vars + post_hoc
+        ]
+
+    def _get_nuisance_vars(self) -> list[str]:
+        nuisance_vars = [
+            x
+            for x in self._idata.posterior.data_vars
+            if x.endswith("_flux")
+            or x.endswith("_base")
+            or x.endswith("_unwrapped")
+            or "auto_shared_latent" in x
+        ]
+
+        return nuisance_vars
+
+    def _get_ignored_vars(self, include_shared=False) -> list[str]:
+        """
+        Get a list of variables to ignore in the pair plot and summary.
+        """
+        fixed_vars = self._get_fixed_vars()
 
         orphaned_vars = [
             f"{prof.name}_{param.name}"
@@ -275,13 +320,12 @@ class BaseSampler(ABC):
             if f"{param.shared}_{param.name}" not in fixed_vars + orphaned_vars
         ]
 
+        nuisance_vars = self._get_nuisance_vars()
+
         ignored_vars = [
             x
             for x in self._idata.posterior.data_vars
-            if x.endswith("_flux")
-            or x.endswith("_base")
-            or x.endswith("_unwrapped")
-            or x in fixed_vars + orphaned_vars
+            if x in nuisance_vars + fixed_vars + orphaned_vars
         ]
 
         if include_shared:
@@ -290,6 +334,23 @@ class BaseSampler(ABC):
             ]
 
         return ignored_vars
+
+    def _get_circular_vars(self) -> list[str]:
+        """
+        Get a list of circular variables in the posterior samples.
+        """
+        circ_vars = [
+            f"{prof.name}_{param.name}"
+            for prof in self.template.disk_profiles + self.template.line_profiles
+            for param in prof.independent
+            if param.circular
+        ]
+
+        return [
+            x
+            for x in self._idata.posterior.data_vars
+            if x in circ_vars and x not in self._get_fixed_vars()
+        ]
 
     def write_results(self):
         """
@@ -300,11 +361,11 @@ class BaseSampler(ABC):
 
         out_path = Path(f"{self._config.output_path}/results.nc")
 
-        if not out_path.exists():
-            logger.info(
-                f"Results written to <green>{self._config.output_path}/results.nc</green>."
-            )
-            az.to_netcdf(self._idata, str(out_path))
+        # if not out_path.exists():
+        logger.info(
+            f"Results written to <green>{self._config.output_path}/results.nc</green>."
+        )
+        az.to_netcdf(self._idata, str(out_path))
 
         self.summary.to_csv(
             f"{self._config.output_path}/summary.csv",
@@ -315,9 +376,11 @@ class BaseSampler(ABC):
         """
         Plot the results of the sampling, including HDI, model fit, and pair plots.
         """
+        logger.info(f"Plotting HDI...")
         plot_hdi(
             self._idata, self.wave, self.flux, self.flux_err, self._config.output_path
         )
+        logger.info(f"Plotting model fit...")
         plot_model_fit(
             self._idata,
             self.summary,
@@ -328,12 +391,28 @@ class BaseSampler(ABC):
             self._config.output_path,
             label=self.template.name,
         )
+        logger.info(f"Plotting corner plot...")
         plot_corner(
             self._idata,
             self._config.output_path,
             ignored_vars=self._get_ignored_vars(include_shared=True),
+            log_vars=[
+                x.name for x in self.template.all_parameters if "log" in x.distribution
+            ],
         )
+
+        logger.info(f"Plotting prior corner plot...")
         plot_corner_priors(
+            self._idata,
+            self._config.output_path,
+            ignored_vars=self._get_ignored_vars(include_shared=True),
+            log_vars=[
+                x.name for x in self.template.all_parameters if "log" in x.distribution
+            ],
+        )
+
+        logger.info(f"Plotting trace plot...")
+        plot_trace(
             self._idata,
             self._config.output_path,
             ignored_vars=self._get_ignored_vars(include_shared=True),

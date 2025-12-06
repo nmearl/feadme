@@ -6,7 +6,9 @@ from astropy.modeling.fitting import (
     TRFLSQFitter,
     model_to_fit_params,
 )
-from astropy.modeling.models import Const1D
+from astropy.modeling.models import Const1D, Shift, RedshiftScaleFactor
+from pathlib import Path
+import astropy.uncertainty as unc
 
 from ..compose import evaluate_model
 from ..parser import Template, Data
@@ -17,12 +19,17 @@ FLOAT_EPSILON = 1e-6
 class DiskProfileModel(Fittable1DModel):
     center = Parameter()
     inner_radius = Parameter()
-    delta_radius = Parameter()
+    # delta_radius = Parameter()
+    # outer_radius = Parameter()
+    # radius_ratio = Parameter()
+    radius_scale = Parameter()
     inclination = Parameter()
     sigma = Parameter()
     q = Parameter()
     eccentricity = Parameter()
     apocenter = Parameter()
+    # apocenter_x = Parameter()
+    # apocenter_y = Parameter()
     scale = Parameter()
     offset = Parameter()
 
@@ -35,13 +42,36 @@ class DiskProfileModel(Fittable1DModel):
         for i, pn in enumerate(self.param_names):
             pars[f"{self._name}_{pn}"] = args[i].item()
 
-            if pn in ["inner_radius", "delta_radius", "sigma"]:
+            if pn in [
+                "inner_radius",
+                "outer_radius",
+                "delta_radius",
+                "sigma",
+                "radius_ratio",
+            ]:
                 pars[f"{self._name}_{pn}"] = 10 ** pars[f"{self._name}_{pn}"]
 
-        pars[f"{self.name}_outer_radius"] = (
-            pars[f"{self.name}_inner_radius"] + pars[f"{self.name}_delta_radius"]
+        # pars[f"{self.name}_outer_radius"] = (
+        #     pars[f"{self.name}_inner_radius"] + pars[f"{self.name}_delta_radius"]
+        # )
+        # del pars[f"{self.name}_delta_radius"]
+
+        # pars[f"{self._name}_outer_radius"] = (
+        #     pars[f"{self._name}_inner_radius"] * pars[f"{self._name}_radius_ratio"]
+        # )
+        # del pars[f"{self._name}_radius_ratio"]
+
+        # if pars[f"{self._name}_inner_radius"] >= pars[f"{self._name}_outer_radius"]:
+        #     raise np.zeros(x.shape)
+
+        inner_radius = pars[f"{self.name}_inner_radius"]
+        radius_scale = pars[f"{self.name}_radius_scale"]
+
+        pars[f"{self.name}_outer_radius"] = 10 ** (
+            np.log10(inner_radius)
+            + (np.log10(5e4) - np.log10(inner_radius)) * radius_scale
         )
-        del pars[f"{self.name}_delta_radius"]
+        del pars[f"{self.name}_radius_scale"]
 
         res = evaluate_model(self._template, x, pars)[0]
 
@@ -49,14 +79,12 @@ class DiskProfileModel(Fittable1DModel):
             np.isinf(list(pars.values()))
         ):
             print(f"Invalid parameters for {self.name}: {pars}")
-            raise ValueError()
 
         if np.any(np.isnan(res)) or np.any(np.isinf(res)):
             print(f"Invalid model evaluation for {self.name}")
             from pprint import pprint
 
             pprint(pars)
-            raise ValueError()
 
         return res
 
@@ -98,10 +126,7 @@ class LineProfileModel(Fittable1DModel):
 
 
 def lsq_model_fitter(
-    template: Template,
-    data: Data,
-    force_values=None,
-    show_plot=False,
+    template: Template, data: Data, force_values=None, show_plot=False, out_dir=None
 ):
     """
     Fit a least-squares model to the provided template and data.
@@ -142,7 +167,13 @@ def lsq_model_fitter(
             param_low = param.low
             param_high = param.high
 
-            if param.name in ["inner_radius", "delta_radius", "sigma"]:
+            if param.name in [
+                "inner_radius",
+                "outer_radius",
+                "delta_radius",
+                "sigma",
+                "radius_ratio",
+            ]:
                 param_low = np.log10(param_low)
                 param_high = np.log10(param_high)
 
@@ -155,7 +186,14 @@ def lsq_model_fitter(
                 param_val = force_values[f"{prof.name}_{param.name}"]
                 param_val = (
                     np.log10(param_val)
-                    if param.name in ["inner_radius", "delta_radius", "sigma"]
+                    if param.name
+                    in [
+                        "inner_radius",
+                        "outer_radius",
+                        "delta_radius",
+                        "sigma",
+                        "radius_ratio",
+                    ]
                     else param_val
                 )
                 in_par_values[param.name] = param_val
@@ -232,6 +270,22 @@ def lsq_model_fitter(
 
         full_model += line_mod
 
+    # Redshift
+    full_model = (
+        RedshiftScaleFactor(
+            z=template.redshift.value,
+            fixed={"z": template.redshift.fixed},
+            bounds={
+                "z": (
+                    1 / (1 + template.redshift.high) - 1,
+                    1 / (1 + template.redshift.low) - 1,
+                )
+            },
+            name="redshift",
+        ).inverse
+        | full_model
+    )
+
     _, indices, _ = model_to_fit_params(full_model)
 
     fitter = TRFLSQFitter(calc_uncertainties=True)
@@ -242,7 +296,10 @@ def lsq_model_fitter(
     # Parameter uncertainties = sqrt of diagonal
     param_uncerts = np.sqrt(np.diag(cov))
 
-    if show_plot:
+    # Get real redshift
+    fit_z = 1 / (1 + fit_mod["redshift"].z) - 1
+
+    if out_dir is not None:
         fig, ax = plt.subplots()
 
         new_rest = np.linspace(
@@ -252,7 +309,7 @@ def lsq_model_fitter(
         )
 
         ax.errorbar(
-            rest_wave,
+            rest_wave / (1 + fit_z),
             flux,
             yerr=flux_err,
             fmt="o",
@@ -261,19 +318,23 @@ def lsq_model_fitter(
             alpha=0.25,
         )
         ax.plot(
-            new_rest,
+            new_rest / (1 + fit_z),
             fit_mod(new_rest),
             label="Model Fit",
             color="C3",
         )
 
-        ax.set_title(f"LSQ Fit to {template.name} ({template.redshift})")
+        ax.set_title(
+            f"LSQ Fit to {template.name} ({fit_z:.3f}, {template.redshift.value:.3f})"
+        )
 
         for sm in fit_mod:
-            if sm.name in ["shift", "base"]:
+            if sm.name in ["shift", "base", "redshift"]:
                 continue
 
-            ax.plot(new_rest, sm(new_rest), label=f"{sm.name}")
+            ax.plot(
+                new_rest / (1 + fit_z), (fit_mod[0] | sm)(new_rest), label=f"{sm.name}"
+            )
 
         txt = ""
         for pn, pv, pe in zip(
@@ -296,7 +357,9 @@ def lsq_model_fitter(
         )
 
         ax.legend()
-        fig.savefig(f"lsq_fit_{template.name}_{template.obs_date}.png")
+        fig.savefig(Path(out_dir or "") / "lsq_model_fit.png")
+
+        plt.close(fig)
 
     starters = {}
 
@@ -308,8 +371,11 @@ def lsq_model_fitter(
 
     _, inds, _ = model_to_fit_params(fit_mod)
 
-    for pn, pv, pe in zip(
-        np.array(fit_mod.param_names)[inds], fit_mod.parameters[inds], param_uncerts
+    for pn, pv, pe, (plb, pub) in zip(
+        np.array(fit_mod.param_names)[inds],
+        fit_mod.parameters[inds],
+        param_uncerts,
+        np.array(list(fit_mod.bounds.values()))[inds],
     ):
         sm_idx = int(pn.split("_")[-1])
         pn = "_".join(pn.split("_")[:-1])
@@ -324,7 +390,7 @@ def lsq_model_fitter(
 
         # print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
 
-        std_scale = 5
+        std_scale = 1
 
         if samp_name in indep_params:
             if pn in ["apocenter"]:
@@ -336,19 +402,57 @@ def lsq_model_fitter(
                 y = unp.nominal_values(uy)
                 ye = unp.std_devs(uy)
 
-                starters[f"{samp_name}_x"] = (x, std_scale * xe)
-                starters[f"{samp_name}_y"] = (y, std_scale * ye)
+                starters[f"{samp_name}_x_base"] = (x, std_scale * xe, plb, pub)
+                starters[f"{samp_name}_y_base"] = (y, std_scale * ye, plb, pub)
 
-            if pn in ["inner_radius", "delta_radius", "sigma", "vel_width"]:
+            if pn in [
+                "inner_radius",
+                "outer_radius",
+                "delta_radius",
+                "sigma",
+                "vel_width",
+                "radius_ratio",
+            ]:
                 upv = 10**upv
                 pv = unp.nominal_values(upv)
                 pe = unp.std_devs(upv)
+                plb = 10**plb
+                pub = 10**pub
 
                 # print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
 
             if pe < FLOAT_EPSILON:
                 pe = 1
 
-            starters[samp_name] = (pv, pe * std_scale)
+            starters[samp_name] = (pv, pe * std_scale, plb, pub)
 
-    return starters
+    for prof in template.disk_profiles:
+        starters[f"{prof.name}_outer_radius"] = (
+            starters[f"{prof.name}_inner_radius"][0]
+            + (5e4 - starters[f"{prof.name}_inner_radius"][0])
+            * starters[f"{prof.name}_radius_scale"][0],
+            0,
+            1e6,
+        )
+
+        # if False:
+        #     radius_ratio_dist = unc.normal(
+        #         starters[f"{prof.name}_radius_ratio"][0],
+        #         std=starters[f"{prof.name}_radius_ratio"][1],
+        #         n_samples=10000,
+        #     )
+        #
+        #     inner_radius_dist = unc.normal(
+        #         starters[f"{prof.name}_inner_radius"][0],
+        #         std=starters[f"{prof.name}_inner_radius"][1],
+        #         n_samples=10000,
+        #     )
+        #
+        #     starters[f"{prof.name}_outer_radius"] = (
+        #         (inner_radius_dist * radius_ratio_dist).pdf_median(),
+        #         (inner_radius_dist * radius_ratio_dist).pdf_std(),
+        #         0,
+        #         1e6,
+        #     )
+
+    return starters, rest_wave / (1 + fit_z), fit_mod(rest_wave), fit_mod

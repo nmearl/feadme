@@ -14,7 +14,7 @@ logger.remove()
 # )
 
 logger.add(
-    sys.stderr,
+    sys.stdout,
     colorize=True,
     format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
     "<level>{level: <8}</level> | "
@@ -27,7 +27,7 @@ numpyro.enable_x64()
 import jax
 
 logger.debug("Initializing...")
-logger.debug(f"Backend: {jax.lib.xla_bridge.get_backend().platform}")
+logger.debug(f"Backend: {jax.extend.backend.get_backend().platform}")
 logger.debug(f"Device count: {jax.device_count()}")
 logger.debug(f"Device: {jax.devices()[0].device_kind}")
 logger.debug(f"Local device count: {jax.local_device_count()}")

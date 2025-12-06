@@ -63,6 +63,27 @@ def plot_hdi(
     plt.close(fig)
 
 
+def plot_trace(
+    idata: InferenceData,
+    output_path: str | Path,
+    ignored_vars: list[str] = None,
+):
+    """
+    Plot the trace of the MCMC sampling.
+
+    Parameters
+    ----------
+    idata : InferenceData
+        The inference data containing the posterior samples.
+    output_path : str or Path
+        The path where the trace plot will be saved.
+    """
+    var_names = [var for var in idata.posterior.data_vars if var not in ignored_vars]
+    az.plot_trace(idata, var_names=var_names)
+    plt.savefig(f"{output_path}/trace_plot.png")
+    plt.close()
+
+
 def plot_model_fit(
     idata: InferenceData,
     summary: pd.DataFrame,
@@ -95,10 +116,26 @@ def plot_model_fit(
     label : str
         A label for the plot, typically the name of the template or object being modeled.
     """
+    # Retrieve the redshift fitted value
+    redshift = (
+        summary.loc["redshift", "median"]
+        if not template.redshift.fixed
+        else template.redshift.value
+    )
+    rest_wave = wave / (1 + redshift)
+
+    # Retrieve additional white noise
+    try:
+        white_noise = summary.loc["white_noise", "median"]
+    except KeyError:
+        white_noise = template.white_noise.value
+
+    total_error = jnp.sqrt(flux_err**2 + flux**2 * jnp.exp(2 * white_noise))
+
     fig, ax = plt.subplots(layout="constrained")
 
     ax.errorbar(
-        wave, flux, yerr=flux_err, fmt="o", color="grey", zorder=-10, alpha=0.25
+        rest_wave, flux, yerr=total_error, fmt="o", color="grey", zorder=-10, alpha=0.25
     )
 
     # Plot the posterior distributions for disk and line flux
@@ -106,7 +143,7 @@ def plot_model_fit(
         var_name = " ".join([x.capitalize() for x in var.split("_")])
         var_dist = idata.posterior_predictive[var].mean(dim=("chain",)).values
         median = np.percentile(var_dist, 50, axis=0)
-        ax.plot(wave, median, label=f"Sampled {var_name}")
+        ax.plot(rest_wave, median, label=f"Sampled {var_name}")
 
     obs_dist = (
         idata.posterior_predictive["total_flux"].stack(sample=("chain", "draw")).values
@@ -115,8 +152,8 @@ def plot_model_fit(
     lower = np.percentile(obs_dist, 16, axis=1)
     upper = np.percentile(obs_dist, 84, axis=1)
 
-    ax.plot(wave, median, label="Sampled Model Fit", color="C3")
-    ax.fill_between(wave, lower, upper, alpha=0.5, color="C3")
+    ax.plot(rest_wave, median, label="Sampled Model Fit", color="C3")
+    ax.fill_between(rest_wave, lower, upper, alpha=0.5, color="C3")
 
     # Reconstruct the model from the median of the posteriors
     fixed_vars = {
@@ -124,6 +161,14 @@ def plot_model_fit(
         for prof in template.disk_profiles + template.line_profiles
         for param in prof.fixed
     }
+
+    # If inner radius and radius scale are both fixed, fix outer radius
+    for prof in template.disk_profiles:
+        if prof.inner_radius.fixed and prof.radius_scale.fixed:
+            fixed_vars[f"{prof.name}_outer_radius"] = 10 ** (
+                np.log10(fixed_vars[f"{prof.name}_inner_radius"])
+                * prof.radius_scale.value
+            )
 
     orphaned_vars = {
         f"{prof.name}_{param.name}": fixed_vars[f"{param.shared}_{param.name}"]
@@ -136,16 +181,19 @@ def plot_model_fit(
     param_mods.update(fixed_vars)
     param_mods.update(orphaned_vars)
 
-    tot_flux, disk_flux, line_flux = evaluate_model(template, wave, param_mods)
+    new_wave = np.linspace(rest_wave[0], rest_wave[-1], 1000)
 
-    ax.plot(wave, tot_flux, label="Reconstructed Model", linestyle="--")
-    ax.plot(wave, disk_flux, label="Reconstructed Disk Flux", linestyle="--")
-    ax.plot(wave, line_flux, label="Reconstructed Line Flux", linestyle="--")
+    tot_flux, disk_flux, line_flux = evaluate_model(template, new_wave, param_mods)
 
+    ax.plot(new_wave, tot_flux, label="Reconstructed Model", linestyle="--")
+    ax.plot(new_wave, disk_flux, label="Reconstructed Disk Flux", linestyle="--")
+    ax.plot(new_wave, line_flux, label="Reconstructed Line Flux", linestyle="--")
     ax.set_ylabel("Flux [mJy]")
     ax.set_xlabel("Wavelength [AA]")
-    ax.set_title(f"{label} Model Fit")
-    ax.legend()
+    ax.set_title(
+        f"{label}{' ' + str(template.obs_date) if template.obs_date is not None else ''} Model Fit"
+    )
+    ax.legend(fontsize=8)
 
     fig.savefig(f"{output_path}/model_fit.png")
     plt.close(fig)
@@ -155,6 +203,7 @@ def plot_corner(
     idata: InferenceData,
     output_path: str | Path,
     ignored_vars: list[str] = None,
+    log_vars: list[str] = None,
 ):
     """
     Create a corner plot of the posterior distributions of the model parameters.
@@ -182,6 +231,17 @@ def plot_corner(
     # Compute quantiles
     quantiles = [0.16, 0.5, 0.84]
 
+    axes_scale = ["linear"] * len(var_names)
+
+    for i, y in enumerate(var_names):
+        for x in log_vars:
+            if x in y:
+                axes_scale[i] = "log"
+                break
+        else:
+            if "outer_radius" in y:
+                axes_scale[i] = "log"
+
     # Create the corner plot
     fig = corner.corner(
         samples,
@@ -194,10 +254,7 @@ def plot_corner(
         plot_density=True,
         plot_contours=True,
         fill_contours=True,
-        axes_scale=[
-            "log" if "vel_width" in x or "radius" in x or "sigma" in x else "linear"
-            for x in var_names
-        ],
+        axes_scale=axes_scale,
     )
 
     fig.savefig(f"{output_path}/corner_plot.png")
@@ -208,6 +265,7 @@ def plot_corner_priors(
     idata: InferenceData,
     output_path: str | Path,
     ignored_vars: list[str] = None,
+    log_vars: list[str] = None,
 ):
     """
     Create a corner plot of the prior distributions of the model parameters.
@@ -221,17 +279,33 @@ def plot_corner_priors(
     ignored_vars : list of str, optional
         A list of variable names to ignore in the corner plot. Defaults to None.
     """
-    if ignored_vars is None:
-        ignored_vars = []
+    ignored_vars = ignored_vars or []
+    log_vars = log_vars or []
 
     # Filter out ignored variables
-    var_names = [var for var in idata.prior.data_vars if var not in ignored_vars]
+    var_names = [
+        var for var in idata.prior.data_vars if var not in ignored_vars + ["total_flux"]
+    ]
 
     samples_ds = az.extract(idata, group="prior", var_names=var_names, combined=True)
     samples = np.vstack([samples_ds[var].values for var in var_names]).T
 
+    # Remove all inf/nan values from samples
+    samples = samples[np.all(np.isfinite(samples), axis=1)]
+
     # Compute quantiles
     quantiles = [0.16, 0.5, 0.84]
+
+    axes_scale = ["linear"] * len(var_names)
+
+    for i, y in enumerate(var_names):
+        for x in log_vars:
+            if x in y:
+                axes_scale[i] = "log"
+                break
+        else:
+            if "outer_radius" in y:
+                axes_scale[i] = "log"
 
     # Create the corner plot
     fig = corner.corner(
@@ -245,10 +319,7 @@ def plot_corner_priors(
         plot_density=True,
         plot_contours=True,
         fill_contours=True,
-        axes_scale=[
-            "log" if "vel_width" in x or "radius" in x or "sigma" in x else "linear"
-            for x in var_names
-        ],
+        axes_scale=axes_scale,
     )
 
     fig.savefig(f"{output_path}/corner_plot_priors.png")

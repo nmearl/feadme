@@ -1,16 +1,137 @@
-from jax.scipy.stats import norm
-import jax.numpy as jnp
 from collections import namedtuple
-import numpy as np
 
+import jax
+import jax.numpy as jnp
+import numpy as np
+from jax.scipy.special import erf, erfinv
+from jax.scipy.stats import norm
 from numpyro.distributions import constraints
 from numpyro.distributions.transforms import Transform
-
-from numpyro.handlers import trace, seed
-import jax
+from numpyro.handlers import seed, trace
 from scipy import stats
-
 from scipy.optimize import minimize_scalar
+import astropy.constants as const
+
+from .parser import Template
+
+c_cgs = const.c.cgs.value
+c_kms = const.c.to("km/s").value
+
+
+def rebin_spectrum(wave, flux, flux_err, dv=100.0, rest=False, z=0.0):
+    """
+    Rebin a spectrum in wavelength space, conserving total flux
+    and propagating uncertainties via inverse-variance weighting.
+
+    Parameters
+    ----------
+    wave : array_like
+        Wavelength array in Angstroms.
+    flux : array_like
+        Flux array (same units throughout; flux density, not integrated flux).
+    flux_err : array_like
+        1σ uncertainty array, same shape as `flux`.
+    dv : float, optional
+        Velocity width per bin in km/s. Default = 100 km/s.
+    rest : bool, optional
+        If True, treat `wave` as rest-frame; if False, interpret as observed.
+        Used only if you pass a redshift `z`.
+    z : float, optional
+        Redshift of the source. If nonzero and rest=False, converts to rest-frame
+        wavelength before computing bin edges.
+
+    Returns
+    -------
+    wave_bin : ndarray
+        Central wavelength of each bin.
+    flux_bin : ndarray
+        Weighted mean flux in each bin.
+    flux_err_bin : ndarray
+        Propagated uncertainty per bin.
+    """
+
+    # Convert to rest-frame if necessary
+    if not rest and z != 0.0:
+        wave_eff = wave / (1.0 + z)
+    else:
+        wave_eff = wave.copy()
+
+    # Compute bin edges in log-lambda space (constant Δv bins)
+    dloglam = dv / c_kms
+    loglam = np.log(wave_eff)
+    loglam_edges = np.arange(loglam.min(), loglam.max() + dloglam, dloglam)
+
+    # Assign each wavelength to a bin
+    inds = np.digitize(loglam, loglam_edges) - 1
+    nbins = len(loglam_edges) - 1
+
+    flux_bin = np.zeros(nbins)
+    ivar_bin = np.zeros(nbins)
+    wave_bin = np.zeros(nbins)
+
+    ivar = 1.0 / flux_err**2
+    for i in range(nbins):
+        m = inds == i
+        if not np.any(m):
+            flux_bin[i] = np.nan
+            ivar_bin[i] = 0.0
+            continue
+        w = ivar[m]
+        flux_bin[i] = np.sum(w * flux[m]) / np.sum(w)
+        ivar_bin[i] = np.sum(w)
+        wave_bin[i] = np.exp(np.mean(loglam[m]))
+
+    flux_err_bin = np.zeros_like(flux_bin)
+    mask = ivar_bin > 0
+    flux_err_bin[mask] = np.sqrt(1.0 / ivar_bin[mask])
+    flux_err_bin[~mask] = np.nan
+
+    return wave_bin[mask], flux_bin[mask], flux_err_bin[mask]
+
+
+def lsq_to_base_space(lsq_values: dict, template: Template) -> dict:
+    """
+    Convert LSQ parameter values to Normal(0,1) base space for _sample_manual_reparam.
+    LSQ works in uniform space (possibly log-transformed), so we just need to:
+    1. Map from [low, high] to u in [0, 1]
+    2. Map u to z ~ Normal(0, 1) via inverse CDF
+    """
+    from scipy.stats import norm
+    import numpy as np
+
+    base_values = {}
+
+    # Get all independent parameters
+    all_params = []
+    for prof in template.disk_profiles + template.line_profiles:
+        for param in prof.independent:
+            all_params.append((prof.name, param))
+
+    if not template.redshift.fixed:
+        all_params.append((None, template.redshift))
+    if not template.white_noise.fixed:
+        all_params.append((None, template.white_noise))
+
+    for prof_name, param in all_params:
+        samp_name = f"{prof_name}_{param.name}" if prof_name else param.name
+
+        if samp_name not in lsq_values:
+            continue
+
+        val, _, low, high = lsq_values[samp_name]
+
+        # Simple uniform mapping from [low, high] to [0, 1]
+        u = (val - low) / (high - low)
+
+        # Clamp for numerical safety
+        u = np.clip(u, 1e-6, 1 - 1e-6)
+
+        # Convert to Normal(0,1) base space
+        z = norm.ppf(u)
+
+        base_values[f"{samp_name}_base"] = z
+
+    return base_values
 
 
 def dict_to_namedtuple(name, d):
@@ -26,21 +147,6 @@ def dict_to_namedtuple(name, d):
     fields = {k: dict_to_namedtuple(k.capitalize(), v) for k, v in d.items()}
     NT = namedtuple(name, fields.keys())
     return NT(**fields)
-
-
-def truncnorm_ppf(q, loc, scale, lower_limit, upper_limit):
-    """
-    Compute the percent point function (PPF) of a truncated normal distribution.
-    """
-    a = (lower_limit - loc) / scale
-    b = (upper_limit - loc) / scale
-
-    # Compute CDF bounds
-    cdf_a = norm.cdf(a)
-    cdf_b = norm.cdf(b)
-
-    # Compute the truncated normal PPF
-    return norm.ppf(cdf_a + q * (cdf_b - cdf_a)) * scale + loc
 
 
 class BaseTenTransform(Transform):
@@ -290,6 +396,10 @@ def parse_circular_parameters(samples):
     """
     # Calculate circular statistics
     circular_mean = stats.circmean(samples)
+    circular_std = stats.circstd(samples)
+    p16, p84 = circular_mean - circular_std, circular_mean + circular_std
+    err_lo, err_hi = circular_std, circular_std
+
     median = circular_median(samples)
     p16, p84 = circular_percentiles(samples, [16, 84])
     err_lo, err_hi = circular_error_bars(median, p16, p84)
