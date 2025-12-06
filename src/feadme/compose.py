@@ -143,15 +143,11 @@ def _compute_disk_flux_vectorized(
         # F_nu = F_X * |dX/dnu|
         # dX/dnu = 1 / nu0
         # F_nu = F_X / nu0
-        jac = nu0
-        res_nu = res_X / jac
+        # jac = nu0
+        # res_nu = res_X / jac
 
         # Check for invalid results
-        max_res = jnp.max(res_nu)
-
-        EPS = 1e-8
-        safe_max = jnp.maximum(max_res, EPS)
-        normalized_res = res_nu / safe_max
+        normalized_res = res_X / jnp.max(res_X)
 
         return normalized_res * scale_i + offset_i
 
