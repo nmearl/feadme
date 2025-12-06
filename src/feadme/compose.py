@@ -113,8 +113,8 @@ def _compute_disk_flux_vectorized(
         X = nu / nu0 - 1
         local_sigma = sigma_i * 1e5 * nu0 / c_cgs
 
-        # ecc_i = jnp.minimum(ecc_i, 1.0 - 1e-3)
-        # inc_i = jnp.minimum(inc_i, jnp.pi / 2 - 1e-5)
+        ecc_i = jnp.minimum(ecc_i, 1.0 - 1e-6)
+        inc_i = jnp.minimum(inc_i, jnp.pi / 2 - 1e-6)
 
         res_X = integrator(
             inner_i,
@@ -146,8 +146,11 @@ def _compute_disk_flux_vectorized(
         jac = nu0
         res_nu = res_X / jac
 
+        # Check for invalid results
         max_res = jnp.max(res_nu)
-        normalized_res = res_nu / jnp.maximum(max_res, ERR)
+        is_valid = jnp.isfinite(max_res) & (max_res > ERR)
+
+        normalized_res = jnp.where(is_valid, res_nu / max_res, jnp.zeros_like(res_nu))
 
         return normalized_res * scale_i + offset_i
 
