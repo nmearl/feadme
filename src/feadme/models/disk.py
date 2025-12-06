@@ -136,13 +136,10 @@ def integrand(
     nu0: float,
 ) -> ArrayLike:
     """
-    Ultra-optimized version with algebraic simplifications.
-
-    Additional optimizations:
-    1. Minimize number of sqrt operations
-    2. Reorder operations for better memory access patterns
-    3. Use fused multiply-add patterns where possible
+    Ultra-optimized version with algebraic simplifications and numerical safeguards.
     """
+    EPS = 1e-15  # Small epsilon for numerical stability
+
     # Trigonometric pre-computation
     sini = jnp.sin(inc)
     sinphi = jnp.sin(phi)
@@ -157,40 +154,42 @@ def integrand(
     sini_cosphi_sq = sini_cosphi * sini_cosphi
 
     one_minus_sinisq_cosphisq = 1.0 - sini_cosphi_sq
-    one_minus_e_cosphiphinot = 1.0 - e * cosphiphinot
+    one_minus_e_cosphiphinot = jnp.maximum(1.0 - e * cosphiphinot, EPS)
 
     # Transform
     trans_fac = (1.0 + e) / one_minus_e_cosphiphinot
     xi = xi_tilde * trans_fac
 
     # Powers and reciprocals
-    xi_recip = 1.0 / xi
+    xi_recip = 1.0 / jnp.maximum(xi, EPS)
     sqrt_xi = jnp.sqrt(xi)
 
     scale = 1.0 - 2.0 * xi_recip
-    sqrt_scale = jnp.sqrt(scale)
+    sqrt_scale = jnp.sqrt(jnp.maximum(scale, EPS))
 
     # Compute these once
     sqrt_one_minus_e_cosphiphinot = jnp.sqrt(one_minus_e_cosphiphinot)
     sqrt_one_minus_sinisq_cosphisq = jnp.sqrt(one_minus_sinisq_cosphisq)
 
     # b/r
-    one_plus_sini_cosphi = 1.0 + sini_cosphi
+    one_plus_sini_cosphi = jnp.maximum(1.0 + sini_cosphi, EPS)
     one_minus_sini_cosphi = 1.0 - sini_cosphi
 
     b_div_r = sqrt_one_minus_sinisq_cosphisq * (
         1.0 + xi_recip * one_minus_sini_cosphi / one_plus_sini_cosphi
     )
 
-    # Gamma - use reciprocal form
+    # Gamma - safeguard against negative denominator
     e_sq_sin_sq = e * e * sinphiphinot * sinphiphinot
     scale_sq = scale * scale
     one_minus_e_cosphiphinot_sq = one_minus_e_cosphiphinot * one_minus_e_cosphiphinot
 
     gamma_denom = 1.0 - (e_sq_sin_sq + scale * one_minus_e_cosphiphinot_sq) / (
-        xi * scale_sq * one_minus_e_cosphiphinot
+        xi * scale_sq * one_minus_e_cosphiphinot + EPS
     )
-    gamma = jnp.sqrt(1.0 / gamma_denom)
+
+    # If gamma_denom <= 0, the geometry is unphysical - return 0
+    gamma = jnp.where(gamma_denom > EPS, jnp.sqrt(1.0 / gamma_denom), 0.0)
 
     # Doppler components
     b_div_r_sq_scale = b_div_r * b_div_r * scale
@@ -203,26 +202,30 @@ def integrand(
 
     # Numerator and denominator for db/dc
     db_num = jnp.sqrt(term_binner) * e * sinphiphinot
-    dc_val = sqrt_xi * scale * sqrt_scale * sqrt_one_minus_e_cosphiphinot
+    dc_val = jnp.maximum(
+        sqrt_xi * scale * sqrt_scale * sqrt_one_minus_e_cosphiphinot, EPS
+    )
 
     # Numerator for dd/de
     dd_num = b_div_r * sqrt_one_minus_e_cosphiphinot * sini * sinphi
-    de_val = sqrt_xi * sqrt_scale * sqrt_one_minus_sinisq_cosphisq
+    de_val = jnp.maximum(sqrt_xi * sqrt_scale * sqrt_one_minus_sinisq_cosphisq, EPS)
 
     inv_dop = gamma * (da - db_num / dc_val + dd_num / de_val)
-    D = 1.0 / inv_dop
+    D = jnp.where(jnp.abs(inv_dop) > EPS, 1.0 / inv_dop, 0.0)
 
     # Intensity - optimize exponent computation
     D_sq = D * D
     one_plus_X_minus_D_sq = (1.0 + X - D) ** 2
 
-    exponent = -one_plus_X_minus_D_sq * (nu0 * nu0) / (2.0 * D_sq * sigma * sigma)
-    # exponent = -((1 + X - D) ** 2) / (2 * D**2) * (c_cgs / sigma) ** 2
+    exponent = (
+        -one_plus_X_minus_D_sq
+        * (nu0 * nu0)
+        / (2.0 * jnp.maximum(D_sq * sigma * sigma, EPS))
+    )
     exponent = jnp.maximum(exponent, -37.0)
 
     # Pre-compute constant
     const = 1.0 / (jnp.sqrt(2.0 * jnp.pi) * sigma)
-    # const = c_cgs / (jnp.sqrt(2.0 * jnp.pi) * sigma)
     I_nu = jnp.power(xi, -q) * const * jnp.exp(exponent)
 
     # Psi
@@ -231,5 +234,8 @@ def integrand(
     # Final - avoid repeated multiplication
     D_cubed = D_sq * D
     res = xi * I_nu * D_cubed * Psi_ * trans_fac
+
+    # Zero out result if gamma was invalid
+    res = jnp.where(gamma_denom > EPS, res, 0.0)
 
     return res
