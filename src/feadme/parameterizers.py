@@ -34,7 +34,7 @@ def _sample_no_reparam(samp_name: str, param: Parameter) -> ArrayLike:
         return param_samp
 
     if param.name == "inclination":
-        mu_min = jnp.cos(1.5)  # cos(i_max)
+        mu_min = jnp.cos(param.high)  # cos(i_max)
         mu_max = jnp.cos(param.low)  # cos(i_min)
 
         mu = numpyro.sample(
@@ -160,7 +160,7 @@ def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
     upper_limit = param.high
 
     if param.name == "inclination":
-        mu_min = jnp.cos(1.5)  # cos(i_max)
+        mu_min = jnp.cos(upper_limit)  # cos(i_max)
         mu_max = jnp.cos(lower_limit)  # cos(i_min)
         mu = mu_min + u * (mu_max - mu_min)
         val = jnp.arccos(mu)
