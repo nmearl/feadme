@@ -148,9 +148,10 @@ def _compute_disk_flux_vectorized(
 
         # Check for invalid results
         max_res = jnp.max(res_nu)
-        is_valid = jnp.isfinite(max_res) & (max_res > ERR)
 
-        normalized_res = jnp.where(is_valid, res_nu / max_res, jnp.zeros_like(res_nu))
+        EPS = 1e-8
+        safe_max = jnp.maximum(max_res, EPS)
+        normalized_res = res_nu / safe_max
 
         return normalized_res * scale_i + offset_i
 
