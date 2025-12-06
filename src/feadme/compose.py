@@ -114,9 +114,9 @@ def _compute_disk_flux_vectorized(
         local_sigma = sigma_i * 1e5 * nu0 / c_cgs
 
         # ecc_i = jnp.minimum(ecc_i, 1.0 - 1e-3)
-        inc_i = jnp.minimum(inc_i, jnp.pi / 2 - 1e-5)
+        # inc_i = jnp.minimum(inc_i, jnp.pi / 2 - 1e-5)
 
-        res = integrator(
+        res_X = integrator(
             inner_i,
             outer_i,
             0.0,
@@ -130,8 +130,24 @@ def _compute_disk_flux_vectorized(
             nu0,
         )
 
-        max_res = jnp.max(res)
-        normalized_res = jnp.where(max_res > 1e-30, res / max_res, jnp.zeros_like(res))
+        # Convert from X to wavelength space
+        # X = nu / nu0 - 1 = lambda_0 / lambda - 1
+        # F_lambda = F_X * |dX/dlambda|
+        # dX/dlambda = - lambda_0 / lambda^2
+        # F_lambda = F_X * lambda_0 / lambda^2
+        # jac = center_i / wave**2
+        # res_lambda = res_X * jac
+
+        # Convert from X to frequency space
+        # X = nu / nu0 - 1
+        # F_nu = F_X * |dX/dnu|
+        # dX/dnu = 1 / nu0
+        # F_nu = F_X / nu0
+        jac = nu0
+        res_nu = res_X / jac
+
+        max_res = jnp.max(res_nu)
+        normalized_res = res_nu / jnp.maximum(max_res, ERR)
 
         return normalized_res * scale_i + offset_i
 
