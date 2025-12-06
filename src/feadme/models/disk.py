@@ -194,7 +194,7 @@ def integrand(
 
     # Doppler components
     b_div_r_sq_scale = b_div_r * b_div_r * scale
-    term_binner = 1.0 - b_div_r_sq_scale
+    term_binner = jnp.maximum(1.0 - b_div_r_sq_scale, 0.0)
 
     # Optimize division chains
     inv_sqrt_scale = 1.0 / sqrt_scale
