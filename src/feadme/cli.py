@@ -1,3 +1,4 @@
+from copy import deepcopy
 from pathlib import Path
 
 import click
@@ -56,7 +57,7 @@ def load_data(data_path: str, template: Template, rebin: bool = False) -> Data:
     )
 
 
-def run_pre_fit(template: Template, template_path: str, data: Data) -> Template:
+def run_pre_fit(template: Template, template_dict: dict, data: Data) -> Template:
     """
     Run a pre-fit using the least-squares model fitter to initialize
     the template parameters based on the provided data.
@@ -75,36 +76,36 @@ def run_pre_fit(template: Template, template_path: str, data: Data) -> Template:
     Template
         The updated template object with parameters initialized from the pre-fit.
     """
-    with open(Path(template_path), "r") as f:
-        template_dict = json.load(f)
-
-    starters, _, _, _ = lsq_model_fitter(template, data)
+    starters = lsq_model_fitter(template, data)[0]
 
     for dprof in template_dict["disk_profiles"] + template_dict["line_profiles"]:
-        for _, dparam in dprof.items():
+        for dkey, dparam in dprof.items():
             if not isinstance(dparam, dict):
                 continue
 
-            dname = f"{dprof['name']}_{dparam['name']}"
+            dname = f"{dprof['name']}_{dparam['_field_name']}"
 
             if dname in starters:
                 high_lim = dparam["high"]
                 low_lim = dparam["low"]
 
-                if "log" in dparam["distribution"]:
-                    scale = (
-                        10 ** ((np.log10(high_lim) - np.log10(low_lim)) / 6)
-                    ).item()
+                if "log" in dparam["distribution"].value:
+                    scale = (high_lim / low_lim) ** (1 / 6)
                 else:
                     scale = (high_lim - low_lim) / 6
 
                 dparam["loc"] = starters[dname][0].item()
                 dparam["scale"] = scale
 
-                if dparam["distribution"] in ["log_uniform", "log_half_normal"]:
+                if dparam["distribution"].value in ["log_uniform", "log_half_normal"]:
                     dparam["distribution"] = "log_normal"
-                elif dparam["distribution"] in ["uniform", "half_normal"]:
+                elif dparam["distribution"].value in ["uniform", "half_normal"]:
                     dparam["distribution"] = "normal"
+
+    for dprof in template_dict["disk_profiles"] + template_dict["line_profiles"]:
+        for dkey, dparam in deepcopy(dprof).items():
+            if dkey.startswith("_"):
+                del dprof[dkey]
 
     return Template.from_dict(template_dict)
 
@@ -434,6 +435,9 @@ def svi_cmd(
 
     # Load the data given the template's redshift and mask
     data = load_data(data_path, template)
+
+    # If pre-fitting is enabled, run the pre-fit to initialize parameters
+    # template = run_pre_fit(template, template.to_dict(), data)
 
     # Create configuration object
     config = Config(
