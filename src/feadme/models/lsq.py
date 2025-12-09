@@ -432,27 +432,57 @@ def lsq_model_fitter(
             + (5e4 - starters[f"{prof.name}_inner_radius"][0])
             * starters[f"{prof.name}_radius_scale"][0],
             0,
+            0,
             1e6,
         )
 
-        # if False:
-        #     radius_ratio_dist = unc.normal(
-        #         starters[f"{prof.name}_radius_ratio"][0],
-        #         std=starters[f"{prof.name}_radius_ratio"][1],
-        #         n_samples=10000,
-        #     )
-        #
-        #     inner_radius_dist = unc.normal(
-        #         starters[f"{prof.name}_inner_radius"][0],
-        #         std=starters[f"{prof.name}_inner_radius"][1],
-        #         n_samples=10000,
-        #     )
-        #
-        #     starters[f"{prof.name}_outer_radius"] = (
-        #         (inner_radius_dist * radius_ratio_dist).pdf_median(),
-        #         (inner_radius_dist * radius_ratio_dist).pdf_std(),
-        #         0,
-        #         1e6,
-        #     )
+    starters = {k: v[0].item() for k, v in starters.items()}
 
-    return starters, rest_wave / (1 + fit_z), fit_mod(rest_wave), fit_mod
+    # Fixed and shared parameters
+    fixed_vars = {
+        f"{prof.name}_{param.name}": param.value
+        for prof in template.disk_profiles + template.line_profiles
+        for param in prof.fixed
+    }
+
+    shared_vars = {
+        f"{prof.name}_{param.name}": param.value
+        for prof in template.disk_profiles + template.line_profiles
+        for param in prof.shared
+    }
+
+    orphaned_vars = {
+        f"{prof.name}_{param.name}": fixed_vars[f"{param.shared}_{param.name}"]
+        for prof in template.disk_profiles + template.line_profiles
+        for param in prof.shared
+        if f"{param.shared}_{param.name}" in fixed_vars
+    }
+
+    starters.update(fixed_vars)
+    starters.update(shared_vars)
+    starters.update(orphaned_vars)
+
+    # Separate disk and line models
+    disk_model = np.sum(
+        [
+            fit_mod[sm_idx]
+            for sm_idx in range(fit_mod.n_submodels)
+            if fit_mod[sm_idx].name in [prof.name for prof in template.disk_profiles]
+        ]
+    )
+    line_model = np.sum(
+        [
+            fit_mod[sm_idx]
+            for sm_idx in range(fit_mod.n_submodels)
+            if fit_mod[sm_idx].name in [prof.name for prof in template.line_profiles]
+        ]
+    )
+
+    return (
+        starters,
+        rest_wave / (1 + fit_z),
+        fit_mod(rest_wave),
+        disk_model(rest_wave / (1 + fit_z)),
+        line_model(rest_wave / (1 + fit_z)),
+        fit_mod,
+    )
