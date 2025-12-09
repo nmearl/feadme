@@ -296,10 +296,10 @@ def disk_model(
 
     total_error = jnp.sqrt(flux_err**2 + total_flux**2 * jnp.exp(2 * white_noise))
 
-    with numpyro.plate("data", wave.shape[0]):
-        numpyro.deterministic("disk_flux", total_disk_flux)
-        numpyro.deterministic("line_flux", total_line_flux)
+    numpyro.deterministic("disk_flux", total_disk_flux)
+    numpyro.deterministic("line_flux", total_line_flux)
 
+    with numpyro.plate("data", wave.shape[0]):
         numpyro.sample("total_flux", dist.Normal(total_flux, total_error), obs=flux)
 
 

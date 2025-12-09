@@ -33,16 +33,16 @@ def _sample_no_reparam(samp_name: str, param: Parameter) -> ArrayLike:
 
         return param_samp
 
-    if param.name == "inclination":
-        mu_min = jnp.cos(param.high)  # cos(i_max)
-        mu_max = jnp.cos(param.low)  # cos(i_min)
-
-        mu = numpyro.sample(
-            f"{samp_name}_base",
-            dist.Uniform(mu_min, mu_max),
-        )
-        incl = jnp.arccos(mu)
-        return numpyro.deterministic(samp_name, incl)
+    # if param.name == "inclination":
+    #     mu_min = jnp.cos(param.high)  # cos(i_max)
+    #     mu_max = jnp.cos(param.low)  # cos(i_min)
+    #
+    #     mu = numpyro.sample(
+    #         f"{samp_name}_base",
+    #         dist.Uniform(mu_min, mu_max),
+    #     )
+    #     incl = jnp.arccos(mu)
+    #     return numpyro.deterministic(samp_name, incl)
 
     if param.distribution == Distribution.UNIFORM:
         param_samp = numpyro.sample(samp_name, dist.Uniform(param.low, param.high))
@@ -159,13 +159,13 @@ def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
     lower_limit = param.low
     upper_limit = param.high
 
-    if param.name == "inclination":
-        mu_min = jnp.cos(upper_limit)  # cos(i_max)
-        mu_max = jnp.cos(lower_limit)  # cos(i_min)
-        mu = mu_min + u * (mu_max - mu_min)
-        val = jnp.arccos(mu)
-
-        return numpyro.deterministic(samp_name, val)
+    # if param.name == "inclination":
+    #     mu_min = jnp.cos(upper_limit)  # cos(i_max)
+    #     mu_max = jnp.cos(lower_limit)  # cos(i_min)
+    #     mu = mu_min + u * (mu_max - mu_min)
+    #     val = jnp.arccos(mu)
+    #
+    #     return numpyro.deterministic(samp_name, val)
 
     if param.distribution == Distribution.UNIFORM:
         val = lower_limit + u * (upper_limit - lower_limit)
