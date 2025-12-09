@@ -201,3 +201,85 @@ def model_validate_rin():
     plt.axvline(6564, linestyle="dashed", color="grey")
     plt.show()
     plt.close()
+
+
+def jax_hung_integrand(phi, xi, X, inc, sigma, q, ecc, phi0, nu0):
+    """The integrand F_X.
+
+    Parameters
+    ----------
+    phi : float
+        azimuthal angle of the disk in radians.
+    xi : float
+        a dimensionless distance from the black hole in units of Rg.
+    X : float
+        velocity in units of c (speed of light).
+    q : float
+        the power-law index of surface emissivity.
+    V_sig : float
+        velocity broadening parameter in km/s.
+    inc : float
+        inclination angle in radians.
+    ecc : float
+        eccentricity of the disk. 0 <= ecc < 1 to ensure a closed orbit.
+    phi0 : float
+        orientation angle (radians) of the disk relative to
+        the observers line-of-sight.
+    intnorm : float
+        a normalization factor to alleviate numerical issues.
+
+    Returns
+    -------
+    float
+        specific intensity of the disk emission evaluated at velocity X.
+    """
+    import jax.numpy as jnp
+
+    normdist_renorm = 1.0 / (2.0 * jnp.pi) ** 0.5
+
+    # Convert sigma from frequency to velocity units
+    c = 3e5  # km/s
+    V_sig = (sigma / nu0) * c
+
+    # Convert X from frequency shift to velocity units
+    lam0_over_lamb = X + 1
+    velocity = (1 / lam0_over_lamb - 1) * c
+    X = -(velocity / c)
+
+    intnorm = normdist_renorm / V_sig
+    sininc = jnp.sin(inc)
+    sininccosphi = sininc * jnp.cos(phi)
+    sinincsinphi = sininc * jnp.sin(phi)
+    eccsinphiphi0 = ecc * jnp.sin(phi - phi0)
+    BBsq = 1.0 - ecc * jnp.cos(phi - phi0)
+    xform = (1.0 + ecc) / BBsq
+    xifunc = xi * xform
+    psival = 1.0 + (1.0 - sininccosphi) / (1.0 + sininccosphi) / xifunc
+    AA = 1.0 - 2.0 / xifunc
+    CCsq = 1.0 - sininccosphi**2
+    # Has the leading order term of (b/r) approximation...
+    termBinner = 1.0 - psival**2 * CCsq * AA
+    # if termBinner < 0:
+    #     # ...zero it if it becomes negative
+    #     # (affects some values of phi when xi is small)
+    #     termBinner = 0
+    # termBinner = jnp.maximum(termBinner, 0.0)
+    termB = (termBinner / (xifunc * AA**3 * BBsq)) ** 0.5 * eccsinphiphi0
+    termC = psival * sinincsinphi * (BBsq / (xifunc - 2.0)) ** 0.5
+    lorentzf = (
+        1.0 - ((eccsinphiphi0 / AA) ** 2 / xifunc / BBsq + (BBsq / (xifunc - 2.0)))
+    ) ** -0.5
+    D_invval = lorentzf * (AA**-0.5 - termB + termC)
+    exponent = -0.5 * ((((1.0 + X) * D_invval - 1.0) * (c / V_sig)) ** 2)
+    # exponent = jnp.maximum(exponent, -37.0)
+
+    # Truncate this at machine precision.
+    # The contributions are dominated by where this exponent is ~0,
+    # keeping arbitrarily small numbers here just leads to more
+    # round off/problems in the integrator backend.
+    return (
+        intnorm
+        * (xifunc ** (1.0 - q) * xform * jnp.exp(exponent))
+        * psival
+        / D_invval**3
+    )
