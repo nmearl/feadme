@@ -56,21 +56,22 @@ class SVISampler(BaseSampler):
         rng_key, svi_key = jax.random.split(rng_key)
 
         # Generate initial parameter estimates using least squares
-        starters = lsq_model_fitter(
-            self.template,
-            self._data,
-        )[0]
-
-        from pprint import pprint
-
-        pprint(starters)
+        # starters = lsq_model_fitter(
+        #     self.template,
+        #     self._data,
+        # )[0]
+        #
+        # from pprint import pprint
+        #
+        # pprint(starters)
 
         # Create guide
         self._guide = AutoBNAFNormal(
             self.model,
             hidden_factors=hidden_factors,
             num_flows=num_flows,
-            init_loc_fn=init_to_value(values=starters),
+            # init_loc_fn=init_to_value(values=starters),
+            init_loc_fn=init_to_median,
         )
 
         # Setup optimizer with learning rate schedule
