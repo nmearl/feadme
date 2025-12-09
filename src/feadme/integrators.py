@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
-from quadax import GaussKronrodRule, ClenshawCurtisRule, quadgk, TanhSinhRule
+from quadax import GaussKronrodRule, ClenshawCurtisRule, quadgk, TanhSinhRule, trapezoid
 from .models.disk import integrand
 from functools import partial
 
@@ -13,14 +13,17 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-fixed_quad_xi = ClenshawCurtisRule(order=128).integrate
-fixed_quad_phi = ClenshawCurtisRule(order=256).integrate
-# fixed_quad_xi = GaussKronrodRule(order=61).integrate
-# fixed_quad_phi = GaussKronrodRule(order=61).integrate
+CC_RES = 200
+GK_RES = 61
+
+fixed_quad_xi = ClenshawCurtisRule(order=CC_RES // 2).integrate
+fixed_quad_phi = ClenshawCurtisRule(order=CC_RES).integrate
+# fixed_quad_xi = GaussKronrodRule(order=GK_RES).integrate
+# fixed_quad_phi = GaussKronrodRule(order=GK_RES).integrate
 # fixed_quad_xi = TanhSinhRule(order=63).integrate
 # fixed_quad_phi = TanhSinhRule(order=127).integrate
 
-N_xi, N_phi = 128, 256
+N_xi, N_phi = 64, 64
 unit_xi = jnp.linspace(0.0, 1.0, N_xi)
 unit_phi = jnp.linspace(0.0, 1.0, N_phi)
 XI_u, PHI_u = jnp.meshgrid(unit_xi, unit_phi, indexing="ij")
@@ -46,7 +49,7 @@ def quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0):
                 )
 
             return fixed_quad_phi(transformed_integrand, phi1, phi2, args=())[0]
-            # return quadgk(transformed_integrand, [0.0, 2 * jnp.pi], order=61)[0]
+            # return quadgk(transformed_integrand, [0.0, 2 * jnp.pi], order=GK_RES)[0]
 
         return fixed_quad_xi(inner_quad_func, jnp.log10(xi1), jnp.log10(xi2), args=())[
             0
@@ -166,7 +169,7 @@ def mixed_jax_integrate(
             # Return outer integrand f(log_xi)
             return inner_phi * jacobian_xi
 
-        # Clenshaw–Curtis over log10(xi)
+        # Quadrature over log10(xi)
         result = fixed_quad_xi(
             integrand_over_log_xi,
             jnp.log10(xi1),
@@ -180,4 +183,4 @@ def mixed_jax_integrate(
     return jax.vmap(integrate_single_wavelength)(X)
 
 
-integrator = mixed_jax_integrate
+integrator = quad_jax_integrate
