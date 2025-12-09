@@ -94,7 +94,7 @@ def run_pre_fit(template: Template, template_dict: dict, data: Data) -> Template
                 else:
                     scale = (high_lim - low_lim) / 6
 
-                dparam["loc"] = starters[dname][0].item()
+                dparam["loc"] = starters[dname]
                 dparam["scale"] = scale
 
                 if dparam["distribution"].value in ["log_uniform", "log_half_normal"]:
@@ -280,6 +280,12 @@ def cli():
     default=True,
     help="Display a progress bar during sampling.",
 )
+@click.option(
+    "--experimental-prefit/--no-experimental-prefit",
+    is_flag=True,
+    default=False,
+    help="Run an experimental pre-fit to initialize parameters.",
+)
 def nuts_cmd(
     template_path: str,
     data_path: str,
@@ -293,6 +299,7 @@ def nuts_cmd(
     prefit: bool,
     neutra: bool,
     progress_bar: bool,
+    experimental_prefit: bool,
 ):
     """
     Fit to spectral data using the NUTS sampler.
@@ -308,6 +315,10 @@ def nuts_cmd(
 
     # Load the data given the template's redshift and mask
     data = load_data(data_path, template)
+
+    # If pre-fitting is enabled, run the pre-fit to initialize parameters
+    if experimental_prefit:
+        template = run_pre_fit(template, template.to_dict(), data)
 
     # Create configuration object
     config = Config(
@@ -408,6 +419,12 @@ def nuts_cmd(
     default=True,
     help="Display a progress bar during sampling.",
 )
+@click.option(
+    "--experimental-prefit/--no-experimental-prefit",
+    is_flag=True,
+    default=False,
+    help="Run an experimental pre-fit to initialize parameters.",
+)
 def svi_cmd(
     template_path: str,
     data_path: str,
@@ -420,6 +437,7 @@ def svi_cmd(
     hidden_factors: list[int],
     num_flows: int,
     progress_bar: bool,
+    experimental_prefit: bool,
 ):
     """
     Fit to spectral data using Stochastic Variational Inference (SVI).
@@ -437,7 +455,8 @@ def svi_cmd(
     data = load_data(data_path, template)
 
     # If pre-fitting is enabled, run the pre-fit to initialize parameters
-    # template = run_pre_fit(template, template.to_dict(), data)
+    if experimental_prefit:
+        template = run_pre_fit(template, template.to_dict(), data)
 
     # Create configuration object
     config = Config(
