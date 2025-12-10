@@ -359,7 +359,8 @@ def lsq_model_fitter(
         ax.legend()
         fig.savefig(Path(out_dir or "") / "lsq_model_fit.png")
 
-        plt.close(fig)
+        if not show_plot:
+            plt.close(fig)
 
     starters = {}
 
