@@ -14,7 +14,7 @@ c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
 CC_RES = 64
-GK_RES = 61
+GK_RES = 41
 
 # fixed_quad_xi = ClenshawCurtisRule(order=CC_RES).integrate
 # fixed_quad_phi = ClenshawCurtisRule(order=CC_RES).integrate
