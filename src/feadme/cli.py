@@ -57,7 +57,9 @@ def load_data(data_path: str, template: Template, rebin: bool = False) -> Data:
     )
 
 
-def run_pre_fit(template: Template, template_dict: dict, data: Data) -> Template:
+def run_pre_fit(
+    template: Template, template_dict: dict, data: Data, output_path: Path | str
+) -> Template:
     """
     Run a pre-fit using the least-squares model fitter to initialize
     the template parameters based on the provided data.
@@ -76,7 +78,7 @@ def run_pre_fit(template: Template, template_dict: dict, data: Data) -> Template
     Template
         The updated template object with parameters initialized from the pre-fit.
     """
-    starters = lsq_model_fitter(template, data)[0]
+    starters = lsq_model_fitter(template, data, out_dir=f"{output_path}")[0]
 
     for dprof in template_dict["disk_profiles"] + template_dict["line_profiles"]:
         for dkey, dparam in dprof.items():
@@ -318,7 +320,7 @@ def nuts_cmd(
 
     # If pre-fitting is enabled, run the pre-fit to initialize parameters
     if experimental_prefit:
-        template = run_pre_fit(template, template.to_dict(), data)
+        template = run_pre_fit(template, template.to_dict(), data, output_path)
 
     # Create configuration object
     config = Config(
@@ -456,7 +458,7 @@ def svi_cmd(
 
     # If pre-fitting is enabled, run the pre-fit to initialize parameters
     if experimental_prefit:
-        template = run_pre_fit(template, template.to_dict(), data)
+        template = run_pre_fit(template, template.to_dict(), data, output_path)
 
     # Create configuration object
     config = Config(
