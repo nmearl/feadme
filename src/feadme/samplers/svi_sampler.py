@@ -205,6 +205,7 @@ class SVISampler(BaseSampler):
         n_chains = 4
         samples_per_chain = n_samples // n_chains
         rng_key = jax.random.PRNGKey(42)
+        parallel_predictive = jax.extend.backend.get_backend().platform == "gpu"
 
         # Reshape all samples to (chain, draw) or (chain, draw, dim)
         posterior_dict = {}
@@ -226,7 +227,11 @@ class SVISampler(BaseSampler):
                 )
 
         # Posterior predictive using Predictive (includes observation noise)
-        predictive_post = Predictive(self.model, posterior_samples=posterior_samples)(
+        predictive_post = Predictive(
+            self.model,
+            posterior_samples=posterior_samples,
+            parallel=parallel_predictive,
+        )(
             rng_key,
             template=self.template,
             wave=self.wave,
@@ -254,7 +259,9 @@ class SVISampler(BaseSampler):
         log_lik_dict = {"total_flux": arr.reshape(n_chains, samples_per_chain, -1)}
 
         # Prior samples
-        prior_predictive = Predictive(self._prior_model, num_samples=2000)(
+        prior_predictive = Predictive(
+            self._prior_model, num_samples=1000, parallel=parallel_predictive
+        )(
             jax.random.PRNGKey(0),
             template=self.template,
             wave=self.wave,
