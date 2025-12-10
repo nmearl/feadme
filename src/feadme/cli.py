@@ -92,9 +92,9 @@ def run_pre_fit(
                 low_lim = dparam["low"]
 
                 if "log" in dparam["distribution"].value:
-                    scale = (high_lim / low_lim) ** (1 / 6)
+                    scale = (high_lim / low_lim) ** (1 / 4)
                 else:
-                    scale = (high_lim - low_lim) / 6
+                    scale = (high_lim - low_lim) / 4
 
                 dparam["loc"] = starters[dname]
                 dparam["scale"] = scale
