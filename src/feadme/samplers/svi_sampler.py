@@ -71,7 +71,7 @@ class SVISampler(BaseSampler):
             hidden_factors=hidden_factors,
             num_flows=num_flows,
             # init_loc_fn=init_to_value(values=starters),
-            init_loc_fn=init_to_median,
+            init_loc_fn=init_to_median(num_samples=1000),
         )
 
         # Setup optimizer with learning rate schedule
@@ -260,7 +260,7 @@ class SVISampler(BaseSampler):
 
         # Prior samples
         prior_predictive = Predictive(
-            self._prior_model, num_samples=1000, parallel=parallel_predictive
+            self._prior_model, num_samples=2000, parallel=parallel_predictive
         )(
             jax.random.PRNGKey(0),
             template=self.template,
