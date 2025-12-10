@@ -190,11 +190,14 @@ class SVISampler(BaseSampler):
 
         logger.info(f"Sampling {num_posterior_samples} from variational posterior...")
 
-        return self._guide.sample_posterior(
-            jax.random.PRNGKey(42),
-            self._svi_result.params,
-            sample_shape=(num_posterior_samples,),
-        )
+        # JIT-compile the sampling
+        @jax.jit
+        def sample_batch(key):
+            return self._guide.sample_posterior(
+                key, self._svi_result.params, sample_shape=(num_posterior_samples,)
+            )
+
+        return sample_batch(jax.random.PRNGKey(42))
 
     def _convert_to_arviz(self, posterior_samples):
         """Convert SVI posterior samples to arviz InferenceData"""
@@ -227,17 +230,35 @@ class SVISampler(BaseSampler):
                 )
 
         # Posterior predictive using Predictive (includes observation noise)
-        predictive_post = Predictive(
-            self.model,
-            posterior_samples=posterior_samples,
-            parallel=parallel_predictive,
-        )(
-            rng_key,
-            template=self.template,
-            wave=self.wave,
-            flux=None,
-            flux_err=self.flux_err,
-        )
+        def batch_predictive(samples_dict, batch_size=200):
+            results = []
+            n_samples = len(list(samples_dict.values())[0])
+
+            for i in range(0, n_samples, batch_size):
+                batch_samples = {
+                    k: v[i : i + batch_size] for k, v in samples_dict.items()
+                }
+
+                pred = Predictive(
+                    self.model,
+                    posterior_samples=batch_samples,
+                    parallel=True,  # Can enable within small batches
+                )(
+                    rng_key,
+                    template=self.template,
+                    wave=self.wave,
+                    flux=None,
+                    flux_err=self.flux_err,
+                )
+
+                results.append(pred)
+
+            # Concatenate
+            return {
+                k: np.concatenate([r[k] for r in results]) for k in results[0].keys()
+            }
+
+        predictive_post = batch_predictive(posterior_samples)
 
         posterior_predictive_dict = {}
         for k in ["total_flux", "disk_flux", "line_flux"]:
@@ -259,8 +280,12 @@ class SVISampler(BaseSampler):
         log_lik_dict = {"total_flux": arr.reshape(n_chains, samples_per_chain, -1)}
 
         # Prior samples
+        num_prior_samples = 1000
+
         prior_predictive = Predictive(
-            self._prior_model, num_samples=2000, parallel=parallel_predictive
+            self._prior_model,
+            num_samples=num_prior_samples,
+            parallel=parallel_predictive,
         )(
             jax.random.PRNGKey(0),
             template=self.template,
@@ -278,7 +303,7 @@ class SVISampler(BaseSampler):
         # Filter valid prior samples
         valid_indices = [
             i
-            for i in range(2000)
+            for i in range(num_prior_samples)
             if all(np.all(np.isfinite(v[i])) for v in prior_predictive.values())
         ]
 
@@ -287,7 +312,9 @@ class SVISampler(BaseSampler):
             for k, v in prior_predictive.items()
         }
 
-        logger.info(f"Generated {len(valid_indices)}/2000 valid prior samples")
+        logger.info(
+            f"Generated {len(valid_indices)}/{num_prior_samples} valid prior samples"
+        )
 
         # Reshape priors to (chains, draws) format
         n_prior_valid = len(valid_indices)

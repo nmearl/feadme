@@ -14,7 +14,7 @@ c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
 CC_RES = 64
-GK_RES = 41
+GK_RES = 61
 
 # fixed_quad_xi = ClenshawCurtisRule(order=CC_RES).integrate
 # fixed_quad_phi = ClenshawCurtisRule(order=CC_RES).integrate
@@ -24,9 +24,6 @@ fixed_quad_phi = GaussKronrodRule(order=GK_RES).integrate
 # fixed_quad_phi = TanhSinhRule(order=127).integrate
 
 N_xi, N_phi = 64, 64
-unit_xi = jnp.linspace(0.0, 1.0, N_xi)
-unit_phi = jnp.linspace(0.0, 1.0, N_phi)
-XI_u, PHI_u = jnp.meshgrid(unit_xi, unit_phi, indexing="ij")
 
 
 @partial(jax.jit, static_argnums=(2, 3))
@@ -104,9 +101,6 @@ def trap_jax_integrate(
     return jax.vmap(integrate_single_wavelength)(X)
 
 
-PHI_GRID = jnp.linspace(0.0, 2 * jnp.pi, N_phi, endpoint=True)
-
-
 @partial(jax.jit, static_argnums=(2, 3))
 def mixed_jax_integrate(
     xi1: float,
@@ -156,13 +150,13 @@ def mixed_jax_integrate(
             jacobian_xi = xi * jnp.log(10.0)
 
             # Uniform phi grid for trapezoid integration
-            # phi = jnp.linspace(phi1, phi2, N_phi, endpoint=True)
+            phi = jnp.linspace(phi1, phi2, N_phi, endpoint=True)
 
             # Evaluate model integrand for all phi at this xi, x_val
-            vals_phi = integrand(PHI_GRID, xi, x_val, inc, sigma, q, e, phi0, nu0)
+            vals_phi = integrand(phi, xi, x_val, inc, sigma, q, e, phi0, nu0)
 
             # Trapezoid over phi (periodic-ish, uniform grid)
-            inner_phi = jnp.trapezoid(vals_phi, x=PHI_GRID)
+            inner_phi = jnp.trapezoid(vals_phi, x=phi)
             # d_phi = (phi2 - phi1) / N_phi
             # inner_phi = d_phi * jnp.sum(vals_phi, axis=-1)
 
