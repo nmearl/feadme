@@ -198,6 +198,7 @@ class SVISampler(BaseSampler):
 
     def _convert_to_arviz(self, posterior_samples):
         """Convert SVI posterior samples to arviz InferenceData"""
+        logger.info("Constructing inference data...")
         from numpyro.infer.util import Predictive
 
         n_samples = len(list(posterior_samples.values())[0])
