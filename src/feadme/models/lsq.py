@@ -464,19 +464,22 @@ def lsq_model_fitter(
     starters.update(orphaned_vars)
 
     # Separate disk and line models
-    disk_model = np.sum(
-        [
-            fit_mod[sm_idx]
-            for sm_idx in range(fit_mod.n_submodels)
-            if fit_mod[sm_idx].name in [prof.name for prof in template.disk_profiles]
-        ]
+    disk_submodels = [
+        fit_mod[sm_idx]
+        for sm_idx in range(fit_mod.n_submodels)
+        if fit_mod[sm_idx].name in [prof.name for prof in template.disk_profiles]
+    ]
+    disk_model = (
+        np.sum(disk_submodels) if len(disk_submodels) > 0 else Const1D(amplitude=0)
     )
-    line_model = np.sum(
-        [
-            fit_mod[sm_idx]
-            for sm_idx in range(fit_mod.n_submodels)
-            if fit_mod[sm_idx].name in [prof.name for prof in template.line_profiles]
-        ]
+
+    line_submodels = [
+        fit_mod[sm_idx]
+        for sm_idx in range(fit_mod.n_submodels)
+        if fit_mod[sm_idx].name in [prof.name for prof in template.line_profiles]
+    ]
+    line_model = (
+        np.sum(line_submodels) if len(line_submodels) > 0 else Const1D(amplitude=0)
     )
 
     return (
