@@ -4,7 +4,14 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
-from quadax import GaussKronrodRule, ClenshawCurtisRule, quadgk, TanhSinhRule, trapezoid
+from quadax import (
+    GaussKronrodRule,
+    ClenshawCurtisRule,
+    quadgk,
+    TanhSinhRule,
+    trapezoid,
+    quadcc,
+)
 from .models.disk import integrand
 from functools import partial
 
@@ -16,10 +23,10 @@ c_kms = const.c.to(u.km / u.s).value
 CC_RES = 128
 GK_RES = 61
 
-fixed_quad_xi = ClenshawCurtisRule(order=CC_RES).integrate
-fixed_quad_phi = ClenshawCurtisRule(order=CC_RES).integrate
-# fixed_quad_xi = GaussKronrodRule(order=GK_RES).integrate
-# fixed_quad_phi = GaussKronrodRule(order=GK_RES).integrate
+# fixed_quad_xi = ClenshawCurtisRule(order=CC_RES).integrate
+# fixed_quad_phi = ClenshawCurtisRule(order=CC_RES).integrate
+fixed_quad_xi = GaussKronrodRule(order=GK_RES).integrate
+fixed_quad_phi = GaussKronrodRule(order=GK_RES).integrate
 # fixed_quad_xi = TanhSinhRule(order=63).integrate
 # fixed_quad_phi = TanhSinhRule(order=127).integrate
 
@@ -46,7 +53,6 @@ def quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0):
                 )
 
             return fixed_quad_phi(transformed_integrand, phi1, phi2, args=())[0]
-            # return quadgk(transformed_integrand, [0.0, 2 * jnp.pi], order=GK_RES)[0]
 
         return fixed_quad_xi(inner_quad_func, jnp.log10(xi1), jnp.log10(xi2), args=())[
             0
