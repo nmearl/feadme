@@ -90,13 +90,18 @@ def run_pre_fit(
             if dname in starters:
                 high_lim = dparam["high"]
                 low_lim = dparam["low"]
+                loc = starters[dname]
 
                 if "log" in dparam["distribution"].value:
-                    scale = (high_lim / low_lim) ** (1 / 4)
+                    loc_log = np.log10(loc)
+                    scale_log = (np.log10(high_lim) - np.log10(low_lim)) / 4
+                    upper = 10 ** (loc_log + scale_log)
+                    lower = 10 ** (loc_log - scale_log)
+                    scale = ((upper - lower) / 2).item()
                 else:
                     scale = (high_lim - low_lim) / 4
 
-                dparam["loc"] = starters[dname]
+                dparam["loc"] = loc
                 dparam["scale"] = scale
 
                 if dparam["distribution"].value in ["log_uniform", "log_half_normal"]:
@@ -145,7 +150,7 @@ def perform_sampling(config: Config):
 
     # Initialize the sampler with the model and configuration
     prior_model = construct_model(template, auto_reparam=False)
-    model = construct_model(template, auto_reparam=False, circ_only=True)
+    model = construct_model(template, auto_reparam=False, circ_only=False)
 
     if config.sampler_settings.sampler_type == "nuts":
         sampler = NUTSSampler(model=model, config=config, prior_model=prior_model)
