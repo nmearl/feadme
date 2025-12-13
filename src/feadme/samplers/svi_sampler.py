@@ -7,11 +7,13 @@ import loguru
 import matplotlib.pyplot as plt
 import numpy as np
 import optax
-from numpyro.infer import SVI, Trace_ELBO, init_to_median, init_to_value
+from numpyro.infer import SVI, Trace_ELBO, init_to_median, init_to_value, init_to_mean
 from numpyro.infer.autoguide import (
     AutoBNAFNormal,
     AutoLaplaceApproximation,
     AutoMultivariateNormal,
+    AutoDiagonalNormal,
+    AutoDAIS,
 )
 from numpyro.infer.util import log_likelihood
 from typing import cast
@@ -55,23 +57,16 @@ class SVISampler(BaseSampler):
         rng_key = jax.random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key = jax.random.split(rng_key)
 
-        # Generate initial parameter estimates using least squares
+        # Generate initial parameter estimates using least-squares
         # starters = lsq_model_fitter(
         #     self.template,
         #     self._data,
+        #     out_dir=f"{self._config.output_path}",
         # )[0]
-        #
-        # from pprint import pprint
-        #
-        # pprint(starters)
 
         # Create guide
-        self._guide = AutoBNAFNormal(
-            self.model,
-            hidden_factors=hidden_factors,
-            num_flows=num_flows,
-            # init_loc_fn=init_to_value(values=starters),
-            init_loc_fn=init_to_median(num_samples=1000),
+        self._guide = AutoMultivariateNormal(
+            self.model, init_loc_fn=init_to_median(num_samples=1000)
         )
 
         # Setup optimizer with learning rate schedule
