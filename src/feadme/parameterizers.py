@@ -13,8 +13,7 @@ from jax.typing import ArrayLike
 from jax.scipy.special import erf, erfinv
 from jax.scipy.stats import norm
 from numpyro.distributions import constraints
-from numpyro.distributions.transforms import biject_to
-
+from numpyro.distributions.transforms import biject_to, ExpTransform
 
 from .parser import Distribution, Template, Shape, Parameter
 
@@ -25,18 +24,19 @@ c_kms = const.c.to(u.km / u.s).value
 
 
 def _sample_no_reparam(samp_name: str, param: Parameter) -> ArrayLike:
-    if param.circular:
-        circ_base = numpyro.sample(f"{samp_name}_base", dist.Normal(0, 1).expand([2]))
-        param_samp = numpyro.deterministic(
-            samp_name, jnp.mod(jnp.arctan2(circ_base[1], circ_base[0]), 2 * jnp.pi)
-        )
-
-        return param_samp
+    # if param.circular:
+    #     circ_x_base = numpyro.sample(f"{samp_name}_x_base", dist.Normal(0, 1))
+    #     circ_y_base = numpyro.sample(f"{samp_name}_y_base", dist.Normal(0, 1))
+    #
+    #     param_samp = numpyro.deterministic(
+    #         samp_name, jnp.mod(jnp.arctan2(circ_y_base, circ_x_base), 2 * jnp.pi)
+    #     )
+    #
+    #     return param_samp
 
     # if param.name == "inclination":
     #     mu_min = jnp.cos(param.high)  # cos(i_max)
     #     mu_max = jnp.cos(param.low)  # cos(i_min)
-    #
     #     mu = numpyro.sample(
     #         f"{samp_name}_base",
     #         dist.Uniform(mu_min, mu_max),
@@ -59,47 +59,20 @@ def _sample_no_reparam(samp_name: str, param: Parameter) -> ArrayLike:
         )
 
     elif param.distribution == Distribution.LOG_NORMAL:
-        param_samp = numpyro.sample(
-            samp_name,
-            dist.TransformedDistribution(
-                dist.TruncatedNormal(
-                    jnp.log(param.loc),
-                    jnp.log(param.scale),
-                    low=jnp.log(param.low),
-                    high=jnp.log(param.high),
-                ),
-                dist.transforms.ExpTransform(),
+        sigma_log = jnp.sqrt(jnp.log(1 + (param.scale / param.loc) ** 2))
+        mu_log = jnp.log(param.loc) - sigma_log**2 / 2
+
+        base_dist = numpyro.sample(
+            f"{samp_name}_base",
+            dist.TruncatedNormal(
+                loc=mu_log,
+                scale=sigma_log,
+                low=jnp.log(param.low),
+                high=jnp.log(param.high),
             ),
         )
 
-    elif param.distribution == Distribution.HALF_NORMAL:
-        param_samp = numpyro.sample(
-            samp_name,
-            dist.TransformedDistribution(
-                dist.TruncatedDistribution(
-                    dist.Normal(0, param.scale),
-                    low=0,
-                    high=param.high - param.low,
-                ),
-                dist.transforms.AffineTransform(loc=param.low, scale=1.0),
-            ),
-        )
-
-    elif param.distribution == Distribution.LOG_HALF_NORMAL:
-        param_samp = numpyro.sample(
-            samp_name,
-            dist.TransformedDistribution(
-                dist.TruncatedDistribution(
-                    dist.Normal(0, jnp.log(param.scale)),
-                    low=0,
-                    high=jnp.log(param.high) - jnp.log(param.low),
-                ),
-                [
-                    dist.transforms.AffineTransform(loc=jnp.log(param.low), scale=1.0),
-                    dist.transforms.ExpTransform(),
-                ],
-            ),
-        )
+        param_samp = numpyro.deterministic(samp_name, jnp.exp(base_dist))
 
     return param_samp
 
