@@ -1,5 +1,6 @@
 from copy import deepcopy
 from pathlib import Path
+from functools import wraps
 
 import click
 import loguru
@@ -17,6 +18,47 @@ from .samplers.nuts_sampler import NUTSSampler
 from .samplers.svi_sampler import SVISampler
 
 logger = loguru.logger.opt(colors=True)
+
+
+# Shared options decorator
+def common_options(f):
+    """Decorator for common CLI options shared across samplers."""
+
+    @click.option(
+        "--template-path",
+        type=click.Path(exists=True),
+        required=True,
+        help="Path to the template file.",
+    )
+    @click.option(
+        "--data-path",
+        type=click.Path(exists=True),
+        required=True,
+        help="Path to the data file.",
+    )
+    @click.option(
+        "--output-path",
+        type=click.Path(),
+        default="output",
+        help="Directory to save output files and plots. Defaults to './output'.",
+    )
+    @click.option(
+        "--progress-bar/--no-progress-bar",
+        is_flag=True,
+        default=True,
+        help="Display a progress bar during sampling.",
+    )
+    @click.option(
+        "--experimental-prefit/--no-experimental-prefit",
+        is_flag=True,
+        default=False,
+        help="Run an experimental pre-fit to initialize parameters.",
+    )
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        return f(*args, **kwargs)
+
+    return wrapper
 
 
 def load_data(data_path: str, template: Template, rebin: bool = False) -> Data:
@@ -68,18 +110,76 @@ def run_pre_fit(
     ----------
     template : Template
         The template object containing the initial parameters.
-    template_path : str
-        Path to the template JSON file.
+    template_dict : dict
+        Dictionary representation of the template.
     data : Data
         The data object containing the wavelength, flux, and flux error.
+    output_path : Path or str
+        Directory to save pre-fit outputs.
 
     Returns
     -------
     Template
         The updated template object with parameters initialized from the pre-fit.
-    """
-    starters = lsq_model_fitter(template, data, out_dir=f"{output_path}")[0]
 
+    Raises
+    ------
+    ValueError
+        If LSQ fit produces poor results (NaN/inf values, parameters at bounds).
+    """
+    results = lsq_model_fitter(template, data, out_dir=f"{output_path}")
+    starters, rest_wave, fit_flux, disk_flux, line_flux, fit_mod = results
+
+    # Validate LSQ results
+    if not starters:
+        raise ValueError("LSQ fit failed: no parameters returned")
+
+    # Check for NaN/inf in fitted parameters
+    invalid_params = [k for k, v in starters.items() if not np.isfinite(v)]
+    if invalid_params:
+        raise ValueError(
+            f"LSQ fit failed: invalid values in parameters {invalid_params}"
+        )
+
+    # Check if parameters are at bounds (indicates poor fit)
+    at_bounds = []
+    for dprof in template_dict["disk_profiles"] + template_dict["line_profiles"]:
+        for dkey, dparam in dprof.items():
+            if not isinstance(dparam, dict):
+                continue
+
+            dname = f"{dprof['name']}_{dparam['_field_name']}"
+            if dname in starters:
+                val = starters[dname]
+                low, high = dparam["low"], dparam["high"]
+
+                # Allow 1% tolerance for boundary detection
+                tol = (high - low) * 0.01
+                if val <= (low + tol) or val >= (high - tol):
+                    at_bounds.append(dname)
+
+    if at_bounds:
+        logger.warning(
+            f"LSQ fit: parameters at bounds {at_bounds}. "
+            "Consider adjusting parameter ranges."
+        )
+        # Optionally raise error instead of warning:
+        # raise ValueError(f"LSQ fit failed: parameters at bounds {at_bounds}")
+
+    # Check fit quality using reduced chi-squared
+    residuals = data.masked_flux - fit_flux
+    chi2 = np.sum((residuals / data.masked_flux_err) ** 2)
+    dof = len(data.masked_flux) - len(starters)
+    reduced_chi2 = chi2 / dof if dof > 0 else np.inf
+
+    logger.info(f"LSQ fit: reduced χ² = {reduced_chi2:.2f}")
+
+    if reduced_chi2 > 100 or not np.isfinite(reduced_chi2):
+        raise ValueError(
+            f"LSQ fit failed: poor fit quality (reduced χ² = {reduced_chi2:.2f})"
+        )
+
+    # Update template with validated results
     for dprof in template_dict["disk_profiles"] + template_dict["line_profiles"]:
         for dkey, dparam in dprof.items():
             if not isinstance(dparam, dict):
@@ -215,24 +315,7 @@ def cli():
 
 
 @cli.command("nuts")
-@click.option(
-    "--template-path",
-    type=click.Path(exists=True),
-    required=True,
-    help="Path to the template file.",
-)
-@click.option(
-    "--data-path",
-    type=click.Path(exists=True),
-    required=True,
-    help="Path to the data file.",
-)
-@click.option(
-    "--output-path",
-    type=click.Path(),
-    default="output",
-    help="Directory to save output files and plots. Defaults to './output'.",
-)
+@common_options
 @click.option(
     "--num-warmup",
     type=int,
@@ -243,7 +326,7 @@ def cli():
     "--num-samples",
     type=int,
     default=1000,
-    help="Number of warmup steps for the MCMC sampler.",
+    help="Number of samples for the MCMC sampler.",
 )
 @click.option(
     "--num-chains",
@@ -281,18 +364,6 @@ def cli():
     default=False,
     help="Use Neutra initialization for the NUTS sampler.",
 )
-@click.option(
-    "--progress-bar/--no-progress-bar",
-    is_flag=True,
-    default=True,
-    help="Display a progress bar during sampling.",
-)
-@click.option(
-    "--experimental-prefit/--no-experimental-prefit",
-    is_flag=True,
-    default=False,
-    help="Run an experimental pre-fit to initialize parameters.",
-)
 def nuts_cmd(
     template_path: str,
     data_path: str,
@@ -311,13 +382,6 @@ def nuts_cmd(
     """
     Fit to spectral data using the NUTS sampler.
     """
-    # Parse the template from JSON
-    # with open(template_path, "r") as f:
-    #     template_dict = json.load(f)
-    #     template_dict["white_noise"]["fixed"] = True
-    #     template_dict["redshift"]["fixed"] = True
-    #
-    # template = Template.from_dict(template_dict)
     template = Template.from_json(Path(template_path))
 
     # Load the data given the template's redshift and mask
@@ -325,7 +389,17 @@ def nuts_cmd(
 
     # If pre-fitting is enabled, run the pre-fit to initialize parameters
     if experimental_prefit:
-        template = run_pre_fit(template, template.to_dict(), data, output_path)
+        try:
+            template = run_pre_fit(template, template.to_dict(), data, output_path)
+            logger.info(
+                "<green>LSQ pre-fit successful - template parameters initialized</green>"
+            )
+        except ValueError as e:
+            logger.error(f"<red>{e}</red>")
+            logger.error(
+                "<red>Aborting: LSQ pre-fit failed. Check parameter bounds or data quality.</red>"
+            )
+            return
 
     # Create configuration object
     config = Config(
@@ -359,24 +433,7 @@ def nuts_cmd(
 
 
 @cli.command("svi")
-@click.option(
-    "--template-path",
-    type=click.Path(exists=True),
-    required=True,
-    help="Path to the template file.",
-)
-@click.option(
-    "--data-path",
-    type=click.Path(exists=True),
-    required=True,
-    help="Path to the data file.",
-)
-@click.option(
-    "--output-path",
-    type=click.Path(),
-    default="output",
-    help="Directory to save output files and plots. Defaults to './output'.",
-)
+@common_options
 @click.option(
     "--num-steps",
     type=int,
@@ -421,16 +478,10 @@ def nuts_cmd(
     help="Number of flows in the normalizing flow guide.",
 )
 @click.option(
-    "--progress-bar/--no-progress-bar",
-    is_flag=True,
-    default=True,
-    help="Display a progress bar during sampling.",
-)
-@click.option(
-    "--experimental-prefit/--no-experimental-prefit",
-    is_flag=True,
-    default=False,
-    help="Run an experimental pre-fit to initialize parameters.",
+    "--guide-type",
+    type=click.Choice(["bnaf", "mvn"], case_sensitive=False),
+    default="bnaf",
+    help="Guide type: 'bnaf' for AutoBNAFNormal (normalizing flow) or 'mvn' for AutoMultivariateNormal.",
 )
 def svi_cmd(
     template_path: str,
@@ -441,21 +492,15 @@ def svi_cmd(
     learning_rate: float,
     decay_rate: float,
     decay_steps: int,
-    hidden_factors: list[int],
+    hidden_factors: tuple[int],
     num_flows: int,
+    guide_type: str,
     progress_bar: bool,
     experimental_prefit: bool,
 ):
     """
     Fit to spectral data using Stochastic Variational Inference (SVI).
     """
-    # Parse the template from JSON
-    # with open(template_path, "r") as f:
-    #     template_dict = json.load(f)
-    #     template_dict["white_noise"]["fixed"] = True
-    #     template_dict["redshift"]["fixed"] = True
-    #
-    # template = Template.from_dict(template_dict)
     template = Template.from_json(Path(template_path))
 
     # Load the data given the template's redshift and mask
@@ -463,7 +508,17 @@ def svi_cmd(
 
     # If pre-fitting is enabled, run the pre-fit to initialize parameters
     if experimental_prefit:
-        template = run_pre_fit(template, template.to_dict(), data, output_path)
+        try:
+            template = run_pre_fit(template, template.to_dict(), data, output_path)
+            logger.info(
+                "<green>LSQ pre-fit successful - template parameters initialized</green>"
+            )
+        except ValueError as e:
+            logger.error(f"<red>{e}</red>")
+            logger.error(
+                "<red>Aborting: LSQ pre-fit failed. Check parameter bounds or data quality.</red>"
+            )
+            return
 
     # Create configuration object
     config = Config(
@@ -475,8 +530,9 @@ def svi_cmd(
             learning_rate=learning_rate,
             decay_rate=decay_rate,
             decay_steps=decay_steps,
-            hidden_factors=hidden_factors,
+            hidden_factors=list(hidden_factors),
             num_flows=num_flows,
+            guide_type=guide_type,
             progress_bar=progress_bar,
         ),
         output_path=output_path,

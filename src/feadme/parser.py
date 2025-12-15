@@ -411,6 +411,7 @@ class SVISamplerSettings(SamplerSettings):
     decay_steps: int = 20000
     hidden_factors: list[int] = flax.struct.field(default_factory=lambda: [16, 16])
     num_flows: int = 4
+    guide_type: str = "bnaf"  # "bnaf" or "mvn"
 
 
 @flax.struct.dataclass
