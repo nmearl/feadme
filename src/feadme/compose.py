@@ -108,10 +108,14 @@ def _compute_disk_flux_vectorized(
     def _compute_single(
         center_i, inner_i, outer_i, sigma_i, inc_i, q_i, ecc_i, apo_i, scale_i, offset_i
     ):
-        nu = c_cgs / (wave * 1e-8)
-        nu0 = c_cgs / (center_i * 1e-8)
-        X = nu / nu0 - 1
-        local_sigma = sigma_i * 1e5 * nu0 / c_cgs
+        # nu = c_cgs / (wave * 1e-8)
+        # nu0 = c_cgs / (center_i * 1e-8)
+        # X = nu / nu0 - 1
+        # local_sigma = sigma_i * 1e5 * nu0 / c_cgs
+
+        local_sigma = sigma_i
+        velocity = (wave - center) / center * c_kms
+        X = -velocity / c_kms
 
         ecc_i = jnp.minimum(ecc_i, 1.0 - 1e-6)
         inc_i = jnp.minimum(inc_i, jnp.pi / 2 - 1e-6)
@@ -127,7 +131,7 @@ def _compute_disk_flux_vectorized(
             q_i,
             ecc_i,
             apo_i,
-            nu0,
+            0,  # nu0,
         )
 
         # Convert from X to wavelength space

@@ -217,13 +217,13 @@ def integrand(
     D_sq = D * D
     one_plus_X_minus_D_sq = (1.0 + X - D) ** 2
 
-    exponent = -one_plus_X_minus_D_sq * (nu0 * nu0) / (2.0 * D_sq * sigma * sigma)
-    # exponent = -((1 + X - D) ** 2) / (2 * D**2) * (c_cgs / sigma) ** 2
+    # exponent = -one_plus_X_minus_D_sq * (nu0 * nu0) / (2.0 * D_sq * sigma * sigma)
+    exponent = -((1 + X - D) ** 2) / (2 * D**2) * (c_kms / sigma) ** 2
     # exponent = jnp.maximum(exponent, -37.0)
 
     # Pre-compute constant
-    const = 1.0 / (jnp.sqrt(2.0 * jnp.pi) * sigma)
-    # const = c_cgs / (jnp.sqrt(2.0 * jnp.pi) * sigma)
+    # const = 1.0 / (jnp.sqrt(2.0 * jnp.pi) * sigma)
+    const = c_kms / (jnp.sqrt(2.0 * jnp.pi) * sigma)
     I_nu = jnp.power(xi, -q) * const * jnp.exp(exponent)
 
     # Psi
