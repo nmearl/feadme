@@ -122,25 +122,7 @@ def mixed_jax_integrate(
     nu0: float,
 ) -> ArrayLike:
     """
-    Double integral over xi and phi with:
-      - Clenshaw–Curtis (fixed_quad_xi) over log10(xi)
-      - Trapezoid rule over phi
-
-    Parameters
-    ----------
-    xi1, xi2 : float
-        Inner and outer radii (in xi units).
-    phi1, phi2 : float
-        Azimuthal limits [rad].
-    X : ArrayLike
-        Wavelength (or frequency) array. Shape (N_lambda,).
-    inc, sigma, q, e, phi0, nu0 : float
-        Disk / line profile parameters, passed through to `integrand`.
-
-    Returns
-    -------
-    ArrayLike
-        Integrated flux at each wavelength. Shape (N_lambda,).
+    Mixed approach: trapezoid over phi, quadrature over xi.
     """
 
     def integrate_single_wavelength(x_val: float) -> float:
@@ -183,4 +165,4 @@ def mixed_jax_integrate(
     return jax.vmap(integrate_single_wavelength)(X)
 
 
-integrator = quad_jax_integrate
+integrator = mixed_jax_integrate
