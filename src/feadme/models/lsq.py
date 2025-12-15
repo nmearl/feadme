@@ -125,6 +125,200 @@ class LineProfileModel(Fittable1DModel):
         return res
 
 
+def _construct_starters_dict(
+    fit_mod: Fittable1DModel,
+    param_uncerts: np.ndarray,
+    template: Template,
+):
+    # Prepare starters dictionary
+    starters = {}
+
+    indep_params = [
+        f"{prof.name}_{param.name}"
+        for prof in template.disk_profiles + template.line_profiles
+        for param in prof.independent
+    ]
+
+    _, inds, _ = model_to_fit_params(fit_mod)
+
+    for pn, pv, pe, (plb, pub) in zip(
+        np.array(fit_mod.param_names)[inds],
+        fit_mod.parameters[inds],
+        param_uncerts,
+        np.array(list(fit_mod.bounds.values()))[inds],
+    ):
+        sm_idx = int(pn.split("_")[-1])
+        pn = "_".join(pn.split("_")[:-1])
+        sm = fit_mod[sm_idx]
+
+        if sm.name in ["shift", "base"]:
+            continue
+
+        upv = unp.uarray(pv, pe)
+
+        samp_name = f"{sm.name}_{pn}"
+
+        # print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
+
+        std_scale = 1
+
+        if samp_name in indep_params:
+            if pn in ["apocenter"]:
+                ux = unp.cos(upv)
+                x = unp.nominal_values(ux)
+                xe = unp.std_devs(ux)
+
+                uy = unp.sin(upv)
+                y = unp.nominal_values(uy)
+                ye = unp.std_devs(uy)
+
+                starters[f"{samp_name}_x_base"] = (x, std_scale * xe, plb, pub)
+                starters[f"{samp_name}_y_base"] = (y, std_scale * ye, plb, pub)
+
+            if pn in [
+                "inner_radius",
+                "outer_radius",
+                "delta_radius",
+                "sigma",
+                "vel_width",
+                "radius_ratio",
+            ]:
+                upv = 10**upv
+                pv = unp.nominal_values(upv)
+                pe = unp.std_devs(upv)
+                plb = 10**plb
+                pub = 10**pub
+
+                # print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
+
+            if pe < FLOAT_EPSILON:
+                pe = 1
+
+            starters[samp_name] = (pv, pe * std_scale, plb, pub)
+
+    for prof in template.disk_profiles:
+        inner_radius = starters[f"{prof.name}_inner_radius"][0]
+        radius_scale = starters[f"{prof.name}_radius_scale"][0]
+
+        starters[f"{prof.name}_outer_radius"] = (
+            10
+            ** (
+                np.log10(inner_radius)
+                + (np.log10(5e4) - np.log10(inner_radius)) * radius_scale
+            ),
+            0,
+            0,
+            1e6,
+        )
+
+    starters = {k: v[0].item() for k, v in starters.items()}
+
+    # Fixed and shared parameters
+    fixed_vars = {
+        f"{prof.name}_{param.name}": param.value
+        for prof in template.disk_profiles + template.line_profiles
+        for param in prof.fixed
+    }
+
+    shared_vars = {
+        f"{prof.name}_{param.name}": starters[f"{param.shared}_{param.name}"]
+        for prof in template.disk_profiles + template.line_profiles
+        for param in prof.shared
+        if f"{param.shared}_{param.name}" in starters
+    }
+
+    orphaned_vars = {
+        f"{prof.name}_{param.name}": fixed_vars[f"{param.shared}_{param.name}"]
+        for prof in template.disk_profiles + template.line_profiles
+        for param in prof.shared
+        if f"{param.shared}_{param.name}" in fixed_vars
+    }
+
+    starters.update(fixed_vars)
+    starters.update(shared_vars)
+    starters.update(orphaned_vars)
+
+    return starters
+
+
+def _plot_fit_results(
+    rest_wave: np.ndarray,
+    flux: np.ndarray,
+    flux_err: np.ndarray,
+    fit_z: float,
+    fit_mod: Fittable1DModel,
+    indices: np.ndarray,
+    param_uncerts: np.ndarray,
+    template: Template,
+    starters: dict,
+    out_dir: str | None = None,
+    show_plot: bool = False,
+):
+    if out_dir is None:
+        return
+
+    fig, ax = plt.subplots()
+
+    new_rest = np.linspace(
+        rest_wave.min(),
+        rest_wave.max(),
+        1000,
+    )
+
+    ax.errorbar(
+        rest_wave / (1 + fit_z),
+        flux,
+        yerr=flux_err,
+        fmt="o",
+        color="grey",
+        zorder=-10,
+        alpha=0.25,
+    )
+    ax.plot(
+        new_rest / (1 + fit_z),
+        fit_mod(new_rest),
+        label="Model Fit",
+        color="C3",
+    )
+
+    ax.set_title(
+        f"LSQ Fit to {template.name} ({fit_z:.3f}, {template.redshift.value:.3f})"
+    )
+
+    for sm in fit_mod:
+        if sm.name in ["shift", "base", "redshift"]:
+            continue
+
+        ax.plot(new_rest / (1 + fit_z), (fit_mod[0] | sm)(new_rest), label=f"{sm.name}")
+
+    txt = ""
+    for pn, pv, pe in zip(
+        np.array(fit_mod.param_names)[indices],
+        fit_mod.parameters[indices],
+        param_uncerts,
+    ):
+        pn = "_".join([fit_mod[int(pn.split("_")[-1])].name] + pn.split("_")[:-1])
+        start_val = starters.get(pn, np.nan)
+        txt += f"{pn:15}: {pv:.3f} ({start_val:.3f}) \n"  # ± {pe:.3f}\n"
+
+    ax.text(
+        0.05,
+        0.95,
+        txt[:-2],
+        transform=ax.transAxes,
+        fontsize=8,
+        family="monospace",
+        verticalalignment="top",
+        # bbox=dict(facecolor="white", alpha=0.5, edgecolor="black"),
+    )
+
+    ax.legend()
+    fig.savefig(Path(out_dir or "") / "lsq_model_fit.png")
+
+    if not show_plot:
+        plt.close(fig)
+
+
 def lsq_model_fitter(
     template: Template, data: Data, force_values=None, show_plot=False, out_dir=None
 ):
@@ -299,169 +493,23 @@ def lsq_model_fitter(
     # Get real redshift
     fit_z = 1 / (1 + fit_mod["redshift"].z) - 1
 
-    if out_dir is not None:
-        fig, ax = plt.subplots()
+    # Prepare starters dictionary
+    starters = _construct_starters_dict(fit_mod, param_uncerts, template)
 
-        new_rest = np.linspace(
-            rest_wave.min(),
-            rest_wave.max(),
-            1000,
-        )
-
-        ax.errorbar(
-            rest_wave / (1 + fit_z),
-            flux,
-            yerr=flux_err,
-            fmt="o",
-            color="grey",
-            zorder=-10,
-            alpha=0.25,
-        )
-        ax.plot(
-            new_rest / (1 + fit_z),
-            fit_mod(new_rest),
-            label="Model Fit",
-            color="C3",
-        )
-
-        ax.set_title(
-            f"LSQ Fit to {template.name} ({fit_z:.3f}, {template.redshift.value:.3f})"
-        )
-
-        for sm in fit_mod:
-            if sm.name in ["shift", "base", "redshift"]:
-                continue
-
-            ax.plot(
-                new_rest / (1 + fit_z), (fit_mod[0] | sm)(new_rest), label=f"{sm.name}"
-            )
-
-        txt = ""
-        for pn, pv, pe in zip(
-            np.array(fit_mod.param_names)[indices],
-            fit_mod.parameters[indices],
-            param_uncerts,
-        ):
-            pn = "_".join([fit_mod[int(pn.split("_")[-1])].name] + pn.split("_")[:-1])
-            txt += f"{pn:15}: {pv:.3f}\n"  # ± {pe:.3f}\n"
-
-        ax.text(
-            0.05,
-            0.95,
-            txt[:-2],
-            transform=ax.transAxes,
-            fontsize=8,
-            family="monospace",
-            verticalalignment="top",
-            # bbox=dict(facecolor="white", alpha=0.5, edgecolor="black"),
-        )
-
-        ax.legend()
-        fig.savefig(Path(out_dir or "") / "lsq_model_fit.png")
-
-        if not show_plot:
-            plt.close(fig)
-
-    starters = {}
-
-    indep_params = [
-        f"{prof.name}_{param.name}"
-        for prof in template.disk_profiles + template.line_profiles
-        for param in prof.independent
-    ]
-
-    _, inds, _ = model_to_fit_params(fit_mod)
-
-    for pn, pv, pe, (plb, pub) in zip(
-        np.array(fit_mod.param_names)[inds],
-        fit_mod.parameters[inds],
+    # Plotting
+    _plot_fit_results(
+        rest_wave,
+        flux,
+        flux_err,
+        fit_z,
+        fit_mod,
+        indices,
         param_uncerts,
-        np.array(list(fit_mod.bounds.values()))[inds],
-    ):
-        sm_idx = int(pn.split("_")[-1])
-        pn = "_".join(pn.split("_")[:-1])
-        sm = fit_mod[sm_idx]
-
-        if sm.name in ["shift", "base"]:
-            continue
-
-        upv = unp.uarray(pv, pe)
-
-        samp_name = f"{sm.name}_{pn}"
-
-        # print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
-
-        std_scale = 1
-
-        if samp_name in indep_params:
-            if pn in ["apocenter"]:
-                ux = unp.cos(upv)
-                x = unp.nominal_values(ux)
-                xe = unp.std_devs(ux)
-
-                uy = unp.sin(upv)
-                y = unp.nominal_values(uy)
-                ye = unp.std_devs(uy)
-
-                starters[f"{samp_name}_x_base"] = (x, std_scale * xe, plb, pub)
-                starters[f"{samp_name}_y_base"] = (y, std_scale * ye, plb, pub)
-
-            if pn in [
-                "inner_radius",
-                "outer_radius",
-                "delta_radius",
-                "sigma",
-                "vel_width",
-                "radius_ratio",
-            ]:
-                upv = 10**upv
-                pv = unp.nominal_values(upv)
-                pe = unp.std_devs(upv)
-                plb = 10**plb
-                pub = 10**pub
-
-                # print(f"{samp_name:25}: {pv:.3f} ± {pe:.3f}")
-
-            if pe < FLOAT_EPSILON:
-                pe = 1
-
-            starters[samp_name] = (pv, pe * std_scale, plb, pub)
-
-    for prof in template.disk_profiles:
-        starters[f"{prof.name}_outer_radius"] = (
-            starters[f"{prof.name}_inner_radius"][0]
-            + (5e4 - starters[f"{prof.name}_inner_radius"][0])
-            * starters[f"{prof.name}_radius_scale"][0],
-            0,
-            0,
-            1e6,
-        )
-
-    starters = {k: v[0].item() for k, v in starters.items()}
-
-    # Fixed and shared parameters
-    fixed_vars = {
-        f"{prof.name}_{param.name}": param.value
-        for prof in template.disk_profiles + template.line_profiles
-        for param in prof.fixed
-    }
-
-    shared_vars = {
-        f"{prof.name}_{param.name}": param.value
-        for prof in template.disk_profiles + template.line_profiles
-        for param in prof.shared
-    }
-
-    orphaned_vars = {
-        f"{prof.name}_{param.name}": fixed_vars[f"{param.shared}_{param.name}"]
-        for prof in template.disk_profiles + template.line_profiles
-        for param in prof.shared
-        if f"{param.shared}_{param.name}" in fixed_vars
-    }
-
-    starters.update(fixed_vars)
-    starters.update(shared_vars)
-    starters.update(orphaned_vars)
+        template,
+        starters,
+        out_dir,
+        show_plot,
+    )
 
     # Separate disk and line models
     disk_submodels = [
