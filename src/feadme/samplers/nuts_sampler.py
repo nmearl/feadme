@@ -13,6 +13,7 @@ from numpyro.infer import init_to_median, init_to_value
 from numpyro.infer.autoguide import (
     AutoBNAFNormal,
     AutoContinuous,
+    AutoMultivariateNormal,
 )
 from numpyro.infer.reparam import NeuTraReparam
 from typing import cast
@@ -110,17 +111,27 @@ class NUTSSampler(BaseSampler):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
+        # Generate starting location from LSQ fit
+        starters = lsq_model_fitter(
+            self.template,
+            self._data,
+            out_dir=f"{self._config.output_path}",
+        )[0]
+
         # Define the guide
-        guide = AutoBNAFNormal(
+        # guide = AutoBNAFNormal(
+        #     self.model,
+        #     hidden_factors=[4],
+        #     num_flows=1,
+        #     init_loc_fn=init_to_median(num_samples=1000),
+        # )
+        guide = AutoMultivariateNormal(
             self.model,
-            hidden_factors=[4],
-            num_flows=1,
-            init_loc_fn=init_to_median(num_samples=1000),
+            init_loc_fn=init_to_value(values=starters),
         )
 
         # Define the optimization strategy
-        # optimizer = optim.Adam(step_size=1e-3)
-        schedule = optax.exponential_decay(0.001, 10_000, 0.1)
+        schedule = optax.exponential_decay(0.001, 20_000, 0.3)
         optimizer = optax.chain(
             optax.clip_by_global_norm(1.0),
             optax.adam(learning_rate=schedule),  # Clip gradients
@@ -135,7 +146,7 @@ class NUTSSampler(BaseSampler):
         )
         svi_result = svi.run(
             svi_key,
-            20_000,
+            25_000,
             template=self.template,
             wave=self.wave,
             flux=self.flux,
@@ -170,25 +181,17 @@ class NUTSSampler(BaseSampler):
         init_key, mcmc_key = random.split(mcmc_key)
         chain_init_params = guide.sample_posterior(init_key, svi_result.params)
 
-        init_strategy = init_to_value(values=chain_init_params)
+        init_strategy = init_to_value(
+            values={k: jnp.median(v) for k, v in chain_init_params.items()}
+        )
 
         return self.model, init_strategy, None, guide, svi_result
 
     def _initialize_neutra(self) -> tuple:
-        rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
-        rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
-
-        _, _, _, guide, svi_result = self._initialize_svi()
+        _, init_strategy, _, guide, svi_result = self._initialize_svi()
 
         neutra = NeuTraReparam(guide, svi_result.params)
         neutra_model = neutra.reparam(self.model)
-
-        # Initialize from VI posterior
-        init_key, mcmc_key = random.split(mcmc_key)
-
-        chain_init_params = guide.sample_posterior(init_key, svi_result.params)
-
-        init_strategy = init_to_value(values=chain_init_params)
 
         return neutra_model, init_strategy, neutra
 
@@ -205,13 +208,6 @@ class NUTSSampler(BaseSampler):
         """
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
-
-        # Generate a figure to demonstrate LSQ fit
-        starters, _, _, _ = lsq_model_fitter(
-            self.template,
-            self._data,
-            out_dir=f"{self._config.output_path}",
-        )
 
         # Setup model and initialization strategy
         if self.sampler_settings.neutra:
