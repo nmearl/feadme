@@ -48,14 +48,11 @@ class SVISampler(BaseSampler):
         decay_steps = self.sampler_settings.decay_steps
         num_flows = self.sampler_settings.num_flows
         hidden_factors = self.sampler_settings.hidden_factors
+        guide_type = self.sampler_settings.guide_type.lower()
 
         logger.info(
-            f"Starting SVI with {num_steps} steps, "
-            f"{num_flows} flows, hidden_factors={hidden_factors}"
+            f"Starting SVI with {num_steps} steps using {guide_type.upper()} guide"
         )
-
-        rng_key = jax.random.PRNGKey(int(time.time() * 1000) % 2**32)
-        rng_key, svi_key = jax.random.split(rng_key)
 
         # Generate initial parameter estimates using least-squares
         # starters = lsq_model_fitter(
@@ -64,10 +61,33 @@ class SVISampler(BaseSampler):
         #     out_dir=f"{self._config.output_path}",
         # )[0]
 
-        # Create guide
-        self._guide = AutoMultivariateNormal(
-            self.model, init_loc_fn=init_to_median(num_samples=1000)
-        )
+        if guide_type == "bnaf":
+            logger.info(
+                f"Using BNAF: {num_flows} flows, hidden_factors={hidden_factors}"
+            )
+        elif guide_type == "mvn":
+            logger.info("Using multivariate normal guide (no flow parameters)")
+
+        rng_key = jax.random.PRNGKey(int(time.time() * 1000) % 2**32)
+        rng_key, svi_key = jax.random.split(rng_key)
+
+        # Create guide based on guide_type
+        if guide_type == "bnaf":
+            self._guide = AutoBNAFNormal(
+                self.model,
+                hidden_factors=hidden_factors,
+                num_flows=num_flows,
+                init_loc_fn=init_to_median(num_samples=1000),
+            )
+        elif guide_type == "mvn":
+            self._guide = AutoMultivariateNormal(
+                self.model,
+                init_loc_fn=init_to_median(num_samples=1000),
+            )
+        else:
+            raise ValueError(
+                f"Unknown guide type: {guide_type}. Must be 'bnaf' or 'mvn'."
+            )
 
         # Setup optimizer with learning rate schedule
         schedule = optax.exponential_decay(learning_rate, decay_steps, decay_rate)
