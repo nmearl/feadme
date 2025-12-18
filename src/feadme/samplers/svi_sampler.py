@@ -295,25 +295,30 @@ class SVISampler(BaseSampler):
         arr = np.array(log_lik["total_flux"])[: samples_per_chain * n_chains]
         log_lik_dict = {"total_flux": arr.reshape(n_chains, samples_per_chain, -1)}
 
-        # Prior samples
+        # Prior samples - batched to avoid OOM
         num_prior_samples = 1000
+        batch_size = 100  # Process 100 samples at a time
+        prior_predictive_batches = []
 
-        prior_predictive = Predictive(
-            self._prior_model,
-            num_samples=num_prior_samples,
-            parallel=parallel_predictive,
-        )(
-            jax.random.PRNGKey(0),
-            template=self.template,
-            wave=self.wave,
-            flux=None,
-            flux_err=self.flux_err,
-        )
+        for i in range(0, num_prior_samples, batch_size):
+            batch_key = jax.random.fold_in(jax.random.PRNGKey(0), i)
+            batch_pred = Predictive(
+                self._prior_model,
+                num_samples=batch_size,
+                parallel=False,  # Disable parallelization
+            )(
+                batch_key,
+                template=self.template,
+                wave=self.wave,
+                flux=None,
+                flux_err=self.flux_err,
+            )
+            prior_predictive_batches.append(batch_pred)
 
+        # Concatenate batches
         prior_predictive = {
-            k: v
-            for k, v in prior_predictive.items()
-            if not k.endswith("_base") and not k.endswith("_flux")
+            k: jnp.concatenate([batch[k] for batch in prior_predictive_batches], axis=0)
+            for k in prior_predictive_batches[0].keys()
         }
 
         # Filter valid prior samples
