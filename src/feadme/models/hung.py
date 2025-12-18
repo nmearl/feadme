@@ -116,14 +116,12 @@ def e_model(theta, x):
                 0.0,
                 1.999999 * np_pi,
                 args=(-X, q, sig, incl, ecc, phi0, intnorm),
-                epsabs=0,  # Relax absolute tolerance
-                epsrel=1e-6,  # Control relative error instead
             )[0]
             for X in x
         ]
     )
     # Normalize model profile to data
-    # md /= np.max(md)
+    md /= np.max(md)
     return md
 
 

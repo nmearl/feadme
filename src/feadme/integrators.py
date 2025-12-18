@@ -23,14 +23,14 @@ c_kms = const.c.to(u.km / u.s).value
 CC_RES = 128
 GK_RES = 61
 
-fixed_quad_xi = ClenshawCurtisRule(order=CC_RES // 2).integrate
-fixed_quad_phi = ClenshawCurtisRule(order=CC_RES).integrate
-# fixed_quad_xi = GaussKronrodRule(order=GK_RES).integrate
-# fixed_quad_phi = GaussKronrodRule(order=GK_RES).integrate
+# fixed_quad_xi = ClenshawCurtisRule(order=CC_RES // 2).integrate
+# fixed_quad_phi = ClenshawCurtisRule(order=CC_RES).integrate
+fixed_quad_xi = GaussKronrodRule(order=GK_RES).integrate
+fixed_quad_phi = GaussKronrodRule(order=GK_RES).integrate
 # fixed_quad_xi = TanhSinhRule(order=63).integrate
 # fixed_quad_phi = TanhSinhRule(order=127).integrate
 
-N_xi, N_phi = 256, 256
+N_xi, N_phi = 128, 256
 
 
 @partial(jax.jit, static_argnums=(2, 3))
