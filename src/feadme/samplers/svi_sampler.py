@@ -55,11 +55,11 @@ class SVISampler(BaseSampler):
         )
 
         # Generate initial parameter estimates using least-squares
-        # starters = lsq_model_fitter(
-        #     self.template,
-        #     self._data,
-        #     out_dir=f"{self._config.output_path}",
-        # )[0]
+        starters = lsq_model_fitter(
+            self.template,
+            self._data,
+            # out_dir=f"{self._config.output_path}",
+        )[0]
 
         if guide_type == "bnaf":
             logger.info(
@@ -83,6 +83,7 @@ class SVISampler(BaseSampler):
             self._guide = AutoMultivariateNormal(
                 self.model,
                 init_loc_fn=init_to_median(num_samples=1000),
+                # init_loc_fn=init_to_value(values=starters),
             )
         else:
             raise ValueError(

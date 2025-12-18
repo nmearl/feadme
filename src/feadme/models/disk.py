@@ -222,8 +222,8 @@ def integrand(
     # exponent = jnp.maximum(exponent, -37.0)
 
     # Pre-compute constant
-    # const = 1.0 / (jnp.sqrt(2.0 * jnp.pi) * sigma)
-    const = c_kms / (jnp.sqrt(2.0 * jnp.pi) * sigma)
+    const = 1.0 / (jnp.sqrt(2.0 * jnp.pi) * sigma)
+    # const = c_kms / (jnp.sqrt(2.0 * jnp.pi) * sigma)
     I_nu = jnp.power(xi, -q) * const * jnp.exp(exponent)
 
     # Psi

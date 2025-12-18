@@ -30,7 +30,7 @@ fixed_quad_phi = ClenshawCurtisRule(order=CC_RES).integrate
 # fixed_quad_xi = TanhSinhRule(order=63).integrate
 # fixed_quad_phi = TanhSinhRule(order=127).integrate
 
-N_xi, N_phi = 128, 128
+N_xi, N_phi = 256, 256
 
 
 @partial(jax.jit, static_argnums=(2, 3))

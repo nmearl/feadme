@@ -13,7 +13,7 @@ Implemented by TH on 08/16/2019.
 """
 
 c = 3e5  # km/s
-normdist_renorm = 1.0 / (2.0 * np_pi) ** 0.5 * c
+normdist_renorm = 1.0 / (2.0 * np_pi) ** 0.5
 
 
 def int_func_op(phi, xi, X, q, V_sig, inc, ecc, phi0, intnorm):
@@ -116,12 +116,14 @@ def e_model(theta, x):
                 0.0,
                 1.999999 * np_pi,
                 args=(-X, q, sig, incl, ecc, phi0, intnorm),
+                epsabs=0,  # Relax absolute tolerance
+                epsrel=1e-6,  # Control relative error instead
             )[0]
             for X in x
         ]
     )
     # Normalize model profile to data
-    md /= np.max(md)
+    # md /= np.max(md)
     return md
 
 
