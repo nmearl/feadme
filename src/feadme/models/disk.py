@@ -187,15 +187,17 @@ def integrand(
     gamma_denom = 1.0 - (e_sq_sin_sq + scale * one_minus_e_cosphiphinot_sq) / (
         xi * scale_sq * one_minus_e_cosphiphinot
     )
+    gamma_denom = 0.5 * (gamma_denom + jnp.sqrt(gamma_denom**2 + EPS))
     gamma = jnp.sqrt(1.0 / gamma_denom)
 
     # Doppler components
     b_div_r_sq_scale = b_div_r * b_div_r * scale
-    # term_binner = jnp.maximum(1.0 - b_div_r_sq_scale, 0.0)
     one_minus_b_div_r_sq_scale = 1.0 - b_div_r_sq_scale
     term_binner = 0.5 * (
         one_minus_b_div_r_sq_scale + jnp.sqrt(one_minus_b_div_r_sq_scale**2 + EPS)
     )
+    # term_binner = jnp.maximum(1.0 - b_div_r_sq_scale, 0.0)
+    # term_binner = one_minus_b_div_r_sq_scale
 
     # Optimize division chains
     inv_sqrt_scale = 1.0 / sqrt_scale
@@ -222,8 +224,8 @@ def integrand(
     # exponent = jnp.maximum(exponent, -37.0)
 
     # Pre-compute constant
-    const = 1.0 / (jnp.sqrt(2.0 * jnp.pi) * sigma)
-    # const = c_kms / (jnp.sqrt(2.0 * jnp.pi) * sigma)
+    # const = 1.0 / (jnp.sqrt(2.0 * jnp.pi) * sigma)
+    const = c_kms / (jnp.sqrt(2.0 * jnp.pi) * sigma)
     I_nu = jnp.power(xi, -q) * const * jnp.exp(exponent)
 
     # Psi
@@ -232,5 +234,10 @@ def integrand(
     # Final - avoid repeated multiplication
     D_cubed = D_sq * D
     res = xi * I_nu * D_cubed * Psi_ * trans_fac
+
+    # res = jnp.nan_to_num(res, nan=0, posinf=0, neginf=0)
+    res = jnp.where(
+        (one_minus_b_div_r_sq_scale < 0) | (gamma_denom < 0), jnp.zeros_like(res), res
+    )
 
     return res
