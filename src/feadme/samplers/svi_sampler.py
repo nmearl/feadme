@@ -305,7 +305,7 @@ class SVISampler(BaseSampler):
             batch_pred = Predictive(
                 self._prior_model,
                 num_samples=batch_size,
-                parallel=False,  # Disable parallelization
+                parallel=True,  # Enable parallelization
             )(
                 batch_key,
                 template=self.template,
