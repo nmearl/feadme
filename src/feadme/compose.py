@@ -120,27 +120,19 @@ def _compute_disk_flux_vectorized(
         ecc_i = jnp.minimum(ecc_i, 1.0 - 1e-6)
         inc_i = jnp.minimum(inc_i, jnp.pi / 2 - 1e-6)
 
-        # Chunk X processing
-        chunk_size = 32
-        results = []
-        for i in range(0, len(X), chunk_size):
-            X_chunk = X[i : i + chunk_size]
-            res_chunk = integrator(
-                inner_i,
-                outer_i,
-                0.0,
-                2 * jnp.pi,
-                jnp.asarray(X_chunk),
-                inc_i,
-                local_sigma,
-                q_i,
-                ecc_i,
-                apo_i,
-                0.0,  # nu0,
-            )
-            results.append(res_chunk)
-
-        res_X = jnp.concatenate(results)
+        res_X = integrator(
+            inner_i,
+            outer_i,
+            0.0,
+            2 * jnp.pi,
+            jnp.asarray(X),
+            inc_i,
+            local_sigma,
+            q_i,
+            ecc_i,
+            apo_i,
+            0,  # nu0,
+        )
 
         # Convert from X to wavelength space
         # X = nu / nu0 - 1 = lambda_0 / lambda - 1

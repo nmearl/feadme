@@ -194,12 +194,12 @@ def run_pre_fit(
 
                 if "log" in dparam["distribution"].value:
                     loc_log = np.log10(loc)
-                    scale_log = (np.log10(high_lim) - np.log10(low_lim)) / 4
+                    scale_log = (np.log10(high_lim) - np.log10(low_lim)) / 2
                     upper = 10 ** (loc_log + scale_log)
                     lower = 10 ** (loc_log - scale_log)
                     scale = ((upper - lower) / 2).item()
                 else:
-                    scale = (high_lim - low_lim) / 4
+                    scale = (high_lim - low_lim) / 2
 
                 dparam["loc"] = loc
                 dparam["scale"] = scale
