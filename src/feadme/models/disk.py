@@ -69,12 +69,12 @@ def intensity(
     `I_nu` function for the disk model, as defined in Eracleous et al. (1995).
     """
     # Eracleous et al, eq 18; returned units are erg / cm^2
-    # exponent = -((1 + X - D) ** 2) / (2 * D**2) * (c_cgs / sigma) ** 2
-    exponent = -((1 + X - D) ** 2 * nu0**2) / (2 * D**2 * sigma**2)
+    exponent = -((1 + X - D) ** 2) / (2 * D**2) * (c_kms / sigma) ** 2
+    # exponent = -((1 + X - D) ** 2 * nu0**2) / (2 * D**2 * sigma**2)
     exponent = jnp.maximum(exponent, -37.0)
 
-    # res = (xi**-q * c_cgs) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
-    res = (xi**-q) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
+    res = (xi**-q * c_kms) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
+    # res = (xi**-q) / (jnp.sqrt(2 * jnp.pi) * sigma) * jnp.exp(exponent)
 
     return res
 
@@ -107,9 +107,6 @@ def _integrand(
     """
     # Eracleous et al, eq 10
     trans_fac_denominator = 1 - e * jnp.cos(phi - phi0)
-    # trans_fac_denominator = jnp.sign(trans_fac_denominator) * jnp.maximum(
-    #     trans_fac_denominator, 1e-15
-    # )
     trans_fac = (1 + e) / trans_fac_denominator
     xi = xi_tilde * trans_fac
 
@@ -173,6 +170,14 @@ def integrand(
 
     # b/r
     one_plus_sini_cosphi = 1.0 + sini_cosphi
+    # When i → π/2 (edge-on) and φ → π (far side of disk), the denominator
+    # 1 + sin(i)cos(φ) → 0, causing Ψ to diverge. Physically, this represents
+    # the infinite path length through an infinitesimally thin disk when
+    # viewing along the disk plane. Real disks have finite thickness that
+    # regulates this singularity. We mitigate this issue by imposing a safeguard.
+    one_plus_sini_cosphi = 0.5 * (
+        one_plus_sini_cosphi + jnp.sqrt(one_plus_sini_cosphi**2 + 1e-5)
+    )
     one_minus_sini_cosphi = 1.0 - sini_cosphi
 
     b_div_r = sqrt_one_minus_sinisq_cosphisq * (
@@ -220,7 +225,7 @@ def integrand(
     one_plus_X_minus_D_sq = (1.0 + X - D) ** 2
 
     # exponent = -one_plus_X_minus_D_sq * (nu0 * nu0) / (2.0 * D_sq * sigma * sigma)
-    exponent = -((1 + X - D) ** 2) / (2 * D**2) * (c_kms / sigma) ** 2
+    exponent = -one_plus_X_minus_D_sq / (2 * D**2) * (c_kms / sigma) ** 2
     # exponent = jnp.maximum(exponent, -37.0)
 
     # Pre-compute constant
@@ -234,10 +239,5 @@ def integrand(
     # Final - avoid repeated multiplication
     D_cubed = D_sq * D
     res = xi * I_nu * D_cubed * Psi_ * trans_fac
-
-    # res = jnp.nan_to_num(res, nan=0, posinf=0, neginf=0)
-    res = jnp.where(
-        (one_minus_b_div_r_sq_scale < 0) | (gamma_denom < 0), jnp.zeros_like(res), res
-    )
 
     return res
