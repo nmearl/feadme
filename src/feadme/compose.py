@@ -113,21 +113,17 @@ def _compute_disk_flux_vectorized(
         # X = nu / nu0 - 1
         # local_sigma = sigma_i * 1e5 * nu0 / c_cgs
 
-        local_sigma = sigma_i
-        velocity = (wave - center) / center * c_kms
+        velocity = (wave - center_i) / center_i * c_kms
         X = -velocity / c_kms
-
-        ecc_i = jnp.minimum(ecc_i, 1.0 - 1e-6)
-        inc_i = jnp.minimum(inc_i, jnp.pi / 2 - 1e-6)
 
         res_X = integrator(
             inner_i,
             outer_i,
-            0.0,
-            2 * jnp.pi,
+            jnp.pi / 2 - jnp.pi,
+            jnp.pi / 2 + jnp.pi,
             jnp.asarray(X),
             inc_i,
-            local_sigma,
+            sigma_i,
             q_i,
             ecc_i,
             apo_i,
