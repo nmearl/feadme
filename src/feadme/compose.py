@@ -13,8 +13,8 @@ from jax.typing import ArrayLike
 
 from .integrators import integrator
 from .parser import Distribution, Template, Shape, Parameter
-from .parameterizers import _sample_auto_reparam as sample_reparam
-from .parameterizers import create_reparam_config
+from .parameterizers.auto import sample_param
+from .parameterizers.auto import create_reparam_config
 
 ERR = float(np.finfo(np.float32).tiny)
 c_cgs = const.c.cgs.value
@@ -211,7 +211,7 @@ def disk_model(
         # Sample independent parameters
         for param in prof.independent:
             samp_name = param.qualified_name
-            param_samp = sample_reparam(samp_name, param)
+            param_samp = sample_param(samp_name, param)
             param_mods[samp_name] = param_samp
             disk_arrs[param.name] = disk_arrs[param.name].at[i].set(param_samp)
 
@@ -242,7 +242,7 @@ def disk_model(
         # Sample independent parameters
         for param in prof.independent:
             samp_name = param.qualified_name
-            param_samp = sample_reparam(samp_name, param)
+            param_samp = sample_param(samp_name, param)
             param_mods[samp_name] = param_samp
             line_arrs[param.name] = line_arrs[param.name].at[i].set(param_samp)
 
@@ -280,13 +280,13 @@ def disk_model(
     if template.white_noise.fixed:
         white_noise = numpyro.deterministic("white_noise", template.white_noise.value)
     else:
-        white_noise = sample_reparam("white_noise", template.white_noise)
+        white_noise = sample_param("white_noise", template.white_noise)
 
     # Sample redshift
     if template.redshift.fixed:
         redshift = numpyro.deterministic("redshift", template.redshift.value)
     else:
-        redshift = sample_reparam("redshift", template.redshift)
+        redshift = sample_param("redshift", template.redshift)
 
     rest_wave = wave / (1 + redshift)
 
