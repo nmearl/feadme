@@ -212,8 +212,8 @@ TAU = 2.0 * jnp.pi
 
 
 def _sample_circular(samp_name: str, low: float, high: float):
-    # VonMises(kappa=0) is uniform on [-pi, pi).
-    theta = numpyro.sample(samp_name, dist.VonMises(0.0, 0.0))
+    # VonMises(kappa=0) is uniform on [-pi, pi)
+    theta = numpyro.sample(samp_name, dist.VonMises(0.0, 1e-6))
 
     numpyro.deterministic(f"{samp_name}_wrapped", jnp.mod(theta, TAU))
 
@@ -262,21 +262,8 @@ def _bounded_lognormal(mean, std, low, high):
 
 
 def _sample_auto_reparam(samp_name: str, param: Parameter):
-    """
-    Sampling compatible with numpyro.handlers.reparam + your create_reparam_config().
-
-    - circular params: config targets f"{samp_name}_base" with CircularReparam()
-      -> we sample that site and then expose samp_name deterministically.
-
-    - non-circular params: config targets samp_name with TransformReparam()
-      -> we sample samp_name directly from the intended constrained distribution.
-    """
-
-    # --- Circular parameters: sample the site that reparam config targets
     if param.circular:
         return _sample_circular(samp_name, param.low, param.high)
-
-    # --- Non-circular parameters: sample at samp_name (TransformReparam will act here)
 
     if param.distribution == Distribution.UNIFORM:
         return numpyro.sample(samp_name, _uniform_affine(param.low, param.high))
