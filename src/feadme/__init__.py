@@ -22,7 +22,7 @@ logger.add(
 )
 
 numpyro.set_host_device_count(int(os.getenv("FORCE_DEVICE_COUNT", "1")))
-numpyro.enable_x64()
+# numpyro.enable_x64()
 
 import jax
 
@@ -31,3 +31,4 @@ logger.debug(f"Backend: {jax.extend.backend.get_backend().platform}")
 logger.debug(f"Device count: {jax.device_count()}")
 logger.debug(f"Device: {jax.devices()[0].device_kind}")
 logger.debug(f"Local device count: {jax.local_device_count()}")
+logger.debug(f"x64 enabled: {jax.config.x64_enabled}")

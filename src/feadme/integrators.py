@@ -20,10 +20,10 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-CC_RES = 256
+CC_RES = 64
 GK_RES = 61
 
-fixed_quad_xi = ClenshawCurtisRule(order=CC_RES // 4).integrate
+fixed_quad_xi = ClenshawCurtisRule(order=CC_RES // 2).integrate
 fixed_quad_phi = ClenshawCurtisRule(order=CC_RES).integrate
 # fixed_quad_xi = GaussKronrodRule(order=GK_RES).integrate
 # fixed_quad_phi = GaussKronrodRule(order=GK_RES).integrate
@@ -32,9 +32,58 @@ fixed_quad_phi = ClenshawCurtisRule(order=CC_RES).integrate
 
 N_xi, N_phi = 256, 256
 
+LN10 = jnp.log(10.0)
+
+
+@partial(jax.jit, static_argnums=(2, 3, 10))  # phi1/phi2 fixed -> helps compilation
+def quad_jax_integrate(
+    xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0, n_split: int = 4
+):
+    log_xi1, log_xi2 = jnp.log10(xi1), jnp.log10(xi2)
+
+    # Split integration over phi into n_split segments
+    dphi = (phi2 - phi1) / n_split
+
+    def integrate_over_phi(log_xi):
+        xi_tilde = 10.0**log_xi
+
+        def f(phi):
+            return integrand(phi, xi_tilde, X, inc, sigma, q, e, phi0, nu0)
+
+        def body(i, acc):
+            a = phi1 + i * dphi
+            b = a + dphi
+            return acc + fixed_quad_phi(f, a, b, args=())[0]
+
+        v = jax.lax.fori_loop(0, n_split, body, jnp.zeros_like(X))
+        return v * (xi_tilde * LN10)
+
+    return fixed_quad_xi(integrate_over_phi, log_xi1, log_xi2, args=())[0]
+
+
+@partial(jax.jit, static_argnums=(2, 3))  # keep if phi1/phi2 fixed
+def ___quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0):
+    log_xi1, log_xi2 = jnp.log10(xi1), jnp.log10(xi2)
+
+    def integrate_over_phi(log_xi):
+        xi_tilde = 10.0**log_xi
+        # vector-valued integrand over X
+        # output shape: (n_wave,)
+        val = fixed_quad_phi(
+            lambda phi: integrand(phi, xi_tilde, X, inc, sigma, q, e, phi0, nu0),
+            phi1,
+            phi2,
+            args=(),
+        )[0]
+        # Jacobian for dxi = xi ln(10) dlog10(xi)
+        return val * (xi_tilde * LN10)
+
+    # This integrates a vector-valued function over log_xi
+    return fixed_quad_xi(integrate_over_phi, log_xi1, log_xi2, args=())[0]
+
 
 @partial(jax.jit, static_argnums=(2, 3))
-def quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0):
+def _quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0):
     """
     Double fixed-order quadrature with explicit wavelength vectorization.
     """

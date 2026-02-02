@@ -396,7 +396,7 @@ class NUTSSamplerSettings(SamplerSettings):
     num_chains: int = 1
     target_accept_prob: float = 0.8
     max_tree_depth: int = 10
-    dense_mass: bool = False
+    dense_mass: bool = True
     prefit: bool = False
     neutra: bool = False
 
