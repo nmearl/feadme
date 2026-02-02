@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
 from numpyro.distributions import transforms as T
-from numpyro.infer.reparam import CircularReparam, TransformReparam
+from numpyro.infer.reparam import TransformReparam
 from ..parser import Distribution, Parameter
 
 TAU = 2.0 * jnp.pi
@@ -17,9 +17,11 @@ def create_reparam_config(template) -> Dict[str, Any]:
     for prof in template.disk_profiles + template.line_profiles:
         for param in prof.independent:
             name = param.qualified_name
-            reparam_config[name] = (
-                CircularReparam() if param.circular else TransformReparam()
-            )
+
+            if param.circular:
+                continue
+
+            reparam_config[name] = TransformReparam()
 
     return reparam_config
 
@@ -132,33 +134,24 @@ def _unbounded_lognormal_mean_std(mean: float, std: float) -> dist.Distribution:
     )
 
 
-def _sample_circular(
-    samp_name: str, low: float | None, high: float | None, kappa: float = 1e-6
-) -> jnp.ndarray:
+def _sample_circular(samp_name: str, low: float, high: float) -> jnp.ndarray:
     """
-    Sample a truly circular parameter at sample site 'samp_name' so CircularReparam can apply.
-
-    Returns a wrapped angle in [0, 2π) (or mapped to [low, high] if that interval is a full wrap).
+    Sample a circular angle via a 2D Normal direction:
+      xy ~ Normal(0,1)^2
+      theta = atan2(y,x)  (uniform direction)
+    Always sampleable under Predictive.
     """
-    # VonMises support is circular; kappa must be > 0 for your NumPyro version.
-    theta = numpyro.sample(samp_name, dist.VonMises(loc=0.0, concentration=kappa))
+    xy = numpyro.sample(f"{samp_name}_base", dist.Normal(0.0, 1.0).expand([2]))
+    theta = jnp.arctan2(xy[1], xy[0])  # in (-pi, pi]
+    theta = jnp.mod(theta, TAU)  # [0, 2pi)
 
-    # Wrap to [0, 2π) for downstream use
-    theta_wrapped = jnp.mod(theta, TAU)
-
-    numpyro.deterministic(f"{samp_name}_wrapped", theta_wrapped)
-    return theta_wrapped
-
-
-# ---- Main entry point -------------------------------------------------------
+    numpyro.deterministic(samp_name, theta)
+    return theta
 
 
 def sample_param(samp_name: str, param: Parameter) -> jnp.ndarray:
-    # Circular parameters: MUST have circular-support distribution at site samp_name.
     if param.circular:
-        return _sample_circular(
-            samp_name, getattr(param, "low", None), getattr(param, "high", None)
-        )
+        return _sample_circular(samp_name, param.low, param.high)
 
     if param.distribution == Distribution.UNIFORM:
         return numpyro.sample(samp_name, _uniform_affine(param.low, param.high))
