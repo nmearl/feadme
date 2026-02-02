@@ -14,6 +14,7 @@ from jax.scipy.special import erf, erfinv
 from jax.scipy.stats import norm
 from numpyro.distributions import constraints
 from numpyro.distributions.transforms import biject_to, ExpTransform
+from numpyro.distributions import transforms as T
 
 from .parser import Distribution, Template, Shape, Parameter
 
@@ -24,15 +25,15 @@ c_kms = const.c.to(u.km / u.s).value
 
 
 def _sample_no_reparam(samp_name: str, param: Parameter) -> ArrayLike:
-    # if param.circular:
-    #     circ_x_base = numpyro.sample(f"{samp_name}_x_base", dist.Normal(0, 1))
-    #     circ_y_base = numpyro.sample(f"{samp_name}_y_base", dist.Normal(0, 1))
-    #
-    #     param_samp = numpyro.deterministic(
-    #         samp_name, jnp.mod(jnp.arctan2(circ_y_base, circ_x_base), 2 * jnp.pi)
-    #     )
-    #
-    #     return param_samp
+    if param.circular:
+        circ_x_base = numpyro.sample(f"{samp_name}_x_base", dist.Normal(0, 1))
+        circ_y_base = numpyro.sample(f"{samp_name}_y_base", dist.Normal(0, 1))
+
+        param_samp = numpyro.deterministic(
+            samp_name, jnp.mod(jnp.arctan2(circ_y_base, circ_x_base), 2 * jnp.pi)
+        )
+
+        return param_samp
 
     # if param.name == "inclination":
     #     mu_min = jnp.cos(param.high)  # cos(i_max)
@@ -174,7 +175,7 @@ def _sample_manual_reparam(samp_name: str, param: Parameter) -> ArrayLike:
     return numpyro.deterministic(samp_name, val)
 
 
-def create_reparam_config(template: Template, circ_only: bool = False) -> dict:
+def create_reparam_config(template: Template) -> dict:
     """Create reparameterization configuration for parameters."""
     reparam_config = {}
 
@@ -184,116 +185,141 @@ def create_reparam_config(template: Template, circ_only: bool = False) -> dict:
 
             if param.circular:
                 reparam_config[f"{samp_name}_base"] = CircularReparam()
-            elif not circ_only:
+            else:
                 reparam_config[samp_name] = TransformReparam()
-
-    # Template-level parameters
-    if not circ_only:
-        if not template.redshift.fixed:
-            reparam_config["redshift"] = TransformReparam()
-
-        if not template.white_noise.fixed:
-            reparam_config["white_noise"] = TransformReparam()
 
     return reparam_config
 
 
-def _sample_auto_reparam(samp_name: str, param: Parameter) -> ArrayLike:
+def _uniform_affine(low, high):
+    # u ~ Uniform(0,1); x = low + (high-low)*u
+    return dist.TransformedDistribution(
+        dist.Uniform(0.0, 1.0),
+        T.AffineTransform(loc=low, scale=(high - low)),
+    )
+
+
+def _loguniform(low, high):
+    # u ~ Uniform(0,1); z = loglow + (loghigh-loglow)*u; x = exp(z)
+    loglow, loghigh = jnp.log(low), jnp.log(high)
+    return dist.TransformedDistribution(
+        dist.Uniform(0.0, 1.0),
+        [T.AffineTransform(loc=loglow, scale=(loghigh - loglow)), T.ExpTransform()],
+    )
+
+
+TAU = 2.0 * jnp.pi
+
+
+def _sample_auto_reparam(samp_name: str, param: Parameter):
     if param.circular:
-        circ_base = numpyro.sample(
-            f"{samp_name}_base",
-            dist.VonMises(loc=param.loc, concentration=1e-3),
-        )
-        return numpyro.deterministic(samp_name, circ_base % (2 * jnp.pi))
+        # CircularReparam requires circular support; VonMises(kappa=0) is uniform on [-pi, pi).
+        theta = numpyro.sample(samp_name, dist.VonMises(0.0, 0.0))
 
-    if param.name == "inclination":
-        # param.low, param.high are the inclination bounds (in radians)
-        i_min, i_max = param.low, param.high
+        # If your model expects [0, 2pi), wrap deterministically under a DIFFERENT name
+        # (don’t overwrite the sample site name).
+        theta_0_2pi = jnp.mod(theta, TAU)
+        numpyro.deterministic(f"{samp_name}_wrapped", theta_0_2pi)
 
-        # cos(i) decreases with i, so the interval is [cos(i_max), cos(i_min)]
-        mu = numpyro.sample(
-            f"{samp_name}_base",
-            dist.Uniform(jnp.cos(i_max), jnp.cos(i_min)),
-        )
-        incl = jnp.arccos(mu)
-        return numpyro.deterministic(samp_name, incl)
+        # Return whatever downstream code uses. Prefer using `theta` directly in trig.
+        return theta
+
+
+def _bounded_normal_like(low, high, loc, scale):
+    """
+    Smoothly map a normal into [low, high] with a logistic transform.
+    loc/scale are interpreted as *initialization-ish*; not exact moments.
+    """
+    # base ~ Normal(0,1)
+    base = dist.Normal(0.0, 1.0)
+
+    # affine to approx loc/scale in unconstrained space
+    # then sigmoid to (0,1), then affine to (low, high)
+    transform = [
+        T.AffineTransform(loc=loc, scale=scale),
+        T.SigmoidTransform(),
+        T.AffineTransform(loc=low, scale=(high - low)),
+    ]
+    return dist.TransformedDistribution(base, transform)
+
+
+def _bounded_lognormal(mean, std, low, high):
+    sigma_log = jnp.sqrt(jnp.log1p((std / mean) ** 2))
+    mu_log = jnp.log(mean) - 0.5 * sigma_log**2
+
+    log_low, log_high = jnp.log(low), jnp.log(high)
+    span = log_high - log_low
+
+    # z ~ Normal(0,1)
+    # y = mu_log + sigma_log*z   (roughly centered)
+    # u = sigmoid(y) in (0,1)
+    # t = log_low + span*u in (log_low, log_high)
+    # x = exp(t) in (low, high)
+    return dist.TransformedDistribution(
+        dist.Normal(0.0, 1.0),
+        [
+            T.AffineTransform(loc=mu_log, scale=sigma_log),
+            T.SigmoidTransform(),
+            T.AffineTransform(loc=log_low, scale=span),
+            T.ExpTransform(),
+        ],
+    )
+
+
+def _sample_auto_reparam(samp_name: str, param: Parameter):
+    """
+    Sampling compatible with numpyro.handlers.reparam + your create_reparam_config().
+
+    - circular params: config targets f"{samp_name}_base" with CircularReparam()
+      -> we sample that site and then expose samp_name deterministically.
+
+    - non-circular params: config targets samp_name with TransformReparam()
+      -> we sample samp_name directly from the intended constrained distribution.
+    """
+
+    # --- Circular parameters: sample the site that reparam config targets
+    if param.circular:
+        return _sample_circular(samp_name, param.low, param.high)
+
+    # --- Non-circular parameters: sample at samp_name (TransformReparam will act here)
 
     if param.distribution == Distribution.UNIFORM:
-        base = dist.Uniform(0.0, 1.0)
-        transform = dist.transforms.AffineTransform(
-            loc=param.low, scale=param.high - param.low
-        )
-        return numpyro.sample(
-            samp_name,
-            dist.TransformedDistribution(base, transform),
-        )
+        return numpyro.sample(samp_name, _uniform_affine(param.low, param.high))
 
     if param.distribution == Distribution.LOG_UNIFORM:
-        base = dist.Uniform(0.0, 1.0)
-        transform = dist.transforms.ComposeTransform(
-            [
-                dist.transforms.AffineTransform(
-                    loc=jnp.log(param.low),
-                    scale=jnp.log(param.high) - jnp.log(param.low),
-                ),
-                dist.transforms.ExpTransform(),
-            ]
-        )
-        return numpyro.sample(
-            samp_name,
-            dist.TransformedDistribution(base, transform),
-        )
+        return numpyro.sample(samp_name, _loguniform(param.low, param.high))
 
     if param.distribution == Distribution.NORMAL:
-        base = dist.Normal(0.0, 1.0)
-        interval = constraints.interval(param.low, param.high)
-        transform = biject_to(interval)  # typically Sigmoid + Affine under the hood
         return numpyro.sample(
-            samp_name,
-            dist.TransformedDistribution(base, transform),
+            samp_name, _bounded_normal_like(param.low, param.high, loc=0.0, scale=1.0)
         )
 
     if param.distribution == Distribution.LOG_NORMAL:
-        log_low = jnp.log(param.low)
-        log_high = jnp.log(param.high)
-
-        base = dist.Normal(0.0, 1.0)
-        interval = constraints.interval(log_low, log_high)
-        log_transform = biject_to(interval)
-
-        transform = dist.transforms.ComposeTransform(
-            [log_transform, dist.transforms.ExpTransform()]
-        )
-
         return numpyro.sample(
             samp_name,
-            dist.TransformedDistribution(base, transform),
+            _bounded_lognormal(param.loc, param.scale, param.low, param.high),
         )
 
     if param.distribution == Distribution.HALF_NORMAL:
-        base = dist.Normal(0.0, 1.0)
-        interval = constraints.interval(param.low, param.high)
-        transform = biject_to(interval)
+        # Intended: shifted half-normal on [low, high]. NumPyro doesn't always provide a
+        # "shifted+truncated HalfNormal" distribution in older versions, so we use a proper,
+        # bounded approximation:
         return numpyro.sample(
             samp_name,
-            dist.TransformedDistribution(base, transform),
+            dist.TruncatedNormal(
+                loc=param.low, scale=param.scale, low=param.low, high=param.high
+            ),
         )
 
     if param.distribution == Distribution.LOG_HALF_NORMAL:
+        # Same idea in log-space, then exponentiate. Uses a proper bounded approximation.
         log_low = jnp.log(param.low)
         log_high = jnp.log(param.high)
-
-        base = dist.Normal(0.0, 1.0)
-        interval = constraints.interval(log_low, log_high)
-        log_transform = biject_to(interval)
-
-        transform = dist.transforms.ComposeTransform(
-            [log_transform, dist.transforms.ExpTransform()]
+        base = dist.TruncatedNormal(
+            loc=log_low, scale=param.scale, low=log_low, high=log_high
         )
-
         return numpyro.sample(
-            samp_name,
-            dist.TransformedDistribution(base, transform),
+            samp_name, dist.TransformedDistribution(base, ExpTransform())
         )
 
     raise ValueError(f"Unsupported distribution type: {param.distribution}")

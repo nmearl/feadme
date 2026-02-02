@@ -13,7 +13,7 @@ from jax.typing import ArrayLike
 
 from .integrators import integrator
 from .parser import Distribution, Template, Shape, Parameter
-from .parameterizers import _sample_no_reparam as sample_reparam
+from .parameterizers import _sample_auto_reparam as sample_reparam
 from .parameterizers import create_reparam_config
 
 ERR = float(np.finfo(np.float32).tiny)
@@ -147,7 +147,7 @@ def _compute_disk_flux_vectorized(
         # res_nu = res_X / jac
 
         # Check for invalid results
-        normalized_res = res_X / jnp.max(res_X)
+        normalized_res = res_X / jnp.mean(res_X)
 
         return normalized_res * scale_i + offset_i
 
@@ -303,11 +303,9 @@ def disk_model(
         numpyro.sample("total_flux", dist.Normal(total_flux, total_error), obs=flux)
 
 
-def construct_model(
-    template: Template, auto_reparam: bool = False, circ_only: bool = False
-):
+def construct_model(template: Template, auto_reparam: bool = False):
     if auto_reparam:
-        reparam_config = create_reparam_config(template, circ_only=circ_only)
+        reparam_config = create_reparam_config(template)
         return reparam(disk_model, config=reparam_config)
     else:
         return disk_model
