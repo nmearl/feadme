@@ -211,18 +211,13 @@ def _loguniform(low, high):
 TAU = 2.0 * jnp.pi
 
 
-def _sample_auto_reparam(samp_name: str, param: Parameter):
-    if param.circular:
-        # CircularReparam requires circular support; VonMises(kappa=0) is uniform on [-pi, pi).
-        theta = numpyro.sample(samp_name, dist.VonMises(0.0, 0.0))
+def _sample_circular(samp_name: str, low: float, high: float):
+    # VonMises(kappa=0) is uniform on [-pi, pi).
+    theta = numpyro.sample(samp_name, dist.VonMises(0.0, 0.0))
 
-        # If your model expects [0, 2pi), wrap deterministically under a DIFFERENT name
-        # (don’t overwrite the sample site name).
-        theta_0_2pi = jnp.mod(theta, TAU)
-        numpyro.deterministic(f"{samp_name}_wrapped", theta_0_2pi)
+    numpyro.deterministic(f"{samp_name}_wrapped", jnp.mod(theta, TAU))
 
-        # Return whatever downstream code uses. Prefer using `theta` directly in trig.
-        return theta
+    return theta
 
 
 def _bounded_normal_like(low, high, loc, scale):
