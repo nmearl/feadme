@@ -35,7 +35,7 @@ N_xi, N_phi = 256, 256
 LN10 = jnp.log(10.0)
 
 
-@partial(jax.jit, static_argnums=(2, 3, 10))  # phi1/phi2 fixed -> helps compilation
+@partial(jax.jit, static_argnums=(2, 3, 11))  # phi1/phi2 fixed -> helps compilation
 def quad_jax_integrate(
     xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0, n_split: int = 4
 ):
