@@ -232,7 +232,7 @@ class SVISampler(BaseSampler):
             if k.endswith("_base"):
                 continue
 
-            arr = np.array(v)[: samples_per_chain * n_chains]
+            arr = np.asarray(v)[: samples_per_chain * n_chains]
 
             if arr.ndim == 1:
                 posterior_dict[k] = arr.reshape(n_chains, samples_per_chain)
@@ -278,7 +278,7 @@ class SVISampler(BaseSampler):
 
         posterior_predictive_dict = {}
         for k in ["total_flux", "disk_flux", "line_flux"]:
-            arr = np.array(predictive_post[k])[: samples_per_chain * n_chains]
+            arr = np.asarray(predictive_post[k])[: samples_per_chain * n_chains]
             posterior_predictive_dict[k] = arr.reshape(n_chains, samples_per_chain, -1)
 
         # Compute log-likelihood for each posterior sample
@@ -292,10 +292,12 @@ class SVISampler(BaseSampler):
         )
 
         # Reshape to (chains, draws, wavelength)
-        arr = np.array(log_lik["total_flux"])[: samples_per_chain * n_chains]
+        arr = np.asarray(log_lik["total_flux"])[: samples_per_chain * n_chains]
         log_lik_dict = {"total_flux": arr.reshape(n_chains, samples_per_chain, -1)}
 
         # Prior samples - batched to avoid OOM
+        logger.info("Generating prior predictive samples...")
+
         num_prior_samples = 1000
         batch_size = 100  # Process 100 samples at a time
         prior_predictive_batches = []
@@ -329,7 +331,7 @@ class SVISampler(BaseSampler):
         ]
 
         prior_dict = {
-            k: np.array([v[i] for i in valid_indices])
+            k: np.asarray([v[i] for i in valid_indices])
             for k, v in prior_predictive.items()
         }
 
@@ -343,7 +345,7 @@ class SVISampler(BaseSampler):
         prior_draws = n_prior_valid // prior_chains
 
         for k, v in prior_dict.items():
-            arr = np.array(v)[: prior_draws * prior_chains]
+            arr = np.asarray(v)[: prior_draws * prior_chains]
             if arr.ndim == 1:
                 prior_dict[k] = arr.reshape(prior_chains, prior_draws)
             elif arr.ndim == 2:

@@ -282,7 +282,7 @@ def _plot_fit_results(
     )
 
     ax.set_title(
-        f"LSQ Fit to {template.name} ({fit_z:.3f}, {template.redshift.value:.3f})"
+        f"LSQ Fit to {template.name} ({fit_z:.5f}, {template.redshift.value:.5f})"
     )
 
     for sm in fit_mod:
@@ -297,8 +297,16 @@ def _plot_fit_results(
         fit_mod.parameters[indices],
         param_uncerts,
     ):
-        pn = "_".join([fit_mod[int(pn.split("_")[-1])].name] + pn.split("_")[:-1])
-        start_val = starters.get(pn, np.nan)
+        if "redshift_z" in pn:
+            pn = "redshift"
+            pv = fit_z
+            start_val = template.redshift.value
+        else:
+            pn = "_".join([fit_mod[int(pn.split("_")[-1])].name] + pn.split("_")[:-1])
+            start_val = starters.get(pn, np.nan)
+
+        pn = pn.replace("halpha_", "")
+
         txt += f"{pn:15}: {pv:.3f} ({start_val:.3f}) \n"  # ± {pe:.3f}\n"
 
     ax.text(
