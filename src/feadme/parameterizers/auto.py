@@ -1,4 +1,3 @@
-# auto.py
 from typing import Any, Dict
 
 import jax.numpy as jnp
