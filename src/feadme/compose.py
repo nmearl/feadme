@@ -290,7 +290,7 @@ def disk_model(
     total_line_flux = _compute_line_flux_vectorized(rest_wave, **line_arrs)
     total_flux = total_disk_flux + total_line_flux
 
-    total_error = jnp.sqrt(flux_err**2 + total_flux**2 * jnp.exp(2 * white_noise))
+    total_error = flux_err * jnp.exp(white_noise)
 
     numpyro.deterministic("disk_flux", total_disk_flux)
     numpyro.deterministic("line_flux", total_line_flux)
