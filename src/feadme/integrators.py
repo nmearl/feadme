@@ -20,7 +20,7 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-CC_RES = 64
+CC_RES = 32 * 4
 GK_RES = 61
 
 fixed_quad_xi = ClenshawCurtisRule(order=CC_RES // 2).integrate
@@ -36,7 +36,7 @@ LN10 = jnp.log(10.0)
 
 
 @partial(jax.jit, static_argnums=(2, 3, 11))  # phi1/phi2 fixed -> helps compilation
-def quad_jax_integrate(
+def split_quad_jax_integrate(
     xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0, n_split: int = 4
 ):
     log_xi1, log_xi2 = jnp.log10(xi1), jnp.log10(xi2)
@@ -62,7 +62,7 @@ def quad_jax_integrate(
 
 
 @partial(jax.jit, static_argnums=(2, 3))  # keep if phi1/phi2 fixed
-def ___quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0):
+def quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0):
     log_xi1, log_xi2 = jnp.log10(xi1), jnp.log10(xi2)
 
     def integrate_over_phi(log_xi):
@@ -83,7 +83,7 @@ def ___quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0):
 
 
 @partial(jax.jit, static_argnums=(2, 3))
-def _quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0):
+def vmap_quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0):
     """
     Double fixed-order quadrature with explicit wavelength vectorization.
     """

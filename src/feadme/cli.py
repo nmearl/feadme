@@ -90,6 +90,10 @@ def load_data(data_path: str, template: Template, rebin: bool = False) -> Data:
 
     if rebin:
         wave, flux, flux_err = rebin_spectrum(wave, flux, flux_err, dv=100)
+        # Log statement about size before/after rebinning
+        logger.info(
+            f"Rebinned spectrum from {len(data_tab)} to {len(wave)} points (dv=100 km/s)."
+        )
 
     return Data.create(
         wave=wave,
@@ -249,8 +253,8 @@ def perform_sampling(config: Config):
         )
 
     # Initialize the sampler with the model and configuration
-    prior_model = construct_model(template, auto_reparam=True)
-    model = construct_model(template, auto_reparam=True)
+    prior_model = construct_model(template, auto_reparam=False)
+    model = construct_model(template, auto_reparam=False)
 
     if config.sampler_settings.sampler_type == "nuts":
         sampler = NUTSSampler(model=model, config=config, prior_model=prior_model)

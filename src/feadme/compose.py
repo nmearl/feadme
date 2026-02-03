@@ -13,10 +13,11 @@ from jax.typing import ArrayLike
 
 from .integrators import integrator
 from .parser import Distribution, Template, Shape, Parameter
-from .parameterizers.auto import sample_param
+from .parameterizers.basic import sample_param
 from .parameterizers.auto import create_reparam_config
 
 ERR = float(np.finfo(np.float32).tiny)
+EPS = 1e-6
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
@@ -147,7 +148,7 @@ def _compute_disk_flux_vectorized(
         # res_nu = res_X / jac
 
         # Check for invalid results
-        normalized_res = res_X / jnp.mean(res_X)
+        normalized_res = res_X / jnp.sqrt(jnp.mean(res_X**2) + EPS)
 
         return normalized_res * scale_i + offset_i
 
