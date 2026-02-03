@@ -19,17 +19,12 @@ FLOAT_EPSILON = 1e-6
 class DiskProfileModel(Fittable1DModel):
     center = Parameter()
     inner_radius = Parameter()
-    # delta_radius = Parameter()
-    # outer_radius = Parameter()
-    # radius_ratio = Parameter()
-    radius_scale = Parameter()
+    radius_ratio = Parameter()
     inclination = Parameter()
     sigma = Parameter()
     q = Parameter()
     eccentricity = Parameter()
     apocenter = Parameter()
-    # apocenter_x = Parameter()
-    # apocenter_y = Parameter()
     scale = Parameter()
     offset = Parameter()
 
@@ -51,27 +46,10 @@ class DiskProfileModel(Fittable1DModel):
             ]:
                 pars[f"{self._name}_{pn}"] = 10 ** pars[f"{self._name}_{pn}"]
 
-        # pars[f"{self.name}_outer_radius"] = (
-        #     pars[f"{self.name}_inner_radius"] + pars[f"{self.name}_delta_radius"]
-        # )
-        # del pars[f"{self.name}_delta_radius"]
-
-        # pars[f"{self._name}_outer_radius"] = (
-        #     pars[f"{self._name}_inner_radius"] * pars[f"{self._name}_radius_ratio"]
-        # )
-        # del pars[f"{self._name}_radius_ratio"]
-
-        # if pars[f"{self._name}_inner_radius"] >= pars[f"{self._name}_outer_radius"]:
-        #     raise np.zeros(x.shape)
-
-        inner_radius = pars[f"{self.name}_inner_radius"]
-        radius_scale = pars[f"{self.name}_radius_scale"]
-
-        pars[f"{self.name}_outer_radius"] = 10 ** (
-            np.log10(inner_radius)
-            + (np.log10(5e4) - np.log10(inner_radius)) * radius_scale
+        pars[f"{self._name}_outer_radius"] = (
+            pars[f"{self._name}_inner_radius"] * pars[f"{self._name}_radius_ratio"]
         )
-        del pars[f"{self.name}_radius_scale"]
+        del pars[f"{self._name}_radius_ratio"]
 
         res = evaluate_model(self._template, x, pars)[0]
 
@@ -198,18 +176,9 @@ def _construct_starters_dict(
 
     for prof in template.disk_profiles:
         inner_radius = starters[f"{prof.name}_inner_radius"][0]
-        radius_scale = starters[f"{prof.name}_radius_scale"][0]
+        radius_ratio = starters[f"{prof.name}_radius_ratio"][0]
 
-        starters[f"{prof.name}_outer_radius"] = (
-            10
-            ** (
-                np.log10(inner_radius)
-                + (np.log10(5e4) - np.log10(inner_radius)) * radius_scale
-            ),
-            0,
-            0,
-            1e6,
-        )
+        starters[f"{prof.name}_outer_radius"] = (inner_radius * radius_ratio, 0, 0, 1e6)
 
     starters = {k: v[0].item() for k, v in starters.items()}
 

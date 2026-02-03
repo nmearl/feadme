@@ -287,7 +287,7 @@ class Profile:
 class Disk(Profile, Writable):
     center: Optional[Parameter] = None
     inner_radius: Optional[Parameter] = None
-    radius_scale: Optional[Parameter] = None
+    radius_ratio: Optional[Parameter] = None
     inclination: Optional[Parameter] = None
     sigma: Optional[Parameter] = None
     q: Optional[Parameter] = None

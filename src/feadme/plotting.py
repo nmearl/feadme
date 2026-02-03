@@ -162,12 +162,11 @@ def plot_model_fit(
         for param in prof.fixed
     }
 
-    # If inner radius and radius scale are both fixed, fix outer radius
+    # If inner radius and radius ratio are both fixed, fix outer radius
     for prof in template.disk_profiles:
-        if prof.inner_radius.fixed and prof.radius_scale.fixed:
+        if prof.inner_radius.fixed and prof.radius_ratio.fixed:
             fixed_vars[f"{prof.name}_outer_radius"] = 10 ** (
-                np.log10(fixed_vars[f"{prof.name}_inner_radius"])
-                * prof.radius_scale.value
+                fixed_vars[f"{prof.name}_inner_radius"] * prof.radius_ratio.value
             )
 
     orphaned_vars = {

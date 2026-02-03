@@ -274,7 +274,7 @@ class BaseSampler(ABC):
 
         # If inner radius and radius scale are both fixed, fix outer radius
         for prof in self.template.disk_profiles:
-            if prof.inner_radius.fixed and prof.radius_scale.fixed:
+            if prof.inner_radius.fixed and prof.radius_ratio.fixed:
                 fixed_vars.append(f"{prof.name}_outer_radius")
 
         # Post-hoc fixed values
