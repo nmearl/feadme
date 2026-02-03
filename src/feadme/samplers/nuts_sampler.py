@@ -52,12 +52,23 @@ class NUTSSampler(BaseSampler):
             posterior_samples, prior_model
         )
 
-        idata = az.from_numpyro(
-            mcmc,
-            posterior_predictive=predictive_post,
-            prior=predictive_prior,
-            log_likelihood=log_likelihood,
-        )
+        if self.sampler_settings.neutra:
+            idata = az.from_dict(
+                posterior={
+                    k: v[None, ...] if v.ndim == 1 else v
+                    for k, v in posterior_samples.items()
+                },
+                posterior_predictive=predictive_post,
+                prior=predictive_prior,
+                log_likelihood=log_likelihood,
+            )
+        else:
+            idata = az.from_numpyro(
+                mcmc,
+                posterior_predictive=predictive_post,
+                prior=predictive_prior,
+                log_likelihood=log_likelihood,
+            )
 
         return idata
 
@@ -101,13 +112,6 @@ class NUTSSampler(BaseSampler):
         plt.close(fig)
 
     def _initialize_svi(self) -> tuple:
-        """
-        Initialize the model using Stochastic Variational Inference (SVI).
-
-        Returns
-        -------
-
-        """
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
@@ -146,7 +150,7 @@ class NUTSSampler(BaseSampler):
         )
         svi_result = svi.run(
             svi_key,
-            25_000,
+            5_000,
             template=self.template,
             wave=self.wave,
             flux=self.flux,
@@ -192,6 +196,9 @@ class NUTSSampler(BaseSampler):
 
         neutra = NeuTraReparam(guide, svi_result.params)
         neutra_model = neutra.reparam(self.model)
+
+        z0 = jnp.zeros((guide.latent_dim,))  # Auto* guides expose latent_dim
+        init_strategy = init_to_value(values={"auto_shared_latent": z0})
 
         return neutra_model, init_strategy, neutra
 
