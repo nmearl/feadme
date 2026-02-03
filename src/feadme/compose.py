@@ -13,7 +13,7 @@ from jax.typing import ArrayLike
 
 from .integrators import integrator
 from .parser import Distribution, Template, Shape, Parameter
-from .parameterizers.basic import sample_param
+from .parameterizers.auto import sample_param
 from .parameterizers.auto import create_reparam_config
 
 ERR = float(np.finfo(np.float32).tiny)

@@ -253,8 +253,8 @@ def perform_sampling(config: Config):
         )
 
     # Initialize the sampler with the model and configuration
-    prior_model = construct_model(template, auto_reparam=False)
-    model = construct_model(template, auto_reparam=False)
+    prior_model = construct_model(template, auto_reparam=True)
+    model = construct_model(template, auto_reparam=True)
 
     if config.sampler_settings.sampler_type == "nuts":
         sampler = NUTSSampler(model=model, config=config, prior_model=prior_model)
@@ -390,7 +390,7 @@ def nuts_cmd(
     template = Template.from_json(Path(template_path))
 
     # Load the data given the template's redshift and mask
-    data = load_data(data_path, template)
+    data = load_data(data_path, template, rebin=False)
 
     # If pre-fitting is enabled, run the pre-fit to initialize parameters
     if experimental_prefit:

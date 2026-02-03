@@ -5,21 +5,24 @@ import numpyro
 import numpyro.distributions as dist
 from numpyro.distributions import transforms as T
 from numpyro.infer.reparam import TransformReparam
+
 from ..parser import Distribution, Parameter
 
 TAU = 2.0 * jnp.pi
 
 
 def create_reparam_config(template) -> Dict[str, Any]:
+    """
+    Reparam all non-circular independent parameters with TransformReparam.
+    (Circular params are handled explicitly in sampling.)
+    """
     reparam_config: Dict[str, Any] = {}
 
     for prof in template.disk_profiles + template.line_profiles:
         for param in prof.independent:
             name = param.qualified_name
-
             if param.circular:
                 continue
-
             reparam_config[name] = TransformReparam()
 
     return reparam_config
@@ -42,20 +45,37 @@ def _mean_std_to_lognormal_params(
 
 
 def _uniform_affine(low: float, high: float) -> dist.Distribution:
-    # u ~ Uniform(0,1), x = low + (high-low)*u
+    """
+    Exact Uniform(low, high) induced prior via unconstrained latent:
+      z ~ Logistic(0,1)
+      u = sigmoid(z) ~ Uniform(0,1)  (exact)
+      x = low + (high-low)*u
+    """
+    span = high - low
     return dist.TransformedDistribution(
-        dist.Uniform(0.0, 1.0),
-        T.AffineTransform(loc=low, scale=(high - low)),
+        dist.Logistic(0.0, 1.0),
+        [
+            T.SigmoidTransform(),
+            T.AffineTransform(loc=low, scale=span),
+        ],
     )
 
 
 def _loguniform_affine(low: float, high: float) -> dist.Distribution:
-    # u ~ Uniform(0,1), z = loglow + (loghigh-loglow)*u, x = exp(z)
+    """
+    Exact LogUniform(low, high) induced prior via unconstrained latent:
+      z ~ Logistic(0,1)
+      u = sigmoid(z) ~ Uniform(0,1)  (exact)
+      logx = loglow + (loghigh-loglow)*u
+      x = exp(logx)
+    """
     loglow, loghigh = jnp.log(low), jnp.log(high)
+    span = loghigh - loglow
     return dist.TransformedDistribution(
-        dist.Uniform(0.0, 1.0),
+        dist.Logistic(0.0, 1.0),
         [
-            T.AffineTransform(loc=loglow, scale=(loghigh - loglow)),
+            T.SigmoidTransform(),
+            T.AffineTransform(loc=loglow, scale=span),
             T.ExpTransform(),
         ],
     )
@@ -107,7 +127,7 @@ def _bounded_lognormal_mean_std(
     log_low, log_high = jnp.log(low), jnp.log(high)
     span = log_high - log_low
 
-    # Optional: guard against absurdly wide implied sigma in log-space (helps saturation).
+    # Guard against absurdly wide implied sigma in log-space (helps saturation).
     sigma_log = jnp.clip(sigma_log, 1e-3, 5.0)
 
     return dist.TransformedDistribution(
@@ -129,7 +149,10 @@ def _unbounded_lognormal_mean_std(mean: float, std: float) -> dist.Distribution:
     sigma_log = jnp.clip(sigma_log, 1e-6, 10.0)
     return dist.TransformedDistribution(
         dist.Normal(0.0, 1.0),
-        [T.AffineTransform(loc=mu_log, scale=sigma_log), T.ExpTransform()],
+        [
+            T.AffineTransform(loc=mu_log, scale=sigma_log),
+            T.ExpTransform(),
+        ],
     )
 
 
@@ -143,7 +166,6 @@ def _sample_circular(samp_name: str, low: float, high: float) -> jnp.ndarray:
     xy = numpyro.sample(f"{samp_name}_base", dist.Normal(0.0, 1.0).expand([2]))
     theta = jnp.arctan2(xy[1], xy[0])  # in (-pi, pi]
     theta = jnp.mod(theta, TAU)  # [0, 2pi)
-
     numpyro.deterministic(samp_name, theta)
     return theta
 
@@ -151,6 +173,15 @@ def _sample_circular(samp_name: str, low: float, high: float) -> jnp.ndarray:
 def sample_param(samp_name: str, param: Parameter) -> jnp.ndarray:
     if param.circular:
         return _sample_circular(samp_name, param.low, param.high)
+
+    # Isotropic inclination prior: uniform in mu = cos(i) over [cos(high), cos(low)]
+    # Then i = arccos(mu), where i=0 face-on, i=pi/2 edge-on.
+    if param.name == "inclination":
+        mu_min = jnp.cos(param.high)  # cos(i_max)
+        mu_max = jnp.cos(param.low)  # cos(i_min)
+        mu = numpyro.sample(f"{samp_name}_base", _uniform_affine(mu_min, mu_max))
+        incl = jnp.arccos(mu)
+        return numpyro.deterministic(samp_name, incl)
 
     if param.distribution == Distribution.UNIFORM:
         return numpyro.sample(samp_name, _uniform_affine(param.low, param.high))
