@@ -13,7 +13,7 @@ from jax.typing import ArrayLike
 
 from .integrators import integrator
 from .parser import Distribution, Template, Shape, Parameter
-from .parameterizers.auto import sample_param
+from .parameterizers.basic import sample_param
 from .parameterizers.auto import create_reparam_config
 
 ERR = float(np.finfo(np.float32).tiny)
@@ -98,7 +98,6 @@ def _compute_disk_flux_vectorized(
     offset: ArrayLike,
     delta_radius: ArrayLike = jnp.array([]),
     radius_ratio: ArrayLike = jnp.array([]),
-    radius_scale: ArrayLike = jnp.array([]),
 ) -> ArrayLike:
     """
     Compute the disk flux for multiple disk profiles in a vectorized manner.
@@ -148,9 +147,9 @@ def _compute_disk_flux_vectorized(
         # res_nu = res_X / jac
 
         # Check for invalid results
-        normalized_res = res_X / jnp.sqrt(jnp.mean(res_X**2) + EPS)
+        # normalized_res = res_X / jnp.sqrt(jnp.mean(res_X**2) + EPS)
 
-        return normalized_res * scale_i + offset_i
+        return res_X * scale_i + offset_i
 
     prof_disk_flux = jax.vmap(_compute_single, in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0))(
         center,
@@ -187,7 +186,7 @@ def disk_model(
             "center",
             "inner_radius",
             "outer_radius",
-            "radius_scale",
+            "radius_ratio",
             "sigma",
             "inclination",
             "q",
@@ -226,15 +225,11 @@ def disk_model(
         # Define outer radius from inner radius and ratio
         samp_name = f"{prof.name}_outer_radius"
         inner_radius = disk_arrs["inner_radius"][i]
-        radius_scale = disk_arrs["radius_scale"][i]
+        radius_ratio = disk_arrs["radius_ratio"][i]
 
         param_samp = numpyro.deterministic(
             samp_name,
-            10
-            ** (
-                jnp.log10(inner_radius)
-                + (jnp.log10(5e4) - jnp.log10(inner_radius)) * radius_scale
-            ),
+            inner_radius * radius_ratio,
         )
         param_mods[samp_name] = param_samp
         disk_arrs["outer_radius"] = disk_arrs["outer_radius"].at[i].set(param_samp)
