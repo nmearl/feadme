@@ -226,12 +226,13 @@ def integrand(
 
     # exponent = -one_plus_X_minus_D_sq * (nu0 * nu0) / (2.0 * D_sq * sigma * sigma)
     exponent = -one_plus_X_minus_D_sq / (2 * D**2) * (c_kms / sigma) ** 2
+    # jax.debug.print("{}", jnp.sum(exponent < -37.0) / exponent.size)
     exponent = jnp.maximum(exponent, -37.0)
 
     # Pre-compute constant
-    const = 1.0 / (jnp.sqrt(2.0 * jnp.pi) * sigma)
-    # const = c_kms / (jnp.sqrt(2.0 * jnp.pi) * sigma)
-    I_nu = jnp.power(xi, -q) * const * jnp.exp(exponent)
+    # cc = 1.0 / (jnp.sqrt(2.0 * jnp.pi) * sigma)
+    cc = c_kms / (jnp.sqrt(2.0 * jnp.pi) * sigma)
+    I_nu = jnp.power(xi, -q) * cc * jnp.exp(exponent)
 
     # Psi
     Psi_ = 1.0 + xi_recip * one_minus_sini_cosphi / one_plus_sini_cosphi
