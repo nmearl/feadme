@@ -8,6 +8,7 @@ import loguru
 import matplotlib.pyplot as plt
 import optax
 from jax.typing import ArrayLike
+import jax
 from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO
 from numpyro.infer import init_to_median, init_to_value
 from numpyro.infer.autoguide import (
@@ -35,12 +36,21 @@ class NUTSSampler(BaseSampler):
         self, mcmc: MCMC, neutra: NeuTraReparam = None
     ) -> dict[str, ArrayLike]:
         if self.sampler_settings.neutra and neutra is not None:
-            zs = mcmc.get_samples()["auto_shared_latent"]
-            posterior_samples = neutra.transform_sample(zs)
-        else:
-            posterior_samples = mcmc.get_samples()
+            # Get samples WITH chain structure preserved
+            zs = mcmc.get_samples(group_by_chain=True)["auto_shared_latent"]
+            # zs shape: (num_chains, num_samples, latent_dim)
 
-        return posterior_samples
+            # Transform each chain separately
+            def transform_chain(z_chain):
+                return neutra.transform_sample(z_chain)
+
+            # vmap over chains
+            posterior_samples = jax.vmap(transform_chain)(zs)
+
+            # Flatten back: each param should be (num_chains, num_samples, ...)
+            return {k: v for k, v in posterior_samples.items()}
+        else:
+            return mcmc.get_samples(group_by_chain=True)
 
     def _compose_inference_data(
         self,
@@ -48,27 +58,40 @@ class NUTSSampler(BaseSampler):
         posterior_samples: dict[str, ArrayLike],
         prior_model: Callable = None,
     ) -> az.InferenceData:
+        # Flatten for predictive (it expects combined samples)
+        flat_samples = {
+            k: v.reshape(-1, *v.shape[2:]) if v.ndim > 2 else v.reshape(-1)
+            for k, v in posterior_samples.items()
+        }
+
         predictive_post, predictive_prior, log_likelihood = self._inference_data(
-            posterior_samples, prior_model
+            flat_samples, prior_model
         )
 
         if self.sampler_settings.neutra:
+            # Reshape predictive outputs back to (chains, draws, ...)
+            num_chains = posterior_samples[list(posterior_samples.keys())[0]].shape[0]
+            num_draws = posterior_samples[list(posterior_samples.keys())[0]].shape[1]
+
+            predictive_post_reshaped = {
+                k: v.reshape(num_chains, num_draws, -1)
+                for k, v in predictive_post.items()
+                if k in ["total_flux", "disk_flux", "line_flux"]
+            }
+
+            log_likelihood_reshaped = {
+                k: v.reshape(num_chains, num_draws, -1)
+                for k, v in log_likelihood.items()
+            }
+
             idata = az.from_dict(
-                posterior={
-                    k: v[None, ...] if v.ndim == 1 else v
-                    for k, v in posterior_samples.items()
-                },
-                posterior_predictive=predictive_post,
+                posterior=posterior_samples,
+                posterior_predictive=predictive_post_reshaped,
                 prior=predictive_prior,
-                log_likelihood=log_likelihood,
+                log_likelihood=log_likelihood_reshaped,
             )
         else:
-            idata = az.from_numpyro(
-                mcmc,
-                posterior_predictive=predictive_post,
-                prior=predictive_prior,
-                log_likelihood=log_likelihood,
-            )
+            idata = az.from_numpyro(...)
 
         return idata
 
@@ -93,9 +116,8 @@ class NUTSSampler(BaseSampler):
         )
 
         fig, ax = plt.subplots()
-        tot_err = jnp.sqrt(
-            self.flux_err**2 + self.flux**2 * jnp.exp(2 * param_mods["white_noise"])
-        )
+        tot_err = self.flux_err * jnp.exp(param_mods["white_noise"])
+
         ax.errorbar(
             self.wave, self.flux, yerr=tot_err, fmt="o", color="grey", alpha=0.5
         )
@@ -150,7 +172,7 @@ class NUTSSampler(BaseSampler):
         )
         svi_result = svi.run(
             svi_key,
-            5_000,
+            25_000,
             template=self.template,
             wave=self.wave,
             flux=self.flux,
@@ -197,15 +219,26 @@ class NUTSSampler(BaseSampler):
         neutra = NeuTraReparam(guide, svi_result.params)
         neutra_model = neutra.reparam(self.model)
 
-        z0 = jnp.zeros((guide.latent_dim,))  # Auto* guides expose latent_dim
+        # The guide learns to map standard normal -> parameters
+        z0 = jnp.zeros((guide.latent_dim,))
+
         init_strategy = init_to_value(values={"auto_shared_latent": z0})
 
         return neutra_model, init_strategy, neutra
 
     def _initialize_basic(self) -> tuple:
+        starters = lsq_model_fitter(
+            self.template,
+            self._data,
+            out_dir=f"{self._config.output_path}",
+        )[0]
+
+        starters = {k: float(v) for k, v in starters.items()}
+
         return (
             self.model,
-            init_to_median(num_samples=1000),
+            # init_to_median(num_samples=1000),
+            init_to_value(values=starters),
             None,
         )
 
@@ -257,7 +290,7 @@ class NUTSSampler(BaseSampler):
         posterior_samples = self.get_posterior_samples(mcmc, neutra)
 
         self._idata = self._compose_inference_data(
-            mcmc, posterior_samples, prior_model=model
+            mcmc, posterior_samples, prior_model=self._prior_model
         )
 
         # Report treedepth statistics

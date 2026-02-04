@@ -43,6 +43,7 @@ class DiskProfileModel(Fittable1DModel):
                 "delta_radius",
                 "sigma",
                 "radius_ratio",
+                "scale",
             ]:
                 pars[f"{self._name}_{pn}"] = 10 ** pars[f"{self._name}_{pn}"]
 
@@ -160,6 +161,7 @@ def _construct_starters_dict(
                 "sigma",
                 "vel_width",
                 "radius_ratio",
+                "scale",
             ]:
                 upv = 10**upv
                 pv = unp.nominal_values(upv)
@@ -206,6 +208,15 @@ def _construct_starters_dict(
     starters.update(fixed_vars)
     starters.update(shared_vars)
     starters.update(orphaned_vars)
+
+    starters.update(
+        {
+            f"{prof.name}_inclination_base": np.cos(
+                starters[f"{prof.name}_inclination"]
+            )
+            for prof in template.disk_profiles
+        }
+    )
 
     return starters
 
@@ -278,6 +289,14 @@ def _plot_fit_results(
 
         txt += f"{pn:15}: {pv:.3f} ({start_val:.3f}) \n"  # ± {pe:.3f}\n"
 
+    txt = "\n".join(
+        [
+            f"{pn:15}: {pv:.3f}"
+            for pn, pv in starters.items()
+            if pn.startswith("halpha_disk_")
+        ]
+    )
+
     ax.text(
         0.05,
         0.95,
@@ -289,7 +308,7 @@ def _plot_fit_results(
         # bbox=dict(facecolor="white", alpha=0.5, edgecolor="black"),
     )
 
-    ax.legend()
+    # ax.legend()
     fig.savefig(Path(out_dir or "") / "lsq_model_fit.png")
 
     if not show_plot:
@@ -344,6 +363,7 @@ def lsq_model_fitter(
                 "delta_radius",
                 "sigma",
                 "radius_ratio",
+                "scale",
             ]:
                 param_low = np.log10(param_low)
                 param_high = np.log10(param_high)
@@ -364,6 +384,7 @@ def lsq_model_fitter(
                         "delta_radius",
                         "sigma",
                         "radius_ratio",
+                        "scale",
                     ]
                     else param_val
                 )
