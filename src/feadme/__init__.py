@@ -22,7 +22,7 @@ logger.add(
 )
 
 numpyro.set_host_device_count(int(os.getenv("FORCE_DEVICE_COUNT", "1")))
-# numpyro.enable_x64()
+numpyro.enable_x64()
 
 import jax
 

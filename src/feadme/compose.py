@@ -147,9 +147,11 @@ def _compute_disk_flux_vectorized(
         # res_nu = res_X / jac
 
         # Check for invalid results
-        # normalized_res = res_X / jnp.sqrt(jnp.mean(res_X**2) + EPS)
+        # normalized_res = res_X / jnp.max(res_X)  # jnp.sqrt(jnp.mean(res_X**2) + EPS)
+        # return res_X * scale_i + offset_i
 
-        return res_X * scale_i + offset_i
+        norm = jax.lax.stop_gradient(jnp.sqrt(jnp.mean(res_X**2)))
+        return (res_X / norm) * scale_i + offset_i
 
     prof_disk_flux = jax.vmap(_compute_single, in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0))(
         center,
