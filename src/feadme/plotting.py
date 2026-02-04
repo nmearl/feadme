@@ -130,7 +130,7 @@ def plot_model_fit(
     except KeyError:
         white_noise = template.white_noise.value
 
-    total_error = jnp.sqrt(flux_err**2 + flux**2 * jnp.exp(2 * white_noise))
+    total_error = flux_err * jnp.exp(white_noise)
 
     fig, ax = plt.subplots(layout="constrained")
 
