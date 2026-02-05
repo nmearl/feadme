@@ -91,7 +91,12 @@ class NUTSSampler(BaseSampler):
                 log_likelihood=log_likelihood_reshaped,
             )
         else:
-            idata = az.from_numpyro(...)
+            idata = az.from_numpyro(
+                mcmc,
+                posterior_predictive=predictive_post,
+                prior=predictive_prior,
+                log_likelihood=log_likelihood,
+            )
 
         return idata
 
@@ -147,9 +152,9 @@ class NUTSSampler(BaseSampler):
         # Define the guide
         # guide = AutoBNAFNormal(
         #     self.model,
-        #     hidden_factors=[4],
-        #     num_flows=1,
-        #     init_loc_fn=init_to_median(num_samples=1000),
+        #     hidden_factors=[8, 8],
+        #     num_flows=2,
+        #     init_loc_fn=init_to_value(values=starters),
         # )
         guide = AutoMultivariateNormal(
             self.model,
@@ -219,7 +224,13 @@ class NUTSSampler(BaseSampler):
         neutra = NeuTraReparam(guide, svi_result.params)
         neutra_model = neutra.reparam(self.model)
 
-        # The guide learns to map standard normal -> parameters
+        # Sample latent z directly from standard normal
+        init_key, _ = random.split(random.PRNGKey(int(time.time() * 1000) % 2**32))
+
+        # Use small random perturbation around zero
+        # z0 = random.normal(init_key, (guide.latent_dim,)) * 0.1
+
+        # Just use zeros (let warmup explore)
         z0 = jnp.zeros((guide.latent_dim,))
 
         init_strategy = init_to_value(values={"auto_shared_latent": z0})
@@ -283,7 +294,7 @@ class NUTSSampler(BaseSampler):
             wave=self.wave,
             flux=self.flux,
             flux_err=self.flux_err,
-            extra_fields=("num_steps",),
+            extra_fields=("num_steps", "diverging"),
         )
 
         # Get posterior samples
@@ -293,16 +304,17 @@ class NUTSSampler(BaseSampler):
             mcmc, posterior_samples, prior_model=self._prior_model
         )
 
-        # Report treedepth statistics
-        def report_treedepth(mcmc, nuts_kernel):
-            info = mcmc.get_extra_fields()
-            num_steps = info["num_steps"]
-            tree_depth = jnp.log2(num_steps).astype(int) + 1
-            max_depth = nuts_kernel._max_tree_depth
-            frac = (tree_depth >= max_depth).mean()
-            logger.info(
-                f"Treedepth hits: {100*frac:.2f}% at depth {max_depth} "
-                f"({jnp.min(tree_depth)}, {jnp.max(tree_depth)})"
-            )
+        # Report diagnostics immediately after sampling
+        extra = mcmc.get_extra_fields()
+        num_steps = extra["num_steps"]
+        tree_depth = jnp.log2(num_steps).astype(int) + 1
+        max_depth = kernel._max_tree_depth
 
-        report_treedepth(mcmc, kernel)
+        divergences = extra["diverging"].sum()
+        div_rate = 100 * divergences / extra["diverging"].size
+        depth_hits = 100 * (tree_depth >= max_depth).mean()
+
+        logger.info(
+            f"Treedepth: {depth_hits:.1f}% at max={max_depth} | "
+            f"Divergences: {int(divergences)} ({div_rate:.2f}%)"
+        )

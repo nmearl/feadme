@@ -58,7 +58,7 @@ class SVISampler(BaseSampler):
         starters = lsq_model_fitter(
             self.template,
             self._data,
-            # out_dir=f"{self._config.output_path}",
+            out_dir=f"{self._config.output_path}",
         )[0]
 
         if guide_type == "bnaf":
