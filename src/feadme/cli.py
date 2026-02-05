@@ -54,6 +54,12 @@ def common_options(f):
         default=False,
         help="Run an experimental pre-fit to initialize parameters.",
     )
+    @click.option(
+        "--rebin",
+        type=float,
+        default=None,
+        help="Rebin the spectrum to a specified velocity resolution (in km/s).",
+    )
     @wraps(f)
     def wrapper(*args, **kwargs):
         return f(*args, **kwargs)
@@ -61,7 +67,7 @@ def common_options(f):
     return wrapper
 
 
-def load_data(data_path: str, template: Template, rebin: bool = False) -> Data:
+def load_data(data_path: str, template: Template, rebin: float | None = None) -> Data:
     """
     Load data from a CSV file and adjust the wavelength based on the
     template's redshift.
@@ -88,9 +94,9 @@ def load_data(data_path: str, template: Template, rebin: bool = False) -> Data:
         data_tab["flux_err"].value,
     )
 
-    if rebin:
-        wave, flux, flux_err = rebin_spectrum(wave, flux, flux_err, dv=100)
-        # Log statement about size before/after rebinning
+    if rebin is not None:
+        wave, flux, flux_err = rebin_spectrum(wave, flux, flux_err, dv=rebin)
+
         logger.info(
             f"Rebinned spectrum from {len(data_tab)} to {len(wave)} points (dv=100 km/s)."
         )
@@ -290,14 +296,6 @@ def perform_sampling(config: Config):
 
     logger.info("Displaying sampler results:\n" + sampler.summary.to_markdown())
 
-    try:
-        logger.info(
-            f"Total divergences: {sampler._get_divergences()[0]} | "
-            f"Rate: {sampler._get_divergences()[1]:.4f}%"
-        )
-    except:
-        pass
-
     if not results_exist:
         sampler.write_results()
 
@@ -383,6 +381,7 @@ def nuts_cmd(
     neutra: bool,
     progress_bar: bool,
     experimental_prefit: bool,
+    rebin: float | None,
 ):
     """
     Fit to spectral data using the NUTS sampler.
@@ -390,7 +389,7 @@ def nuts_cmd(
     template = Template.from_json(Path(template_path))
 
     # Load the data given the template's redshift and mask
-    data = load_data(data_path, template, rebin=False)
+    data = load_data(data_path, template, rebin=rebin)
 
     # If pre-fitting is enabled, run the pre-fit to initialize parameters
     if experimental_prefit:
@@ -502,6 +501,7 @@ def svi_cmd(
     guide_type: str,
     progress_bar: bool,
     experimental_prefit: bool,
+    rebin: float | None,
 ):
     """
     Fit to spectral data using Stochastic Variational Inference (SVI).
@@ -509,7 +509,7 @@ def svi_cmd(
     template = Template.from_json(Path(template_path))
 
     # Load the data given the template's redshift and mask
-    data = load_data(data_path, template)
+    data = load_data(data_path, template, rebin=rebin)
 
     # If pre-fitting is enabled, run the pre-fit to initialize parameters
     if experimental_prefit:
