@@ -291,7 +291,8 @@ class BaseSampler(ABC):
     def _get_nuisance_vars(self) -> list[str]:
         nuisance_vars = [
             x
-            for x in self._idata.posterior.data_vars
+            for x in list(self._idata.posterior.data_vars)
+            + list(self._idata.prior.data_vars)
             if x.endswith("_flux")
             or x.endswith("_base")
             or x.endswith("_unwrapped")
@@ -324,13 +325,17 @@ class BaseSampler(ABC):
 
         ignored_vars = [
             x
-            for x in self._idata.posterior.data_vars
+            for x in list(self._idata.posterior.data_vars)
+            + list(self._idata.prior.data_vars)
             if x in nuisance_vars + fixed_vars + orphaned_vars
         ]
 
         if include_shared:
             ignored_vars += [
-                x for x in self._idata.posterior.data_vars if x in shared_vars
+                x
+                for x in list(self._idata.posterior.data_vars)
+                + list(self._idata.prior.data_vars)
+                if x in shared_vars
             ]
 
         return ignored_vars

@@ -79,7 +79,16 @@ def plot_trace(
         The path where the trace plot will be saved.
     """
     var_names = [var for var in idata.posterior.data_vars if var not in ignored_vars]
-    az.plot_trace(idata, var_names=var_names)
+
+    fig, axes = plt.subplots(
+        nrows=len(var_names),
+        ncols=2,
+        figsize=(10, 3 * len(var_names)),
+        layout="constrained",
+    )
+
+    az.plot_trace(idata, var_names=var_names, axes=axes)
+
     plt.savefig(f"{output_path}/trace_plot.png")
     plt.close()
 
