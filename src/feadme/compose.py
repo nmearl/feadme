@@ -147,11 +147,11 @@ def _compute_disk_flux_vectorized(
         # res_nu = res_X / jac
 
         # Check for invalid results
-        # normalized_res = res_X / jnp.max(res_X)  # jnp.sqrt(jnp.mean(res_X**2) + EPS)
-        # return res_X * scale_i + offset_i
+        normalized_res = res_X / jnp.sqrt(jnp.mean(res_X**2))
+        return normalized_res * scale_i + offset_i
 
-        norm = jax.lax.stop_gradient(jnp.sqrt(jnp.mean(res_X**2)))
-        return (res_X / norm) * scale_i + offset_i
+        # norm = jax.lax.stop_gradient(jnp.sqrt(jnp.mean(res_X**2)))
+        # return (res_X / norm) * scale_i + offset_i
 
     prof_disk_flux = jax.vmap(_compute_single, in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0))(
         center,
@@ -364,7 +364,15 @@ def evaluate_model(template: Template, wave: ArrayLike, param_mods: Dict[str, fl
                 ]
             ),
             "shape": jnp.array(
-                [prof.shape == Shape.GAUSSIAN for prof in template.line_profiles]
+                [
+                    (
+                        param_mods[f"{prof.name}_shape"]
+                        if f"{prof.name}_shape" in param_mods
+                        else prof.shape == Shape.GAUSSIAN
+                    )
+                    for prof in template.line_profiles
+                    if f"{prof.name}_center" in param_mods
+                ]
             ),
         }
 
