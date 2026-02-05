@@ -66,16 +66,22 @@ def sample_param(samp_name: str, param: Parameter) -> ArrayLike:
     if param.name == "inclination":
         mu_min = jnp.cos(param.high)  # cos(i_max)
         mu_max = jnp.cos(param.low)  # cos(i_min)
-        mu = _logit_uniform(f"{samp_name}_base", mu_min, mu_max)
+        # mu = _logit_uniform(f"{samp_name}_base", mu_min, mu_max)
+        mu = numpyro.sample(f"{samp_name}_base", dist.Uniform(mu_min, mu_max))
         incl = jnp.arccos(mu)
 
         return numpyro.deterministic(samp_name, incl)
 
     if param.distribution == Distribution.UNIFORM:
-        param_samp = _logit_uniform(samp_name, param.low, param.high)
+        # param_samp = _logit_uniform(samp_name, param.low, param.high)
+        param_samp = numpyro.sample(samp_name, dist.Uniform(param.low, param.high))
 
     elif param.distribution == Distribution.LOG_UNIFORM:
-        param_samp = _logit_loguniform(samp_name, param.low, param.high)
+        # param_samp = _logit_loguniform(samp_name, param.low, param.high)
+        param_samp = numpyro.sample(
+            samp_name,
+            dist.LogUniform(param.low, param.high),
+        )
 
     elif param.distribution == Distribution.NORMAL:
         param_samp = numpyro.sample(
