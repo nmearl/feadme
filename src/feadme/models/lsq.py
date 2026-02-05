@@ -5,12 +5,19 @@ from astropy.modeling import Fittable1DModel, Parameter
 from astropy.modeling.fitting import (
     TRFLSQFitter,
     model_to_fit_params,
+    LMLSQFitter,
+    LevMarLSQFitter,
+    DogBoxLSQFitter,
 )
 from astropy.modeling.models import Const1D, Shift, RedshiftScaleFactor
 from pathlib import Path
 import astropy.uncertainty as unc
 
-from ..compose import evaluate_model
+from ..compose import (
+    evaluate_model,
+    _compute_line_flux_vectorized,
+    _compute_disk_flux_vectorized,
+)
 from ..parser import Template, Data
 
 FLOAT_EPSILON = 1e-6
@@ -35,7 +42,7 @@ class DiskProfileModel(Fittable1DModel):
     def evaluate(self, x, *args):
         pars = {}
         for i, pn in enumerate(self.param_names):
-            pars[f"{self._name}_{pn}"] = args[i].item()
+            pars[f"{pn}"] = np.atleast_1d(args[i])
 
             if pn in [
                 "inner_radius",
@@ -45,21 +52,17 @@ class DiskProfileModel(Fittable1DModel):
                 "radius_ratio",
                 "scale",
             ]:
-                pars[f"{self._name}_{pn}"] = 10 ** pars[f"{self._name}_{pn}"]
+                pars[f"{pn}"] = 10 ** pars[f"{pn}"]
 
-        pars[f"{self._name}_outer_radius"] = (
-            pars[f"{self._name}_inner_radius"] * pars[f"{self._name}_radius_ratio"]
-        )
-        del pars[f"{self._name}_radius_ratio"]
+        pars["outer_radius"] = pars["inner_radius"] * pars["radius_ratio"]
+        del pars["radius_ratio"]
 
-        res = evaluate_model(self._template, x, pars)[0]
+        res = _compute_disk_flux_vectorized(x, **pars)
 
-        if np.any(np.isnan(list(pars.values()))) or np.any(
-            np.isinf(list(pars.values()))
-        ):
+        if not np.all(np.isfinite(list(pars.values()))):
             print(f"Invalid parameters for {self.name}: {pars}")
 
-        if np.any(np.isnan(res)) or np.any(np.isinf(res)):
+        if not np.all(np.isfinite(res)):
             print(f"Invalid model evaluation for {self.name}")
             from pprint import pprint
 
@@ -81,25 +84,21 @@ class LineProfileModel(Fittable1DModel):
         pars = {}
 
         for i, pn in enumerate(self.param_names):
-            pars[f"{self.name}_{pn}"] = args[i].squeeze()
+            pars[f"{pn}"] = np.atleast_1d(args[i])
 
             if pn in ["vel_width"]:
-                pars[f"{self._name}_{pn}"] = 10 ** pars[f"{self._name}_{pn}"]
+                pars[f"{pn}"] = 10 ** pars[f"{pn}"]
 
-        res = evaluate_model(self._template, x, pars)[0]
+        res = _compute_line_flux_vectorized(x, **pars, shape=np.array([1]))
 
-        if np.any(np.isnan(list(pars.values()))) or np.any(
-            np.isinf(list(pars.values()))
-        ):
+        if not np.all(np.isfinite(list(pars.values()))):
             print(f"Invalid parameters for {self.name}: {pars}")
-            raise ValueError()
 
-        if np.any(np.isnan(res)) or np.any(np.isinf(res)):
+        if not np.all(np.isfinite(res)):
             print(f"Invalid model evaluation for {self.name}")
             from pprint import pprint
 
             pprint(pars)
-            raise ValueError()
 
         return res
 
@@ -289,14 +288,6 @@ def _plot_fit_results(
 
         txt += f"{pn:15}: {pv:.3f} ({start_val:.3f}) \n"  # ± {pe:.3f}\n"
 
-    txt = "\n".join(
-        [
-            f"{pn:15}: {pv:.3f}"
-            for pn, pv in starters.items()
-            if pn.startswith("halpha_disk_")
-        ]
-    )
-
     ax.text(
         0.05,
         0.95,
@@ -482,7 +473,14 @@ def lsq_model_fitter(
 
     fitter = TRFLSQFitter(calc_uncertainties=True)
 
-    fit_mod = fitter(full_model, rest_wave, flux, weights=1 / flux_err, maxiter=10000)
+    fit_mod = fitter(
+        full_model,
+        rest_wave,
+        flux,
+        maxiter=10_000,
+        weights=1 / flux_err,
+        filter_non_finite=True,
+    )
     cov = fitter.fit_info["param_cov"]
 
     # Parameter uncertainties = sqrt of diagonal

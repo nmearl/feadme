@@ -226,7 +226,6 @@ def integrand(
 
     # exponent = -one_plus_X_minus_D_sq * (nu0 * nu0) / (2.0 * D_sq * sigma * sigma)
     exponent = -one_plus_X_minus_D_sq / (2 * D**2) * (c_kms / sigma) ** 2
-    # jax.debug.print("{}", jnp.sum(exponent < -37.0) / exponent.size)
     exponent = jnp.maximum(exponent, -37.0)
 
     # Pre-compute constant
