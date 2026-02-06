@@ -210,10 +210,32 @@ def disk_model(
     )
 
     for i, prof in enumerate(template.disk_profiles):
+        # Explicitly handle inner and outer radii
+        rin_name = prof.inner_radius.qualified_name
+        rin_samp = sample_param(
+            rin_name, prof.inner_radius, prof.inner_radius.low, prof.inner_radius.high
+        )
+        param_mods[rin_name] = rin_samp
+        disk_arrs[prof.inner_radius.name] = (
+            disk_arrs[prof.inner_radius.name].at[i].set(rin_samp)
+        )
+
+        rout_name = prof.outer_radius.qualified_name
+        rout_samp = sample_param(
+            rout_name, prof.outer_radius, rin_samp, prof.outer_radius.high
+        )
+        param_mods[rin_name] = rout_samp
+        disk_arrs[prof.outer_radius.name] = (
+            disk_arrs[prof.outer_radius.name].at[i].set(rout_samp)
+        )
+
         # Sample independent parameters
         for param in prof.independent:
+            if "radius" in param.name:
+                continue
+
             samp_name = param.qualified_name
-            param_samp = sample_param(samp_name, param)
+            param_samp = sample_param(samp_name, param, param.low, param.high)
             param_mods[samp_name] = param_samp
             disk_arrs[param.name] = disk_arrs[param.name].at[i].set(param_samp)
 
@@ -224,23 +246,11 @@ def disk_model(
             param_mods[samp_name] = param_samp
             disk_arrs[param.name] = disk_arrs[param.name].at[i].set(param_samp)
 
-        # Define outer radius from inner radius and ratio
-        samp_name = f"{prof.name}_outer_radius"
-        inner_radius = disk_arrs["inner_radius"][i]
-        radius_ratio = disk_arrs["radius_ratio"][i]
-
-        param_samp = numpyro.deterministic(
-            samp_name,
-            inner_radius * radius_ratio,
-        )
-        param_mods[samp_name] = param_samp
-        disk_arrs["outer_radius"] = disk_arrs["outer_radius"].at[i].set(param_samp)
-
     for i, prof in enumerate(template.line_profiles):
         # Sample independent parameters
         for param in prof.independent:
             samp_name = param.qualified_name
-            param_samp = sample_param(samp_name, param)
+            param_samp = sample_param(samp_name, param, param.low, param.high)
             param_mods[samp_name] = param_samp
             line_arrs[param.name] = line_arrs[param.name].at[i].set(param_samp)
 
@@ -278,13 +288,20 @@ def disk_model(
     if template.white_noise.fixed:
         white_noise = numpyro.deterministic("white_noise", template.white_noise.value)
     else:
-        white_noise = sample_param("white_noise", template.white_noise)
+        white_noise = sample_param(
+            "white_noise",
+            template.white_noise,
+            template.white_noise.low,
+            template.white_noise.high,
+        )
 
     # Sample redshift
     if template.redshift.fixed:
         redshift = numpyro.deterministic("redshift", template.redshift.value)
     else:
-        redshift = sample_param("redshift", template.redshift)
+        redshift = sample_param(
+            "redshift", template.redshift, template.redshift.low, template.redshift.high
+        )
 
     rest_wave = wave / (1 + redshift)
 

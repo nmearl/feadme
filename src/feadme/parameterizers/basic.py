@@ -55,7 +55,12 @@ def _logit_loguniform(
     return numpyro.deterministic(name, x)
 
 
-def sample_param(samp_name: str, param: Parameter) -> ArrayLike:
+def sample_param(
+    samp_name: str,
+    param: Parameter,
+    lower_bound: float,
+    upper_bound: float,
+) -> ArrayLike:
     if param.circular:
         circ_x_base = numpyro.sample(f"{samp_name}_x_base", dist.Normal(0.0, 1.0))
         circ_y_base = numpyro.sample(f"{samp_name}_y_base", dist.Normal(0.0, 1.0))
@@ -64,8 +69,8 @@ def sample_param(samp_name: str, param: Parameter) -> ArrayLike:
         )
 
     if param.name == "inclination":
-        mu_min = jnp.cos(param.high)  # cos(i_max)
-        mu_max = jnp.cos(param.low)  # cos(i_min)
+        mu_min = jnp.cos(upper_bound)  # cos(i_max)
+        mu_max = jnp.cos(lower_bound)  # cos(i_min)
         # mu = _logit_uniform(f"{samp_name}_base", mu_min, mu_max)
         mu = numpyro.sample(f"{samp_name}_base", dist.Uniform(mu_min, mu_max))
         incl = jnp.arccos(mu)
@@ -73,21 +78,21 @@ def sample_param(samp_name: str, param: Parameter) -> ArrayLike:
         return numpyro.deterministic(samp_name, incl)
 
     if param.distribution == Distribution.UNIFORM:
-        # param_samp = _logit_uniform(samp_name, param.low, param.high)
-        param_samp = numpyro.sample(samp_name, dist.Uniform(param.low, param.high))
+        # param_samp = _logit_uniform(samp_name, lower_bound, upper_bound)
+        param_samp = numpyro.sample(samp_name, dist.Uniform(lower_bound, upper_bound))
 
     elif param.distribution == Distribution.LOG_UNIFORM:
-        # param_samp = _logit_loguniform(samp_name, param.low, param.high)
+        # param_samp = _logit_loguniform(samp_name, lower_bound, upper_bound)
         param_samp = numpyro.sample(
             samp_name,
-            dist.LogUniform(param.low, param.high),
+            dist.LogUniform(lower_bound, upper_bound),
         )
 
     elif param.distribution == Distribution.NORMAL:
         param_samp = numpyro.sample(
             samp_name,
             dist.TruncatedNormal(
-                param.loc, param.scale, low=param.low, high=param.high
+                param.loc, param.scale, low=lower_bound, high=upper_bound
             ),
         )
 
@@ -100,8 +105,8 @@ def sample_param(samp_name: str, param: Parameter) -> ArrayLike:
             dist.TruncatedNormal(
                 loc=mu_log,
                 scale=sigma_log,
-                low=jnp.log(param.low),
-                high=jnp.log(param.high),
+                low=jnp.log(lower_bound),
+                high=jnp.log(upper_bound),
             ),
         )
         param_samp = numpyro.deterministic(samp_name, jnp.exp(base))
