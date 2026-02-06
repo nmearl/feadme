@@ -142,42 +142,32 @@ class NUTSSampler(BaseSampler):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
-        # Generate starting location from LSQ fit
+        # Generate starting values
         starters = lsq_model_fitter(
             self.template,
             self._data,
             out_dir=f"{self._config.output_path}",
         )[0]
 
-        # Define the guide
+        # Use LSQ results to initialize the guide
         guide = AutoBNAFNormal(
             self.model,
             hidden_factors=[8, 8],
-            num_flows=4,
-            init_loc_fn=init_to_value(values=starters),
+            num_flows=2,
+            init_loc_fn=init_to_value(values=starters),  # Use LSQ, not median!
         )
-        # guide = AutoMultivariateNormal(
-        #     self.model,
-        #     init_loc_fn=init_to_value(values=starters),
-        # )
 
-        # Define the optimization strategy
         schedule = optax.exponential_decay(0.001, 20_000, 0.3)
         optimizer = optax.chain(
             optax.clip_by_global_norm(1.0),
-            optax.adam(learning_rate=schedule),  # Clip gradients
+            optax.adam(learning_rate=schedule),
         )
 
-        # Setup and run the SVI
-        svi = SVI(
-            self.model,
-            guide,
-            optimizer,
-            Trace_ELBO(),
-        )
+        svi = SVI(self.model, guide, optimizer, Trace_ELBO())
+
         svi_result = svi.run(
             svi_key,
-            25_000,
+            30_000,  # May converge faster now with good init
             template=self.template,
             wave=self.wave,
             flux=self.flux,
@@ -186,10 +176,9 @@ class NUTSSampler(BaseSampler):
             stable_update=True,
         )
 
-        # Plot guide samples
         self._plot_guide_samples(guide, svi_result)
 
-        # Convergence check
+        # Check convergence
         recent_losses = svi_result.losses[-1000:]
         relative_std = jnp.nanstd(recent_losses) / jnp.abs(jnp.nanmean(recent_losses))
 
@@ -197,23 +186,20 @@ class NUTSSampler(BaseSampler):
             logger.warning(
                 f"SVI may not have converged! Relative std: {relative_std:.4f}"
             )
-            # Could add logic to extend SVI or use simpler guide
-        elif jnp.any(jnp.isnan(recent_losses)):
-            logger.error(
-                f"SVI encountered NaNs in losses. Relative std: {relative_std:.4f}"
-            )
-            # return self.model, init_to_median(num_samples=1000), None
         else:
-            logger.info(
-                f"SVI converged successfully. Final loss: {svi_result.losses[-1]:.4f}"
-            )
+            logger.info(f"SVI converged. Final loss: {svi_result.losses[-1]:.4f}")
 
-        # Initialize from VI posterior
+        # Sample from guide for initialization
         init_key, mcmc_key = random.split(mcmc_key)
-        chain_init_params = guide.sample_posterior(init_key, svi_result.params)
+        chain_init_params = guide.sample_posterior(
+            init_key,
+            svi_result.params,
+            sample_shape=(self.sampler_settings.num_chains,),
+        )
 
+        # Use median of guide samples (or just use the mode from LSQ)
         init_strategy = init_to_value(
-            values={k: jnp.median(v) for k, v in chain_init_params.items()}
+            values={k: jnp.median(v, axis=0) for k, v in chain_init_params.items()}
         )
 
         return self.model, init_strategy, None, guide, svi_result
