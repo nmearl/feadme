@@ -77,13 +77,14 @@ class SVISampler(BaseSampler):
                 self.model,
                 hidden_factors=hidden_factors,
                 num_flows=num_flows,
-                init_loc_fn=init_to_median(num_samples=1000),
+                # init_loc_fn=init_to_median(num_samples=1000),
+                init_loc_fn=init_to_value(values=starters),
             )
         elif guide_type == "mvn":
             self._guide = AutoMultivariateNormal(
                 self.model,
-                init_loc_fn=init_to_median(num_samples=1000),
-                # init_loc_fn=init_to_value(values=starters),
+                # init_loc_fn=init_to_median(num_samples=1000),
+                init_loc_fn=init_to_value(values=starters),
             )
         else:
             raise ValueError(

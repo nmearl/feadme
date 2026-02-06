@@ -150,16 +150,16 @@ class NUTSSampler(BaseSampler):
         )[0]
 
         # Define the guide
-        # guide = AutoBNAFNormal(
-        #     self.model,
-        #     hidden_factors=[8, 8],
-        #     num_flows=2,
-        #     init_loc_fn=init_to_value(values=starters),
-        # )
-        guide = AutoMultivariateNormal(
+        guide = AutoBNAFNormal(
             self.model,
+            hidden_factors=[8, 8],
+            num_flows=4,
             init_loc_fn=init_to_value(values=starters),
         )
+        # guide = AutoMultivariateNormal(
+        #     self.model,
+        #     init_loc_fn=init_to_value(values=starters),
+        # )
 
         # Define the optimization strategy
         schedule = optax.exponential_decay(0.001, 20_000, 0.3)
