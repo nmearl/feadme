@@ -100,11 +100,37 @@ class NUTSSampler(BaseSampler):
 
         return idata
 
-    def _plot_guide_samples(self, guide: AutoContinuous, svi_result):
+    def _plot_guide_samples(self, guide: AutoContinuous, svi_result, starters):
         # Sample from the guide to check if it matches LSQ
         guide_samples = guide.sample_posterior(
             random.PRNGKey(1), svi_result.params, sample_shape=(1000,)
         )
+
+        import corner
+        import numpy as np
+
+        plot_samples = {
+            k: v
+            for k, v in guide_samples.items()
+            if not k.endswith("_flux")
+            and not k.endswith("_base")
+            and np.min(v) != np.max(v)
+        }
+
+        fig = corner.corner(
+            np.array([v for k, v in plot_samples.items()]).T,
+            labels=[k for k, v in plot_samples.items()],
+            truths=[starters.get(k, None) for k in plot_samples],
+            quantiles=[0.16, 0.5, 0.84],
+            show_titles=True,
+        )
+        fig.savefig(f"{self._config.output_path}/guide_corner_plot.png")
+
+        init_values = {
+            k: jnp.median(v)
+            for k, v in guide_samples.items()
+            if not k.endswith("_flux") and not k.endswith("_base")
+        }
 
         line_flux = jnp.median(guide_samples["line_flux"], axis=0)
         line_flux = jnp.where(jnp.isfinite(line_flux), line_flux, 0.0)
@@ -134,6 +160,19 @@ class NUTSSampler(BaseSampler):
         ax.plot(self.wave, q_disk_flux, linestyle="--")
         ax.plot(self.wave, q_tot_flux, linestyle="--")
 
+        txt = "\n".join([f"{pn:15}: {pv:.3f}" for pn, pv in init_values.items()])
+
+        ax.text(
+            0.05,
+            0.95,
+            txt[:-2],
+            transform=ax.transAxes,
+            fontsize=8,
+            family="monospace",
+            verticalalignment="top",
+            # bbox=dict(facecolor="white", alpha=0.5, edgecolor="black"),
+        )
+
         ax.legend()
         fig.savefig(f"{self._config.output_path}/guide_model_fit.png")
         plt.close(fig)
@@ -153,7 +192,7 @@ class NUTSSampler(BaseSampler):
         guide = AutoBNAFNormal(
             self.model,
             hidden_factors=[8, 8],
-            num_flows=2,
+            num_flows=4,
             init_loc_fn=init_to_value(values=starters),  # Use LSQ, not median!
         )
 
@@ -176,7 +215,7 @@ class NUTSSampler(BaseSampler):
             stable_update=True,
         )
 
-        self._plot_guide_samples(guide, svi_result)
+        self._plot_guide_samples(guide, svi_result, starters)
 
         # Check convergence
         recent_losses = svi_result.losses[-1000:]
@@ -197,7 +236,7 @@ class NUTSSampler(BaseSampler):
             sample_shape=(self.sampler_settings.num_chains,),
         )
 
-        # Use median of guide samples (or just use the mode from LSQ)
+        # Use median of guide samples
         init_strategy = init_to_value(
             values={k: jnp.median(v, axis=0) for k, v in chain_init_params.items()}
         )

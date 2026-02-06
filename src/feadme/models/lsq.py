@@ -26,7 +26,7 @@ FLOAT_EPSILON = 1e-6
 class DiskProfileModel(Fittable1DModel):
     center = Parameter()
     inner_radius = Parameter()
-    radius_ratio = Parameter()
+    outer_radius = Parameter()
     inclination = Parameter()
     sigma = Parameter()
     q = Parameter()
@@ -54,8 +54,8 @@ class DiskProfileModel(Fittable1DModel):
             ]:
                 pars[f"{pn}"] = 10 ** pars[f"{pn}"]
 
-        pars["outer_radius"] = pars["inner_radius"] * pars["radius_ratio"]
-        del pars["radius_ratio"]
+        if pars["outer_radius"] - pars["inner_radius"] <= 100:
+            return np.zeros_like(x)
 
         res = _compute_disk_flux_vectorized(x, **pars)
 
@@ -174,12 +174,6 @@ def _construct_starters_dict(
                 pe = 1
 
             starters[samp_name] = (pv, pe * std_scale, plb, pub)
-
-    for prof in template.disk_profiles:
-        inner_radius = starters[f"{prof.name}_inner_radius"][0]
-        radius_ratio = starters[f"{prof.name}_radius_ratio"][0]
-
-        starters[f"{prof.name}_outer_radius"] = (inner_radius * radius_ratio, 0, 0, 1e6)
 
     starters = {k: v[0].item() for k, v in starters.items()}
 
