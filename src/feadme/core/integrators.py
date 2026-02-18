@@ -1,43 +1,36 @@
+from functools import partial
+
 import astropy.constants as const
 import astropy.units as u
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
-from quadax import (
-    GaussKronrodRule,
-    ClenshawCurtisRule,
-    quadgk,
-    TanhSinhRule,
-    trapezoid,
-    quadcc,
-)
-from .models.disk import integrand
-from functools import partial
+from quadax import ClenshawCurtisRule
+
+from .disk import integrand
 
 FLOAT_EPSILON = float(np.finfo(np.float32).tiny)
 ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-CC_RES = 32 * 4
+CC_RES = 32 * 2
 GK_RES = 61
 
 fixed_quad_xi = ClenshawCurtisRule(order=CC_RES // 2).integrate
 fixed_quad_phi = ClenshawCurtisRule(order=CC_RES).integrate
 # fixed_quad_xi = GaussKronrodRule(order=GK_RES).integrate
 # fixed_quad_phi = GaussKronrodRule(order=GK_RES).integrate
-# fixed_quad_xi = TanhSinhRule(order=63).integrate
-# fixed_quad_phi = TanhSinhRule(order=127).integrate
 
-N_xi, N_phi = 256, 256
+N_xi, N_phi = 64, 128
 
 LN10 = jnp.log(10.0)
 
 
-@partial(jax.jit, static_argnums=(2, 3, 11))  # phi1/phi2 fixed -> helps compilation
+@partial(jax.jit, static_argnums=(2, 3, 10))  # phi1/phi2 fixed -> helps compilation
 def split_quad_jax_integrate(
-    xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0, n_split: int = 4
+    xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, n_split: int = 4
 ):
     log_xi1, log_xi2 = jnp.log10(xi1), jnp.log10(xi2)
 
@@ -48,7 +41,7 @@ def split_quad_jax_integrate(
         xi_tilde = 10.0**log_xi
 
         def f(phi):
-            return integrand(phi, xi_tilde, X, inc, sigma, q, e, phi0, nu0)
+            return integrand(phi, xi_tilde, X, inc, sigma, q, e, phi0)
 
         def body(i, acc):
             a = phi1 + i * dphi
@@ -62,7 +55,7 @@ def split_quad_jax_integrate(
 
 
 @partial(jax.jit, static_argnums=(2, 3))  # keep if phi1/phi2 fixed
-def quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0):
+def quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0):
     log_xi1, log_xi2 = jnp.log10(xi1), jnp.log10(xi2)
 
     def integrate_over_phi(log_xi):
@@ -70,7 +63,7 @@ def quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0):
         # vector-valued integrand over X
         # output shape: (n_wave,)
         val = fixed_quad_phi(
-            lambda phi: integrand(phi, xi_tilde, X, inc, sigma, q, e, phi0, nu0),
+            lambda phi: integrand(phi, xi_tilde, X, inc, sigma, q, e, phi0),
             phi1,
             phi2,
             args=(),
@@ -83,7 +76,7 @@ def quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0):
 
 
 @partial(jax.jit, static_argnums=(2, 3))
-def vmap_quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0):
+def vmap_quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0):
     """
     Double fixed-order quadrature with explicit wavelength vectorization.
     """
@@ -96,9 +89,7 @@ def vmap_quad_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0, nu0
 
             def transformed_integrand(phi):
                 return (
-                    integrand(phi, xi, x_val, inc, sigma, q, e, phi0, nu0)
-                    * xi
-                    * jnp.log(10)
+                    integrand(phi, xi, x_val, inc, sigma, q, e, phi0) * xi * jnp.log(10)
                 )
 
             return fixed_quad_phi(transformed_integrand, phi1, phi2, args=())[0]
@@ -123,7 +114,6 @@ def trap_jax_integrate(
     q: float,
     e: float,
     phi0: float,
-    nu0: float,
 ) -> ArrayLike:
     """
     Vmap over wavelengths, direct vectorization for (xi, phi) grid.
@@ -142,7 +132,7 @@ def trap_jax_integrate(
 
         # Compute integrand for all (xi, phi) at once - shape (N_xi, N_phi)
         integrand_vals = (
-            integrand(phi_2d, xi_2d, x_val, inc, sigma, q, e, phi0, nu0) * jac_2d
+            integrand(phi_2d, xi_2d, x_val, inc, sigma, q, e, phi0) * jac_2d
         )
 
         # Double trapezoid integration
@@ -190,7 +180,7 @@ def mixed_jax_integrate(
             phi = jnp.linspace(phi1, phi2, N_phi, endpoint=True)
 
             # Evaluate model integrand for all phi at this xi, x_val
-            vals_phi = integrand(phi, xi, x_val, inc, sigma, q, e, phi0, nu0)
+            vals_phi = integrand(phi, xi, x_val, inc, sigma, q, e, phi0)
 
             # Trapezoid over phi (periodic-ish, uniform grid)
             inner_phi = jnp.trapezoid(vals_phi, x=phi)
@@ -212,6 +202,3 @@ def mixed_jax_integrate(
 
     # Vectorize over wavelengths
     return jax.vmap(integrate_single_wavelength)(X)
-
-
-integrator = quad_jax_integrate

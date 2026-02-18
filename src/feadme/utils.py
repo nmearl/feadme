@@ -1,18 +1,7 @@
-from collections import namedtuple
-
-import jax
-import jax.numpy as jnp
-import numpy as np
-from jax.scipy.special import erf, erfinv
-from jax.scipy.stats import norm
-from numpyro.distributions import constraints
-from numpyro.distributions.transforms import Transform
-from numpyro.handlers import seed, trace
-from scipy import stats
-from scipy.optimize import minimize_scalar
 import astropy.constants as const
-
-from .parser import Template
+import numpy as np
+from astropy.modeling.core import CompoundModel
+import operator
 
 c_cgs = const.c.cgs.value
 c_kms = const.c.to("km/s").value
@@ -89,326 +78,114 @@ def rebin_spectrum(wave, flux, flux_err, dv=100.0, rest=False, z=0.0):
     return wave_bin[mask], flux_bin[mask], flux_err_bin[mask]
 
 
-def lsq_to_base_space(lsq_values: dict, template: Template) -> dict:
+def convert_to_model_set(model, param_array):
     """
-    Convert LSQ parameter values to Normal(0,1) base space for _sample_manual_reparam.
-    LSQ works in uniform space (possibly log-transformed), so we just need to:
-    1. Map from [low, high] to u in [0, 1]
-    2. Map u to z ~ Normal(0, 1) via inverse CDF
-    """
-    from scipy.stats import norm
-    import numpy as np
-
-    base_values = {}
-
-    # Get all independent parameters
-    all_params = []
-    for prof in template.disk_profiles + template.line_profiles:
-        for param in prof.independent:
-            all_params.append((prof.name, param))
-
-    if not template.redshift.fixed:
-        all_params.append((None, template.redshift))
-    if not template.white_noise.fixed:
-        all_params.append((None, template.white_noise))
-
-    for prof_name, param in all_params:
-        samp_name = f"{prof_name}_{param.name}" if prof_name else param.name
-
-        if samp_name not in lsq_values:
-            continue
-
-        val, _, low, high = lsq_values[samp_name]
-
-        # Simple uniform mapping from [low, high] to [0, 1]
-        u = (val - low) / (high - low)
-
-        # Clamp for numerical safety
-        u = np.clip(u, 1e-6, 1 - 1e-6)
-
-        # Convert to Normal(0,1) base space
-        z = norm.ppf(u)
-
-        base_values[f"{samp_name}_base"] = z
-
-    return base_values
-
-
-def dict_to_namedtuple(name, d):
-    """
-    Recursively convert a nested dictionary into a namedtuple.
-    """
-    if isinstance(d, list):
-        return tuple(dict_to_namedtuple(name, item) for item in d)
-
-    if not isinstance(d, dict):
-        return d
-
-    fields = {k: dict_to_namedtuple(k.capitalize(), v) for k, v in d.items()}
-    NT = namedtuple(name, fields.keys())
-    return NT(**fields)
-
-
-class BaseTenTransform(Transform):
-    sign = 1
-
-    # TODO: refine domain/codomain logic through setters, especially when
-    # transforms for inverses are supported
-    def __init__(self, domain=constraints.real):
-        self.domain = domain
-
-    @property
-    def codomain(self):
-        if self.domain is constraints.ordered_vector:
-            return constraints.positive_ordered_vector
-        elif self.domain is constraints.real:
-            return constraints.positive
-        elif isinstance(self.domain, constraints.greater_than):
-            return constraints.greater_than(self.__call__(self.domain.lower_bound))
-        elif isinstance(self.domain, constraints.interval):
-            return constraints.interval(
-                self.__call__(self.domain.lower_bound),
-                self.__call__(self.domain.upper_bound),
-            )
-        else:
-            raise NotImplementedError
-
-    def __call__(self, x):
-        # XXX consider to clamp from below for stability if necessary
-        return 10**x
-
-    def _inverse(self, y):
-        return jnp.log10(y)
-
-    def log_abs_det_jacobian(self, x, y, intermediates=None):
-        return x
-
-    def tree_flatten(self):
-        return (self.domain,), (("domain",), dict())
-
-    def __eq__(self, other):
-        if not isinstance(other, BaseTenTransform):
-            return False
-        return self.domain == other.domain
-
-
-def circular_rhat(samples):
-    """
-    Estimate circular R-hat using vector average consistency across chains.
+    Convert an existing compound model to a model set, preserving all operators.
 
     Parameters
     ----------
-    samples : ndarray
-        Shape (chains, draws), in radians.
+    model : astropy Model
+        Existing model (compound or single)
+    param_array : ndarray
+        Parameter array of shape (n_models, n_params)
 
     Returns
     -------
-    rhat : float
-        Circular R-hat value.
+    model_set : astropy Model
+        Model set that can evaluate all parameter sets efficiently
     """
-    chains, draws = samples.shape
+    n_models = param_array.shape[0]
 
-    # Mean resultant vector per chain
-    cos_means = np.mean(np.cos(samples), axis=1)
-    sin_means = np.mean(np.sin(samples), axis=1)
-    R_means = np.sqrt(cos_means**2 + sin_means**2)
-
-    # Mean of mean directions
-    mean_cos = np.mean(cos_means)
-    mean_sin = np.mean(sin_means)
-    R_total = np.sqrt(mean_cos**2 + mean_sin**2)
-
-    # Between-chain variance (how different the chain means are)
-    B = chains * (1 - R_total)
-
-    # Within-chain variance (how dispersed each chain is)
-    R_within = np.mean(
-        [
-            np.sqrt(np.mean(np.cos(samples[c])) ** 2 + np.mean(np.sin(samples[c])) ** 2)
-            for c in range(chains)
-        ]
-    )
-    W = 1 - R_within
-
-    # Gelman-style circular Rhat
-    rhat = np.sqrt((W + B) / W)
-    return rhat
-
-
-def get_sample_sites(model, model_args, model_kwargs, rng_key=jax.random.PRNGKey(0)):
-    tr = trace(seed(model, rng_key)).get_trace(*model_args, **model_kwargs)
-    return {k: site["fn"] for k, site in tr.items() if site["type"] == "sample"}
-
-
-def transform_init_values(init_vals, sites):
-    """
-    Convert user-friendly param values to base values expected by TransformReparam sites.
-    """
-    base_vals = {}
-
-    for site_name, dist_obj in sites.items():
-        if not site_name.endswith("_base"):
-            continue  # We only care about reparam sites
-
-        param_name = site_name.removesuffix("_base")
-        if param_name not in init_vals:
-            continue
-
-        value = init_vals[param_name]
-
-        # Apply inverse of transform to get base value
-        if hasattr(dist_obj, "transforms") and dist_obj.transforms:
-            base_value = dist_obj.transforms[0].inv(value)
-            base_vals[site_name] = base_value
-        else:
-            base_vals[site_name] = value  # fallback if not transformed
-
-    return base_vals
-
-
-def circular_median(angles):
-    """
-    Calculate the circular median of angles in radians.
-    Uses the geometric median approach on the unit circle.
-    """
-    # Convert angles to unit vectors
-    x = np.cos(angles)
-    y = np.sin(angles)
-
-    def objective(theta):
-        # Sum of distances from candidate point to all data points
-        candidate_x, candidate_y = np.cos(theta), np.sin(theta)
-        distances = np.sqrt((x - candidate_x) ** 2 + (y - candidate_y) ** 2)
-        return np.sum(distances)
-
-    # Find the angle that minimizes the sum of distances
-    result = minimize_scalar(objective, bounds=(0, 2 * np.pi), method="bounded")
-    return result.x
-
-
-def circular_percentiles(angles, percentiles=[16, 84]):
-    """
-    Calculate circular percentiles using the circular median as reference.
-
-    Parameters
-    ----------
-    angles : array_like
-        Array of angles in radians (0 to 2π).
-    percentiles : list of float, optional
-        List of percentiles to calculate (0-100). Default is [16, 84].
-
-    Returns
-    -------
-    percentile_angles : ndarray
-        Array of percentile values in radians.
-    """
-    # Get circular median as reference
-    median = circular_median(angles)
-
-    # Calculate signed angular distances from median
-    def angular_distance(angle, reference):
-        diff = angle - reference
-        # Wrap to [-π, π]
-        return np.arctan2(np.sin(diff), np.cos(diff))
-
-    distances = np.array([angular_distance(angle, median) for angle in angles])
-
-    # Sort distances
-    sorted_distances = np.sort(distances)
-
-    # Calculate percentiles
-    percentile_distances = np.percentile(sorted_distances, percentiles)
-
-    # Convert back to angles
-    percentile_angles = []
-    for dist in percentile_distances:
-        angle = median + dist
-        # Wrap to [0, 2π]
-        angle = angle % (2 * np.pi)
-        percentile_angles.append(angle)
-
-    return np.array(percentile_angles)
-
-
-# Usage with your pre-calculated angles
-def circular_error_bars(median, p16, p84):
-    """
-    Calculate error bars from circular median and percentiles.
-
-    Parameters
-    ----------
-    median : float
-        Circular median in radians.
-    p16 : float
-        16th percentile in radians.
-    p84 : float
-        84th percentile in radians.
-
-    Returns
-    -------
-    err_lo : float
-        Lower error bar magnitude (distance to 16th percentile).
-    err_hi : float
-        Upper error bar magnitude (distance to 84th percentile).
-    """
-
-    def angular_distance(angle1, angle2):
-        """Calculate signed angular distance from angle1 to angle2"""
-        diff = angle2 - angle1
-        return np.arctan2(np.sin(diff), np.cos(diff))
-
-    # Calculate signed distances
-    dist_to_p16 = angular_distance(median, p16)
-    dist_to_p84 = angular_distance(median, p84)
-
-    # Error bars are absolute distances
-    err_lo = abs(dist_to_p16)  # Distance to 16th percentile (lower error)
-    err_hi = abs(dist_to_p84)  # Distance to 84th percentile (upper error)
-
-    return err_lo, err_hi
-
-
-def parse_circular_parameters(samples):
-    """
-    Analyze pre-calculated apocenter angle samples.
-
-    Parameters
-    ----------
-    samples : array_like
-        Array of angles in radians (0 to 2π).
-
-    Returns
-    -------
-    dict
-        Dictionary with the following keys:
-        - 'circular_mean': float
-            Circular mean of the samples.
-        - 'circular_median': float
-            Circular median of the samples.
-        - 'percentile_16th': float
-            16th percentile of the samples.
-        - 'percentile_84th': float
-            84th percentile of the samples.
-        - 'err_lo': float
-            Lower error bar (distance to 16th percentile).
-        - 'err_hi': float
-            Upper error bar (distance to 84th percentile).
-    """
-    # Calculate circular statistics
-    circular_mean = stats.circmean(samples)
-    circular_std = stats.circstd(samples)
-    p16, p84 = circular_mean - circular_std, circular_mean + circular_std
-    err_lo, err_hi = circular_std, circular_std
-
-    median = circular_median(samples)
-    p16, p84 = circular_percentiles(samples, [16, 84])
-    err_lo, err_hi = circular_error_bars(median, p16, p84)
-
-    return {
-        "circular_mean": circular_mean,
-        "circular_median": median,
-        "percentile_16th": p16,
-        "percentile_84th": p84,
-        "err_lo": err_lo,
-        "err_hi": err_hi,
+    # Map operator symbols to actual operators
+    OP_MAP = {
+        "+": operator.add,
+        "-": operator.sub,
+        "*": operator.mul,
+        "/": operator.truediv,
+        "**": operator.pow,
+        "|": operator.or_,
+        "&": operator.and_,
     }
+
+    def rebuild_model_tree(m, param_idx_ref):
+        """
+        Recursively rebuild the model tree with model sets.
+
+        Parameters
+        ----------
+        m : Model
+            Current model node
+        param_idx_ref : list
+            Mutable reference to current parameter index [idx]
+
+        Returns
+        -------
+        new_model : Model
+            Rebuilt model (set) for this subtree
+        """
+        if not isinstance(m, CompoundModel):
+            # Leaf model - convert to model set
+            n_params = len(m.param_names)
+            submodel_params = param_array[
+                :, param_idx_ref[0] : param_idx_ref[0] + n_params
+            ]
+
+            # Create parameter dict
+            param_dict = {}
+            for i, pname in enumerate(m.param_names):
+                param_dict[pname] = submodel_params[:, i]
+
+            # Create new model set
+            model_class = type(m)
+            new_submodel = model_class(n_models=n_models, **param_dict)
+
+            param_idx_ref[0] += n_params
+            return new_submodel
+        else:
+            # Compound model - recursively rebuild left and right
+            # Access the internal structure
+            # CompoundModel stores left, right, and operator
+
+            # Try different attribute names (varies by astropy version)
+            if hasattr(m, "_left"):
+                left = m._left
+                right = m._right
+                op_symbol = m._operator
+            elif hasattr(m, "left"):
+                left = m.left
+                right = m.right
+                op_symbol = m.op
+            else:
+                # Fallback: use traverse to get submodels
+                # This is less ideal but works
+                submodels = [
+                    sm
+                    for sm in m.traverse_postorder()
+                    if not isinstance(sm, CompoundModel)
+                ]
+
+                # For simple binary operations, assume first two are the operands
+                if len(submodels) >= 2:
+                    left_new = rebuild_model_tree(submodels[0], param_idx_ref)
+                    right_new = rebuild_model_tree(submodels[1], param_idx_ref)
+                    # Assume addition if we can't determine operator
+                    return left_new + right_new
+                else:
+                    raise ValueError("Cannot determine compound model structure")
+
+            # Recursively rebuild left and right subtrees
+            left_new = rebuild_model_tree(left, param_idx_ref)
+            right_new = rebuild_model_tree(right, param_idx_ref)
+
+            # Apply the operator
+            if isinstance(op_symbol, str):
+                op_func = OP_MAP.get(op_symbol, operator.add)
+            else:
+                # op_symbol might already be a function
+                op_func = op_symbol
+
+            return op_func(left_new, right_new)
+
+    # Start rebuilding from root with parameter index tracker
+    param_idx_ref = [0]
+    return rebuild_model_tree(model, param_idx_ref)

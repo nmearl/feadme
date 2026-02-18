@@ -1,0 +1,356 @@
+import time
+
+import flax.struct
+import jax.numpy as jnp
+import jax.random as random
+import loguru
+import optax
+import corner
+import jax
+from astropy.modeling.fitting import TRFLSQFitter, model_to_fit_params
+import matplotlib.pyplot as plt
+from numpyro.infer import SVI, Trace_ELBO
+from numpyro.infer import init_to_median, init_to_value
+from numpyro.infer.autoguide import (
+    AutoBNAFNormal,
+    AutoMultivariateNormal,
+)
+import numpy as np
+import astropy.constants as const
+import astropy.units as u
+from numpyro.infer.initialization import init_to_value
+
+from ..core.parser import Config
+from .base_model import BaseModel
+from .lsq.model import _compose_model
+
+logger = loguru.logger.opt(colors=True)
+
+c_kms = const.c.to(u.km / u.s).value
+
+
+@flax.struct.dataclass
+class BaseInitializer:
+    def __call__(self, *args, **kwargs):
+        raise NotImplementedError("Call method must be implemented by subclasses.")
+
+
+@flax.struct.dataclass
+class DefaultInitializer(BaseInitializer):
+    def __call__(self, config: Config = None, model: BaseModel = None):
+        return init_to_median(num_samples=1000)
+
+
+@flax.struct.dataclass
+class LSQInitializer(BaseInitializer):
+    def __call__(self, config: Config = None, model: BaseModel = None):
+        wave = config.data.masked_wave
+        flux = config.data.masked_flux
+        flux_err = config.data.masked_flux_err
+
+        # Perform LSQ fit without broad component to get better initial
+        # estimates for disk and line parameters
+        lsq_model_without_broad = _compose_model(
+            config.template, integrator=model.integrator, remove_broad=True
+        )
+
+        # fitter = TRFLSQFitter()
+        #
+        # fit_mod_without_broad = fitter(
+        #     lsq_model_without_broad,
+        #     wave,
+        #     flux,
+        #     maxiter=10000,
+        #     weights=1 / flux_err,
+        #     filter_non_finite=True,
+        # )
+
+        # Use the fitted parameters from the initial fit to construct a new
+        # model that includes the broad component, and perform a second LSQ
+        # fit to refine all parameters together
+        lsq_model = _compose_model(
+            config.template, integrator=model.integrator, remove_broad=False
+        )
+
+        # for sm_wob in fit_mod_without_broad:
+        #     for sm in lsq_model:
+        #         if sm.name == sm_wob.name:
+        #             for pn in sm.param_names:
+        #                 if pn in sm_wob.param_names:
+        #                     setattr(sm, pn, getattr(sm_wob, pn))
+
+        fitter = TRFLSQFitter(calc_uncertainties=True)
+
+        fit_mod = fitter(
+            lsq_model,
+            wave,
+            flux,
+            maxiter=10000,
+            weights=1 / flux_err,
+            filter_non_finite=True,
+        )
+
+        # Construct fitted parameters dictionary
+        model_names = [m.name for m in lsq_model]
+        param_name_map = {}
+
+        _, indices, _ = model_to_fit_params(fit_mod)
+        fit_param_names = np.array(fit_mod.param_names)[indices]
+        fit_params = np.array(fit_mod.parameters)[indices]
+        fit_param_map = dict(zip(fit_param_names, fit_params))
+
+        for fpn in fit_param_names:
+            pn, pi = "_".join(fpn.split("_")[:-1]), int(fpn.split("_")[-1])
+            param_name_map[fpn] = f"{model_names[pi]}_{pn}"
+
+        init_params = {param_name_map[k]: fit_param_map[k] for k in fit_param_names}
+
+        # Transform log-based parameters back to linear space
+        for pn in fit_mod.meta["log_dist"]:
+            if fit_mod.meta["log_dist"][pn]:
+                init_params[pn] = 10 ** init_params.pop(pn)
+
+        # Get real redshift samples
+        fit_z = 1 / (1 + init_params.pop("redshift_z")) - 1
+        init_params["redshift"] = fit_z
+
+        # Retrieve deterministic values
+        for pn in [k for k in init_params]:
+            if "inclination" in pn:
+                inclination = init_params[pn]
+                init_params[f"{pn}_base"] = np.cos(inclination)
+            elif "apocenter" in pn:
+                apocenter = init_params[pn]
+                init_params[f"{pn}_x_base"] = np.cos(apocenter)
+                init_params[f"{pn}_y_base"] = np.sin(apocenter)
+
+        init_params = {k: v.item() for k, v in init_params.items()}
+
+        init_strategy = init_to_value(values=init_params)
+
+        # Quick plot
+        self.quick_plot(fit_mod, config, init_params)
+
+        return init_params, init_strategy
+
+    def quick_plot(self, fit_mod, config, init_params):
+        fig, ax = plt.subplots()
+
+        ax.errorbar(
+            config.data.masked_wave,
+            config.data.masked_flux,
+            yerr=config.data.masked_flux_err,
+            fmt="o",
+            color="grey",
+            zorder=-10,
+            alpha=0.25,
+        )
+
+        disk_submodels = [
+            fit_mod[sm_idx]
+            for sm_idx in range(fit_mod.n_submodels)
+            if fit_mod[sm_idx].name
+            in [prof.name for prof in config.template.disk_profiles]
+        ]
+
+        if len(disk_submodels) > 0:
+            disk_model = fit_mod["redshift"] | (np.sum(disk_submodels))
+        else:
+            disk_model = fit_mod["redshift"] | fit_mod["base"]
+
+        line_submodels = [
+            fit_mod[sm_idx]
+            for sm_idx in range(fit_mod.n_submodels)
+            if fit_mod[sm_idx].name
+            in [prof.name for prof in config.template.line_profiles]
+        ]
+
+        if len(line_submodels) > 0:
+            line_model = fit_mod["redshift"] | (np.sum(line_submodels))
+        else:
+            line_model = fit_mod["redshift"] | fit_mod["base"]
+
+        new_wave = np.linspace(
+            config.data.masked_wave[0], config.data.masked_wave[-1], 1000
+        )
+        tot_flux = fit_mod(new_wave)
+        disk_flux = disk_model(new_wave)
+        line_flux = line_model(new_wave)
+
+        ax.plot(new_wave, tot_flux, label="LSQ Fit", color="C3")
+        ax.plot(new_wave, disk_flux, label="Disk Fit", color="C4")
+        ax.plot(new_wave, line_flux, label="Line Fit", color="C5")
+
+        # Print the initial parameter estimates on the figure
+        param_text = "\n".join(
+            [f"{k}: {v:.3g}" for k, v in init_params.items() if np.isfinite(v)]
+        )
+        ax.text(
+            0.05,
+            0.95,
+            param_text,
+            transform=ax.transAxes,
+            fontsize=8,
+            verticalalignment="top",
+        )
+
+        ax.legend()
+        fig.savefig(f"{config.output_path}/lsq_fit.png", dpi=300)
+        plt.close(fig)
+
+
+@flax.struct.dataclass
+class SVIInitializer(BaseInitializer):
+    num_steps: int = 2_000
+    learning_rate: float = 5e-3
+    decay_rate: float = 0.1
+    decay_steps: int = 2_000  # ~num_steps
+    progress_bar: bool = True
+
+    def __call__(self, config: Config, model: BaseModel):
+        rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
+        rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
+
+        lsq_initializer = LSQInitializer()
+        init_params, init_strategy = lsq_initializer(config, model)
+
+        # guide = AutoBNAFNormal(
+        #     model,
+        #     hidden_factors=[8, 8],
+        #     num_flows=4,
+        #     # init_loc_fn=init_to_median(num_samples=1000),
+        #     init_loc_fn=init_strategy,
+        # )
+        guide = AutoMultivariateNormal(
+            model,
+            init_loc_fn=init_strategy,
+        )
+
+        schedule = optax.exponential_decay(
+            self.learning_rate, self.decay_steps, self.decay_rate
+        )
+        optimizer = optax.chain(
+            optax.clip_by_global_norm(1.0),
+            optax.adam(learning_rate=schedule),
+        )
+
+        svi = SVI(model, guide, optimizer, Trace_ELBO())
+
+        svi_result = svi.run(
+            svi_key,
+            num_steps=self.num_steps,  # May converge faster now with good init
+            wave=config.data.masked_wave,
+            flux=config.data.masked_flux,
+            flux_err=config.data.masked_flux_err,
+            progress_bar=self.progress_bar,
+            stable_update=True,
+        )
+
+        # Check convergence
+        recent_losses = svi_result.losses[-1000:]
+        relative_std = jnp.nanstd(recent_losses) / jnp.abs(jnp.nanmean(recent_losses))
+
+        if relative_std > 0.01:
+            logger.warning(
+                f"SVI may not have converged! Relative std: {relative_std:.4f}"
+            )
+        else:
+            logger.info(f"SVI converged. Final loss: {svi_result.losses[-1]:.4f}")
+
+        # Sample from guide for initialization
+        init_key, mcmc_key = random.split(mcmc_key)
+        chain_init_params = guide.sample_posterior(
+            init_key,
+            svi_result.params,
+            sample_shape=(1000,),
+        )
+
+        # Use median of guide samples
+        init_params = {k: jnp.median(v, axis=0) for k, v in chain_init_params.items()}
+
+        init_strategy = init_to_value(values=init_params)
+
+        self.quick_plot(svi_result, guide, config)
+
+        return init_params, init_strategy
+
+    def quick_plot(self, svi_result, guide, config):
+        rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
+        guide_samples = guide.sample_posterior(
+            rng_key,
+            svi_result.params,
+            sample_shape=(1000,),
+        )
+
+        plot_samples = {
+            k: v
+            for k, v in guide_samples.items()
+            if not k.endswith("_flux")
+            and not k.endswith("_base")
+            and np.min(v) != np.max(v)
+        }
+        guide_mods = {k: jnp.median(v, axis=0) for k, v in guide_samples.items()}
+
+        fig = corner.corner(
+            np.array([v for k, v in plot_samples.items()]).T,
+            labels=[k for k, v in plot_samples.items()],
+            # truths=[starters.get(k, None) for k in guide_samples],
+            quantiles=[0.16, 0.5, 0.84],
+            show_titles=True,
+        )
+        fig.savefig(f"{config.output_path}/guide_corner_plot.png")
+
+        fig, axes = plt.subplots(
+            nrows=len(plot_samples),
+            ncols=2,
+            figsize=(10, 3 * len(plot_samples)),
+            layout="constrained",
+        )
+
+        import arviz as az
+
+        az.plot_trace(
+            az.from_dict(plot_samples),
+            var_names=[k for k in plot_samples],
+            axes=axes,
+        )
+
+        # tot_flux, disk_flux, line_flux = evaluate_model(
+        #     config.template, new_wave, param_mods
+        # )
+
+        fig.savefig(f"{config.output_path}/guide_trace_plot.png")
+
+        fig, ax = plt.subplots()
+
+        ax.errorbar(
+            config.data.masked_wave,
+            config.data.masked_flux,
+            yerr=config.data.masked_flux_err,
+            fmt="o",
+            color="grey",
+            zorder=-10,
+            alpha=0.25,
+        )
+
+        ax.plot(
+            config.data.masked_wave,
+            guide_mods["disk_flux"],
+            label="Disk Fit",
+            color="C3",
+        )
+        ax.plot(
+            config.data.masked_wave,
+            guide_mods["line_flux"],
+            label="Line Fit",
+            color="C4",
+        )
+        ax.plot(
+            config.data.masked_wave,
+            guide_mods["disk_flux"] + guide_mods["line_flux"],
+            label="Total Fit",
+            color="C5",
+        )
+        ax.legend()
+        fig.savefig(f"{config.output_path}/svi_fit.png", dpi=300)
+        plt.close(fig)

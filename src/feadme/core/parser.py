@@ -5,14 +5,14 @@ from typing import Optional
 
 import flax
 import flax.struct
-import jax
 import jax.numpy as jnp
 from dacite import from_dict, Config as DaciteConfig
 from jax.tree_util import tree_map
+from jax.typing import ArrayLike
 
 
 def jax_array_hook(value, target_type):
-    # If dacite sees a list for a field typed as jnp.ndarray, convert it
+    # If dacite sees a list for a field typed as ArrayLike, convert it
     if issubclass(target_type, jnp.ndarray) and isinstance(value, list):
         return jnp.array(value)
     return value
@@ -72,7 +72,7 @@ class Writable:
             data=raw,
             config=DaciteConfig(
                 type_hooks={
-                    jnp.ndarray: lambda v: jnp.array(v),
+                    ArrayLike: lambda v: jnp.array(v),
                     Distribution: lambda v: Distribution(v),
                     Shape: lambda v: Shape(v),
                 }
@@ -163,9 +163,7 @@ class Parameter:
     def qualified_name(self) -> str:
         """Get the fully qualified parameter name (profile_name_field_name)."""
         if self._qualified_name is None:
-            raise ValueError(
-                "Parameter qualified name not set. This parameter hasn't been properly initialized in a Profile."
-            )
+            return self.name
         return self._qualified_name
 
 
@@ -287,7 +285,8 @@ class Profile:
 class Disk(Profile, Writable):
     center: Optional[Parameter] = None
     inner_radius: Optional[Parameter] = None
-    outer_radius: Optional[Parameter] = None
+    # outer_radius: Optional[Parameter] = None
+    radius_ratio: Optional[Parameter] = None
     inclination: Optional[Parameter] = None
     sigma: Optional[Parameter] = None
     q: Optional[Parameter] = None
@@ -304,7 +303,8 @@ class Shape(str, Enum):
 
 @flax.struct.dataclass
 class Line(Profile):
-    center: Optional[Parameter] = None
+    center: Optional[float] = None
+    offset: Optional[Parameter] = None
     amplitude: Optional[Parameter] = None
     vel_width: Optional[Parameter] = None
     shape: Shape = Shape.GAUSSIAN
@@ -331,7 +331,18 @@ class Template(Writable):
     mask: list[Mask] | None = None
 
     @property
-    def all_parameters(self) -> list[Parameter]:
+    def full_parameter_names(self) -> list[str]:
+        params = [self.redshift.qualified_name, self.white_noise.qualified_name]
+
+        for prof in self.disk_profiles + self.line_profiles:
+            params.extend([f"{prof.name}_{param.name}" for param in prof.independent])
+            params.extend([f"{prof.name}_{param.name}" for param in prof.shared])
+            params.extend([f"{prof.name}_{param.name}" for param in prof.fixed])
+
+        return params
+
+    @property
+    def parameters(self) -> list[Parameter]:
         params = [self.redshift, self.white_noise]
 
         for prof in self.disk_profiles + self.line_profiles:
@@ -341,16 +352,83 @@ class Template(Writable):
 
         return params
 
+    @property
+    def parameter_names(self) -> list[str]:
+        return [param.qualified_name for param in self.parameters]
+
+    @property
+    def circular_parameter_names(self) -> list[str]:
+        return [param.qualified_name for param in self.parameters if param.circular]
+
+    @property
+    def fixed_parameter_names(self) -> list[str]:
+        params = []
+
+        for prof in self.disk_profiles + self.line_profiles:
+            params.extend([x.qualified_name for x in prof.fixed])
+
+        if self.redshift.fixed:
+            params.append(self.redshift.name)
+
+        if self.white_noise.fixed:
+            params.append(self.white_noise.name)
+
+        return params
+
+    @property
+    def shared_parameter_names(self) -> list[str]:
+        params = []
+
+        for prof in self.disk_profiles + self.line_profiles:
+            params.extend([x.qualified_name for x in prof.shared])
+
+        if self.redshift.shared:
+            params.append(self.redshift.name)
+
+        if self.white_noise.shared:
+            params.append(self.white_noise.name)
+
+        return params
+
+    def fitted_parameter_names(
+        self, include_shared=True, include_circ=False
+    ) -> list[str]:
+        params = []
+
+        for prof in self.disk_profiles + self.line_profiles:
+            params.extend(
+                [
+                    x.qualified_name
+                    for x in prof.independent
+                    if (include_circ or not x.circular)
+                ]
+            )
+            params.extend(
+                [
+                    x.qualified_name
+                    for x in prof.shared
+                    if include_shared and (include_circ or not x.circular)
+                ]
+            )
+
+        if not self.redshift.fixed:
+            params.append(self.redshift.name)
+
+        if not self.white_noise.fixed:
+            params.append(self.white_noise.name)
+
+        return params
+
 
 @flax.struct.dataclass
 class Data(Writable):
-    wave: jnp.ndarray
-    flux: jnp.ndarray
-    flux_err: jnp.ndarray
-    mask: jnp.ndarray
-    masked_wave: jnp.ndarray
-    masked_flux: jnp.ndarray
-    masked_flux_err: jnp.ndarray
+    wave: ArrayLike
+    flux: ArrayLike
+    flux_err: ArrayLike
+    mask: ArrayLike
+    masked_wave: ArrayLike
+    masked_flux: ArrayLike
+    masked_flux_err: ArrayLike
 
     @classmethod
     def create(cls, wave, flux, flux_err, mask=list[Mask] | None):
@@ -379,46 +457,10 @@ class Data(Writable):
 
 
 @flax.struct.dataclass
-class SamplerSettings(Writable):
-    sampler_type: str
-    progress_bar: bool = True
-
-    @property
-    def chain_method(self) -> str:
-        return "vectorized" if jax.local_device_count() == 1 else "parallel"
-
-
-@flax.struct.dataclass
-class NUTSSamplerSettings(SamplerSettings):
-    sampler_type: str = "nuts"
-    num_warmup: int = 1000
-    num_samples: int = 1000
-    num_chains: int = 1
-    target_accept_prob: float = 0.95
-    max_tree_depth: int = 10
-    dense_mass: bool = True
-    prefit: bool = False
-    neutra: bool = False
-
-
-@flax.struct.dataclass
-class SVISamplerSettings(SamplerSettings):
-    sampler_type: str = "svi"
-    num_steps: int = 25000
-    num_posterior_samples: int = 2000
-    learning_rate: float = 1e-3
-    decay_rate: float = 0.3
-    decay_steps: int = 20000
-    hidden_factors: list[int] = flax.struct.field(default_factory=lambda: [16, 16])
-    num_flows: int = 4
-    guide_type: str = "bnaf"  # "bnaf" or "mvn"
-
-
-@flax.struct.dataclass
 class Config(Writable):
     template: Template
     data: Data
-    sampler_settings: SamplerSettings
     output_path: str
     template_path: str
     data_path: str
+    skip_existing: bool = False

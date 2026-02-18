@@ -1,70 +1,28 @@
-from copy import deepcopy
 from pathlib import Path
-from functools import wraps
 
-import click
 import loguru
 from astropy.table import Table
-import arviz as az
 from astropy.time import Time
-import json
-import numpy as np
+import arviz as az
+import click
+from functools import wraps
 
-from .compose import construct_model
-from .models.lsq import lsq_model_fitter
-from .parser import Config, Template, Data, NUTSSamplerSettings, SVISamplerSettings
+from feadme.core.parser import Template, Config, Data
+from feadme.sampling.initializers import (
+    DefaultInitializer,
+    SVIInitializer,
+    LSQInitializer,
+)
+from .core.integrators import trap_jax_integrate
+from .plotter import Plotter
+from .reporter import Reporter
+from .sampling.lsq.model import LSQModel
+from .sampling.lsq.sampler import LSQSampler
+from .sampling.numpyro.model import NumpyroModel
+from .sampling.numpyro.sampler import NUTSSampler
 from .utils import rebin_spectrum
-from .samplers.nuts_sampler import NUTSSampler
-from .samplers.svi_sampler import SVISampler
 
 logger = loguru.logger.opt(colors=True)
-
-
-# Shared options decorator
-def common_options(f):
-    """Decorator for common CLI options shared across samplers."""
-
-    @click.option(
-        "--template-path",
-        type=click.Path(exists=True),
-        required=True,
-        help="Path to the template file.",
-    )
-    @click.option(
-        "--data-path",
-        type=click.Path(exists=True),
-        required=True,
-        help="Path to the data file.",
-    )
-    @click.option(
-        "--output-path",
-        type=click.Path(),
-        default="output",
-        help="Directory to save output files and plots. Defaults to './output'.",
-    )
-    @click.option(
-        "--progress-bar/--no-progress-bar",
-        is_flag=True,
-        default=True,
-        help="Display a progress bar during sampling.",
-    )
-    @click.option(
-        "--experimental-prefit/--no-experimental-prefit",
-        is_flag=True,
-        default=False,
-        help="Run an experimental pre-fit to initialize parameters.",
-    )
-    @click.option(
-        "--rebin",
-        type=float,
-        default=None,
-        help="Rebin the spectrum to a specified velocity resolution (in km/s).",
-    )
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        return f(*args, **kwargs)
-
-    return wrapper
 
 
 def load_data(data_path: str, template: Template, rebin: float | None = None) -> Data:
@@ -109,206 +67,103 @@ def load_data(data_path: str, template: Template, rebin: float | None = None) ->
     )
 
 
-def run_pre_fit(
-    template: Template, template_dict: dict, data: Data, output_path: Path | str
-) -> Template:
-    """
-    Run a pre-fit using the least-squares model fitter to initialize
-    the template parameters based on the provided data.
+def perform_sampling(config, model, sampler):
+    output_path = Path(config.output_path)
 
-    Parameters
-    ----------
-    template : Template
-        The template object containing the initial parameters.
-    template_dict : dict
-        Dictionary representation of the template.
-    data : Data
-        The data object containing the wavelength, flux, and flux error.
-    output_path : Path or str
-        Directory to save pre-fit outputs.
+    logger.info(f"Starting sampling for <cyan>{config.template.name}</cyan>")
 
-    Returns
-    -------
-    Template
-        The updated template object with parameters initialized from the pre-fit.
-
-    Raises
-    ------
-    ValueError
-        If LSQ fit produces poor results (NaN/inf values, parameters at bounds).
-    """
-    results = lsq_model_fitter(template, data, out_dir=f"{output_path}")
-    starters, rest_wave, fit_flux, disk_flux, line_flux, fit_mod = results
-
-    # Validate LSQ results
-    if not starters:
-        raise ValueError("LSQ fit failed: no parameters returned")
-
-    # Check for NaN/inf in fitted parameters
-    invalid_params = [k for k, v in starters.items() if not np.isfinite(v)]
-    if invalid_params:
-        raise ValueError(
-            f"LSQ fit failed: invalid values in parameters {invalid_params}"
-        )
-
-    # Check if parameters are at bounds (indicates poor fit)
-    at_bounds = []
-    for dprof in template_dict["disk_profiles"] + template_dict["line_profiles"]:
-        for dkey, dparam in dprof.items():
-            if not isinstance(dparam, dict):
-                continue
-
-            dname = f"{dprof['name']}_{dparam['_field_name']}"
-            if dname in starters:
-                val = starters[dname]
-                low, high = dparam["low"], dparam["high"]
-
-                # Allow 1% tolerance for boundary detection
-                tol = (high - low) * 0.01
-                if val <= (low + tol) or val >= (high - tol):
-                    at_bounds.append(dname)
-
-    if at_bounds:
-        logger.warning(
-            f"LSQ fit: parameters at bounds {at_bounds}. "
-            "Consider adjusting parameter ranges."
-        )
-        # Optionally raise error instead of warning:
-        # raise ValueError(f"LSQ fit failed: parameters at bounds {at_bounds}")
-
-    # Check fit quality using reduced chi-squared
-    residuals = data.masked_flux - fit_flux
-    chi2 = np.sum((residuals / data.masked_flux_err) ** 2)
-    dof = len(data.masked_flux) - len(starters)
-    reduced_chi2 = chi2 / dof if dof > 0 else np.inf
-
-    logger.info(f"LSQ fit: reduced χ² = {reduced_chi2:.2f}")
-
-    if reduced_chi2 > 100 or not np.isfinite(reduced_chi2):
-        raise ValueError(
-            f"LSQ fit failed: poor fit quality (reduced χ² = {reduced_chi2:.2f})"
-        )
-
-    # Update template with validated results
-    for dprof in template_dict["disk_profiles"] + template_dict["line_profiles"]:
-        for dkey, dparam in dprof.items():
-            if not isinstance(dparam, dict):
-                continue
-
-            dname = f"{dprof['name']}_{dparam['_field_name']}"
-
-            if dname in starters:
-                high_lim = dparam["high"]
-                low_lim = dparam["low"]
-                loc = starters[dname]
-
-                if "log" in dparam["distribution"].value:
-                    loc_log = np.log10(loc)
-                    scale_log = (np.log10(high_lim) - np.log10(low_lim)) / 2
-                    upper = 10 ** (loc_log + scale_log)
-                    lower = 10 ** (loc_log - scale_log)
-                    scale = ((upper - lower) / 2).item()
-                else:
-                    scale = (high_lim - low_lim) / 2
-
-                dparam["loc"] = loc
-                dparam["scale"] = scale
-
-                if dparam["distribution"].value in ["log_uniform", "log_half_normal"]:
-                    dparam["distribution"] = "log_normal"
-                elif dparam["distribution"].value in ["uniform", "half_normal"]:
-                    dparam["distribution"] = "normal"
-
-    for dprof in template_dict["disk_profiles"] + template_dict["line_profiles"]:
-        for dkey, dparam in deepcopy(dprof).items():
-            if dkey.startswith("_"):
-                del dprof[dkey]
-
-    return Template.from_dict(template_dict)
-
-
-def perform_sampling(config: Config):
-    """
-    Perform MCMC sampling using the specified configuration.
-
-    Parameters
-    ----------
-    config : Config
-        Configuration object containing the template, data, sampler settings,
-        and output paths.
-    """
-    template = config.template
-    output_path = config.output_path
-
-    # Start the fitting process
-    logger.info(
-        f"Starting fit of <cyan>{template.name}</cyan> using the "
-        f"<magenta>{config.sampler_settings.sampler_type}</magenta> sampler."
-    )
-
-    if config.sampler_settings.sampler_type == "nuts":
-        logger.info(
-            f"<magenta>Proceeding using the {config.sampler_settings.chain_method}</magenta> method with "
-            f"<light-magenta>{config.sampler_settings.num_chains}</light-magenta> chains "
-            f"and <light-magenta>{config.sampler_settings.num_samples}</light-magenta> samples."
-        )
-        logger.info(
-            f"Targetting acceptance probability of <light-magenta>{config.sampler_settings.target_accept_prob}</light-magenta> "
-            f"with max tree depth of <light-magenta>{config.sampler_settings.max_tree_depth}</light-magenta> and a "
-            f"<light-magenta>{'dense' if config.sampler_settings.dense_mass else 'sparse'}</light-magenta> mass matrix."
-        )
-
-    # Initialize the sampler with the model and configuration
-    prior_model = construct_model(template, auto_reparam=False)
-    model = construct_model(template, auto_reparam=False)
-
-    if config.sampler_settings.sampler_type == "nuts":
-        sampler = NUTSSampler(model=model, config=config, prior_model=prior_model)
-    elif config.sampler_settings.sampler_type == "svi":
-        sampler = SVISampler(model=model, config=config, prior_model=prior_model)
-    else:
-        raise ValueError(
-            f"Unknown sampler type: {config.sampler_settings.sampler_type}"
-        )
-
-    # from .samplers.dynesty_sampler import DynestySampler
-    # sampler = DynestySampler(model=model, config=config, prior_model=prior_model)
-    # sampler = JAXNSSampler(model=model, config=config, prior_model=prior_model)
-
-    results_exist = (Path(output_path) / "results.nc").exists()
+    if not output_path.exists():
+        output_path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Created output directory: <light-red>{output_path}</light-red>")
 
     # If a results file already exists, load it instead of running the sampler
-    if results_exist:
-        delta_time = None
+    results_exist = (Path(output_path) / "results.nc").exists()
 
+    if results_exist:
         logger.info(
             f"Loading existing results at "
             f"<light-red>{output_path}/results.nc</light-red>."
         )
-        sampler._idata = az.from_netcdf(
+        idata = az.from_netcdf(
             f"{output_path}/results.nc",
         )
+        logger.info(f"Results loaded for <cyan>{config.template.name}</cyan>.")
     else:
         start_time = Time.now()
-        sampler.run()
+        idata = sampler(config, model)
         delta_time = (Time.now() - start_time).to_datetime()
-        logger.info("Sampling completed.")
 
-    logger.info("Displaying sampler results:\n" + sampler.summary.to_markdown())
-
-    if not results_exist:
-        sampler.write_results()
-
-    logger.info("Generating plots...")
-    sampler.plot_results()
-
-    if delta_time is not None:
         logger.info(
-            f"Finished processing <cyan>{template.name}</cyan> in "
+            f"Finished processing <cyan>{config.template.name}</cyan> in "
             f"<green>{delta_time}</green>."
         )
-    else:
-        logger.info(f"Results loaded for <cyan>{template.name}</cyan>.")
+
+    # Report results and write to disk
+    reporter = Reporter(config=config, idata=idata)
+    logger.info("Displaying sampler results:\n" + reporter.summary.to_markdown())
+
+    if not results_exist:
+        reporter.write_results()
+        logger.info(
+            f"Results written to <green>{config.output_path}/results.nc</green>."
+        )
+
+    # Plot results and save out figures
+    plotter = Plotter(config=config, idata=idata, summary=reporter.summary)
+
+    plotter.plot_corner()
+    plotter.plot_model_fit()
+    plotter.plot_prior_corner()
+    plotter.plot_trace()
+
+    logger.info(f"Plots saved to <green>{config.output_path}</green>.")
+
+
+# Shared options decorator
+def common_options(f):
+    """Decorator for common CLI options shared across samplers."""
+
+    @click.option(
+        "--template-path",
+        type=click.Path(exists=True),
+        required=True,
+        help="Path to the template file.",
+    )
+    @click.option(
+        "--data-path",
+        type=click.Path(exists=True),
+        required=True,
+        help="Path to the data file.",
+    )
+    @click.option(
+        "--output-path",
+        type=click.Path(),
+        default="output",
+        help="Directory to save output files and plots. Defaults to './output'.",
+    )
+    @click.option(
+        "--skip-existing/--no-skip-existing",
+        is_flag=True,
+        default=False,
+        help="Skip sampling if results already exist at the output path.",
+    )
+    @click.option(
+        "--progress-bar/--no-progress-bar",
+        is_flag=True,
+        default=True,
+        help="Display a progress bar during sampling.",
+    )
+    @click.option(
+        "--rebin",
+        type=float,
+        default=None,
+        help="Rebin the spectrum to a specified velocity resolution (in km/s).",
+    )
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        return f(*args, **kwargs)
+
+    return wrapper
 
 
 @click.group()
@@ -355,32 +210,18 @@ def cli():
     default=False,
     help="Use dense mass matrix for the NUTS sampler.",
 )
-@click.option(
-    "--prefit",
-    is_flag=True,
-    default=False,
-    help="Run a pre-fit to initialize parameters.",
-)
-@click.option(
-    "--neutra",
-    is_flag=True,
-    default=False,
-    help="Use Neutra initialization for the NUTS sampler.",
-)
 def nuts_cmd(
     template_path: str,
     data_path: str,
     output_path: str,
+    skip_existing: bool,
     num_warmup: int,
     num_samples: int,
     num_chains: int,
     target_accept_prob: float,
     max_tree_depth: int,
     dense_mass: bool,
-    prefit: bool,
-    neutra: bool,
     progress_bar: bool,
-    experimental_prefit: bool,
     rebin: float | None,
 ):
     """
@@ -391,166 +232,32 @@ def nuts_cmd(
     # Load the data given the template's redshift and mask
     data = load_data(data_path, template, rebin=rebin)
 
-    # If pre-fitting is enabled, run the pre-fit to initialize parameters
-    if experimental_prefit:
-        try:
-            template = run_pre_fit(template, template.to_dict(), data, output_path)
-            logger.info(
-                "<green>LSQ pre-fit successful - template parameters initialized</green>"
-            )
-        except ValueError as e:
-            logger.error(f"<red>{e}</red>")
-            logger.error(
-                "<red>Aborting: LSQ pre-fit failed. Check parameter bounds or data quality.</red>"
-            )
-            return
-
-    # Create configuration object
     config = Config(
         template=template,
         data=data,
-        sampler_settings=NUTSSamplerSettings(
-            num_warmup=num_warmup,
-            num_samples=num_samples,
-            num_chains=num_chains,
-            target_accept_prob=target_accept_prob,
-            max_tree_depth=max_tree_depth,
-            dense_mass=dense_mass,
-            prefit=prefit,
-            neutra=neutra,
-            progress_bar=progress_bar,
-        ),
-        output_path=output_path,
+        output_path=str(output_path),
         template_path=template_path,
         data_path=data_path,
+        skip_existing=skip_existing,
     )
 
-    # Ensure the output directory exists
-    output_path = Path(output_path)
+    # model = LSQModel(config).setup()
+    # sampler = LSQSampler(initializer=initializer, estimate_uncertainties=True)
 
-    if not output_path.exists():
-        output_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Created output directory: <light-red>{output_path}</light-red>")
+    model = NumpyroModel(config=config).setup()
+    initializer = LSQInitializer()
+    # initializer = SVIInitializer()
 
-    # Perform the sampling with the given configuration
-    perform_sampling(config)
-
-
-@cli.command("svi")
-@common_options
-@click.option(
-    "--num-steps",
-    type=int,
-    default=25000,
-    help="Number of optimization steps for SVI.",
-)
-@click.option(
-    "--num-posterior-samples",
-    type=int,
-    default=2000,
-    help="Number of posterior samples to draw after SVI optimization.",
-)
-@click.option(
-    "--learning-rate",
-    type=float,
-    default=1e-3,
-    help="Learning rate for the SVI optimizer.",
-)
-@click.option(
-    "--decay-rate",
-    type=float,
-    default=0.1,
-    help="Decay rate for the learning rate scheduler.",
-)
-@click.option(
-    "--decay-steps",
-    type=int,
-    default=20000,
-    help="Number of steps before applying learning rate decay.",
-)
-@click.option(
-    "--hidden-factors",
-    multiple=True,
-    type=int,
-    default=[8, 8],
-    help="List of hidden layer sizes for the normalizing flow guide.",
-)
-@click.option(
-    "--num-flows",
-    type=int,
-    default=2,
-    help="Number of flows in the normalizing flow guide.",
-)
-@click.option(
-    "--guide-type",
-    type=click.Choice(["bnaf", "mvn"], case_sensitive=False),
-    default="bnaf",
-    help="Guide type: 'bnaf' for AutoBNAFNormal (normalizing flow) or 'mvn' for AutoMultivariateNormal.",
-)
-def svi_cmd(
-    template_path: str,
-    data_path: str,
-    output_path: str,
-    num_steps: int,
-    num_posterior_samples: int,
-    learning_rate: float,
-    decay_rate: float,
-    decay_steps: int,
-    hidden_factors: tuple[int],
-    num_flows: int,
-    guide_type: str,
-    progress_bar: bool,
-    experimental_prefit: bool,
-    rebin: float | None,
-):
-    """
-    Fit to spectral data using Stochastic Variational Inference (SVI).
-    """
-    template = Template.from_json(Path(template_path))
-
-    # Load the data given the template's redshift and mask
-    data = load_data(data_path, template, rebin=rebin)
-
-    # If pre-fitting is enabled, run the pre-fit to initialize parameters
-    if experimental_prefit:
-        try:
-            template = run_pre_fit(template, template.to_dict(), data, output_path)
-            logger.info(
-                "<green>LSQ pre-fit successful - template parameters initialized</green>"
-            )
-        except ValueError as e:
-            logger.error(f"<red>{e}</red>")
-            logger.error(
-                "<red>Aborting: LSQ pre-fit failed. Check parameter bounds or data quality.</red>"
-            )
-            return
-
-    # Create configuration object
-    config = Config(
-        template=template,
-        data=data,
-        sampler_settings=SVISamplerSettings(
-            num_steps=num_steps,
-            num_posterior_samples=num_posterior_samples,
-            learning_rate=learning_rate,
-            decay_rate=decay_rate,
-            decay_steps=decay_steps,
-            hidden_factors=list(hidden_factors),
-            num_flows=num_flows,
-            guide_type=guide_type,
-            progress_bar=progress_bar,
-        ),
-        output_path=output_path,
-        template_path=template_path,
-        data_path=data_path,
+    sampler = NUTSSampler(
+        num_warmup=num_warmup,
+        num_samples=num_samples,
+        num_chains=num_chains,
+        target_accept_prob=target_accept_prob,
+        max_tree_depth=max_tree_depth,
+        dense_mass=dense_mass,
+        progress_bar=progress_bar,
+        initializer=initializer,
     )
 
-    # Ensure the output directory exists
-    output_path = Path(output_path)
-
-    if not output_path.exists():
-        output_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Created output directory: <light-red>{output_path}</light-red>")
-
     # Perform the sampling with the given configuration
-    perform_sampling(config)
+    perform_sampling(config, model, sampler)
