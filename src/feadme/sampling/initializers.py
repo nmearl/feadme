@@ -50,9 +50,9 @@ class LSQInitializer(BaseInitializer):
 
         # Perform LSQ fit without broad component to get better initial
         # estimates for disk and line parameters
-        lsq_model_without_broad = _compose_model(
-            config.template, integrator=model.integrator, remove_broad=True
-        )
+        # lsq_model_without_broad = _compose_model(
+        #     config.template, integrator=model.integrator, remove_broad=True
+        # )
 
         # fitter = TRFLSQFitter()
         #
@@ -69,7 +69,14 @@ class LSQInitializer(BaseInitializer):
         # model that includes the broad component, and perform a second LSQ
         # fit to refine all parameters together
         lsq_model = _compose_model(
-            config.template, integrator=model.integrator, remove_broad=False
+            config.template,
+            integrator=model.integrator,
+            remove_broad=False,
+            force_values={
+                f"{prof.name}_vel_width": 100
+                for prof in config.template.line_profiles
+                if "narrow" in prof.name
+            },
         )
 
         # for sm_wob in fit_mod_without_broad:
@@ -79,14 +86,14 @@ class LSQInitializer(BaseInitializer):
         #                 if pn in sm_wob.param_names:
         #                     setattr(sm, pn, getattr(sm_wob, pn))
 
-        fitter = TRFLSQFitter(calc_uncertainties=True)
+        fitter = TRFLSQFitter()
 
         fit_mod = fitter(
             lsq_model,
             wave,
             flux,
+            # weights=1 / flux_err,
             maxiter=10000,
-            weights=1 / flux_err,
             filter_non_finite=True,
         )
 
@@ -95,8 +102,8 @@ class LSQInitializer(BaseInitializer):
         param_name_map = {}
 
         _, indices, _ = model_to_fit_params(fit_mod)
-        fit_param_names = np.array(fit_mod.param_names)[indices]
-        fit_params = np.array(fit_mod.parameters)[indices]
+        fit_param_names = np.array(fit_mod.param_names)
+        fit_params = np.array(fit_mod.parameters)
         fit_param_map = dict(zip(fit_param_names, fit_params))
 
         for fpn in fit_param_names:
@@ -111,8 +118,16 @@ class LSQInitializer(BaseInitializer):
                 init_params[pn] = 10 ** init_params.pop(pn)
 
         # Get real redshift samples
-        fit_z = 1 / (1 + init_params.pop("redshift_z")) - 1
-        init_params["redshift"] = fit_z
+        redshift_z = init_params.pop("redshift_z")
+
+        if redshift_z is not None:
+            init_params["redshift"] = 1 / (1 + redshift_z) - 1
+        else:
+            init_params["redshift"] = np.array([config.template.redshift.value])
+
+        init_params = {
+            k: v for k, v in init_params.items() if k in config.template.parameter_names
+        }
 
         # Retrieve deterministic values
         for pn in [k for k in init_params]:
@@ -123,6 +138,8 @@ class LSQInitializer(BaseInitializer):
                 apocenter = init_params[pn]
                 init_params[f"{pn}_x_base"] = np.cos(apocenter)
                 init_params[f"{pn}_y_base"] = np.sin(apocenter)
+                init_params[f"{pn}_base"] = apocenter - np.pi
+                init_params[f"{pn}_unwrapped"] = apocenter - np.pi
 
         init_params = {k: v.item() for k, v in init_params.items()}
 
@@ -134,10 +151,10 @@ class LSQInitializer(BaseInitializer):
         return init_params, init_strategy
 
     def quick_plot(self, fit_mod, config, init_params):
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(layout="constrained")
 
         ax.errorbar(
-            config.data.masked_wave,
+            config.data.masked_wave / (1 + init_params["redshift"]),
             config.data.masked_flux,
             yerr=config.data.masked_flux_err,
             fmt="o",
@@ -158,41 +175,94 @@ class LSQInitializer(BaseInitializer):
         else:
             disk_model = fit_mod["redshift"] | fit_mod["base"]
 
-        line_submodels = [
+        narrow_line_submodels = [
             fit_mod[sm_idx]
             for sm_idx in range(fit_mod.n_submodels)
             if fit_mod[sm_idx].name
-            in [prof.name for prof in config.template.line_profiles]
+            in [
+                prof.name
+                for prof in config.template.line_profiles
+                if "narrow" in prof.name
+            ]
         ]
 
-        if len(line_submodels) > 0:
-            line_model = fit_mod["redshift"] | (np.sum(line_submodels))
+        if len(narrow_line_submodels) > 0:
+            narrow_line_model = fit_mod["redshift"] | (np.sum(narrow_line_submodels))
         else:
-            line_model = fit_mod["redshift"] | fit_mod["base"]
+            narrow_line_model = fit_mod["redshift"] | fit_mod["base"]
+
+        broad_line_submodels = [
+            fit_mod[sm_idx]
+            for sm_idx in range(fit_mod.n_submodels)
+            if fit_mod[sm_idx].name
+            in [
+                prof.name
+                for prof in config.template.line_profiles
+                if "broad" in prof.name
+            ]
+        ]
+
+        if len(broad_line_submodels) > 0:
+            broad_line_model = fit_mod["redshift"] | (np.sum(broad_line_submodels))
+        else:
+            broad_line_model = fit_mod["redshift"] | fit_mod["base"]
 
         new_wave = np.linspace(
             config.data.masked_wave[0], config.data.masked_wave[-1], 1000
         )
         tot_flux = fit_mod(new_wave)
         disk_flux = disk_model(new_wave)
-        line_flux = line_model(new_wave)
+        narrow_line_flux = narrow_line_model(new_wave)
+        broad_line_flux = broad_line_model(new_wave)
 
-        ax.plot(new_wave, tot_flux, label="LSQ Fit", color="C3")
-        ax.plot(new_wave, disk_flux, label="Disk Fit", color="C4")
-        ax.plot(new_wave, line_flux, label="Line Fit", color="C5")
+        ax.plot(
+            new_wave / (1 + init_params["redshift"]),
+            tot_flux,
+            label="LSQ Fit",
+            color="C3",
+        )
+        ax.plot(
+            new_wave / (1 + init_params["redshift"]),
+            disk_flux,
+            label="Disk Fit",
+            color="C4",
+        )
+        ax.plot(
+            new_wave / (1 + init_params["redshift"]),
+            narrow_line_flux,
+            label="Narrow Line Fit",
+            color="C5",
+            linestyle="--",
+        )
+        ax.plot(
+            new_wave / (1 + init_params["redshift"]),
+            broad_line_flux,
+            label="Broad Line Fit",
+            color="C6",
+            linestyle="--",
+        )
 
         # Print the initial parameter estimates on the figure
         param_text = "\n".join(
-            [f"{k}: {v:.3g}" for k, v in init_params.items() if np.isfinite(v)]
+            [
+                f"{k:25} {v:.5g}"
+                for k, v in init_params.items()
+                if np.isfinite(v) and "_base" not in k
+            ]
         )
         ax.text(
             0.05,
             0.95,
             param_text,
             transform=ax.transAxes,
-            fontsize=8,
+            fontsize=6,
             verticalalignment="top",
+            fontfamily="monospace",
         )
+
+        ax.set_title(f"LSQ Initial Fit for {config.template.name}")
+        ax.set_xlabel("Wavelength (Å)")
+        ax.set_ylabel("Flux (mJy)")
 
         ax.legend()
         fig.savefig(f"{config.output_path}/lsq_fit.png", dpi=300)
