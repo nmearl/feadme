@@ -193,7 +193,7 @@ class Profile:
         updates = {}
 
         for field_name in self.__dataclass_fields__:
-            if not field_name.startswith("_") and field_name != "name":
+            if not field_name.startswith("_") and field_name not in ["name"]:
                 field_value = getattr(self, field_name)
                 if isinstance(field_value, Parameter):
                     # Set both field name and qualified name
@@ -285,14 +285,13 @@ class Profile:
 class Disk(Profile, Writable):
     center: Optional[Parameter] = None
     inner_radius: Optional[Parameter] = None
-    # outer_radius: Optional[Parameter] = None
     radius_ratio: Optional[Parameter] = None
     inclination: Optional[Parameter] = None
     sigma: Optional[Parameter] = None
     q: Optional[Parameter] = None
     eccentricity: Optional[Parameter] = None
     apocenter: Optional[Parameter] = None
-    scale: Parameter = Parameter(distribution=Distribution.UNIFORM, low=0, high=2)
+    flux: Parameter = Parameter(distribution=Distribution.UNIFORM, low=0, high=2)
     offset: Parameter = Parameter(distribution=Distribution.UNIFORM, low=0, high=2)
 
 
@@ -305,7 +304,7 @@ class Shape(str, Enum):
 class Line(Profile):
     center: Optional[float] = None
     offset: Optional[Parameter] = None
-    amplitude: Optional[Parameter] = None
+    flux: Optional[Parameter] = None
     vel_width: Optional[Parameter] = None
     shape: Shape = Shape.GAUSSIAN
 

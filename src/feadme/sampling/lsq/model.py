@@ -28,7 +28,7 @@ class DiskProfileModel(Fittable1DModel):
     q = Parameter()
     eccentricity = Parameter()
     apocenter = Parameter()
-    scale = Parameter()
+    flux = Parameter()
     offset = Parameter()
 
     def __init__(
@@ -75,7 +75,7 @@ class DiskProfileModel(Fittable1DModel):
 class LineProfileModel(Fittable1DModel):
     center = Parameter(fixed=True)
     offset = Parameter()
-    amplitude = Parameter()
+    flux = Parameter()
     vel_width = Parameter()
 
     def __init__(self, log_dist: dict = None, *args, **kwargs):
@@ -240,6 +240,13 @@ def _compose_model(
     )
 
     full_model.meta["log_dist"] = full_in_par_log_dist
+
+    if (
+        "niir_narrow" in full_model.submodel_names
+        and "niil_narrow" in full_model.submodel_names
+    ):
+        niil_sm = full_model["niil_narrow"]
+        niil_sm.flux.tied = lambda m: m["niir_narrow"].flux / 3.0
 
     return full_model
 
