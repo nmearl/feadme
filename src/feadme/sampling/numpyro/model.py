@@ -6,6 +6,7 @@ import numpy as np
 import numpyro
 import numpyro.distributions as dist
 from jax.typing import ArrayLike
+from numpyro.infer.reparam import CircularReparam
 
 from ..base_model import BaseModel
 from ...core.evaluators import (
@@ -17,6 +18,17 @@ ERR = float(np.finfo(np.float32).tiny)
 EPS = 1e-6
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
+
+
+def ratio_factor(name, F_num, F_den, ratio, sigma_ln=0.02, eps=1e-30):
+    """
+    Softly constrain F_num / F_den ~= ratio via a Normal penalty in log-space.
+    sigma_ln is the 1-sigma width in ln(ratio).
+      - sigma_ln=0.02 ~ 2% (tight)
+      - sigma_ln=0.10 ~ 10% (loose)
+    """
+    log_r = jnp.log((F_num + eps) / (F_den + eps))
+    numpyro.factor(name, dist.Normal(jnp.log(ratio), sigma_ln).log_prob(log_r))
 
 
 @flax.struct.dataclass
@@ -35,12 +47,6 @@ class NumpyroModel(BaseModel):
                 prof.inner_radius.high,
             )
             param_mods[rin_name] = rin_samp
-
-            # rout_name = prof.outer_radius.qualified_name
-            # rout_samp = self.sample_param(
-            #     rout_name, prof.outer_radius, rin_samp, prof.outer_radius.high
-            # )
-            # param_mods[rout_name] = rout_samp
 
             rr_name = prof.radius_ratio.qualified_name
             rr_samp = self.sample_param(
@@ -102,45 +108,15 @@ class NumpyroModel(BaseModel):
             )
             param_mods[f"{prof.name}_outer_radius"] = param_samp
 
-        # These discourage "not-obviously-a-disk" profiles (Gaussian-ish / outflow-like)
-        # by enforcing: (i) rotation resolves over local broadening, and
-        # (ii) sufficient radial extent (avoid ultra-thin annulus).
-        #
-        # Radii are in R_g; sigma is the Eracleous local Gaussian broadening in km/s.
-        #
-        # eta = (c * sin i) / (sigma * sqrt(R_out))  should be > eta_min
-        # log(R_out / R_in)                          should be > dlogr_min
-
-        # eta_min = 2.5  # tune: 2–3 is a good starting range
-        # dlogr_min = 0.5  # tune: ~0.3–0.6 (=> Rout/Rin ~ 2–4)
-        #
-        # # penalty strengths: higher = "harder" constraint but still smooth
-        # lam_eta = 25.0
-        # lam_dlogr = 25.0
-        #
-        # # Numerically stable softplus in pure jnp (no extra imports)
-        # def softplus(x):
-        #     return jnp.log1p(jnp.exp(-jnp.abs(x))) + jnp.maximum(x, 0.0)
-        #
-        # for prof in self.config.template.disk_profiles:
-        #     rin = param_mods[f"{prof.name}_inner_radius"]
-        #     rout = param_mods[f"{prof.name}_outer_radius"]
-        #     inc = param_mods[f"{prof.name}_inclination"]
-        #     sig = param_mods[f"{prof.name}_sigma"]
-        #
-        #     # Avoid divide-by-zero / invalid radii
-        #     rout_safe = jnp.maximum(rout, EPS)
-        #     rin_safe = jnp.maximum(rin, EPS)
-        #     sig_safe = jnp.maximum(sig, EPS)
-        #
-        #     eta = (c_kms * jnp.sin(inc)) / (sig_safe * jnp.sqrt(rout_safe))
-        #     dlogr = jnp.log(rout_safe / rin_safe)
-        #
-        #     # Smooth hinge penalties: softplus(threshold - value)
-        #     eta_pen = lam_eta * jnp.sum(softplus(eta_min - eta))
-        #     dlogr_pen = lam_dlogr * jnp.sum(softplus(dlogr_min - dlogr))
-        #
-        #     numpyro.factor(f"{prof.name}_disk_like_constraints", -(eta_pen + dlogr_pen))
+        niil_narrow_flux = param_mods.get("niil_narrow_flux", None)
+        niir_narrow_flux = param_mods.get("niir_narrow_flux", None)
+        ratio_factor(
+            "nii_ratio_6583_6548",
+            niir_narrow_flux,
+            niil_narrow_flux,
+            ratio=2.95,
+            sigma_ln=0.02,
+        )
 
         # Sample white noise with better bounds
         if self.config.template.white_noise.fixed:
