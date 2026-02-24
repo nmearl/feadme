@@ -153,7 +153,7 @@ class NumpyroModel(BaseModel):
             integrator=self.integrator,
         )
 
-        total_error = flux_err * jnp.exp(white_noise)
+        total_error = jnp.sqrt(flux_err**2 + jnp.exp(2 * white_noise))
 
         numpyro.deterministic("disk_flux", total_disk_flux)
         numpyro.deterministic("line_flux", total_line_flux)
