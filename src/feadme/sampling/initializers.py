@@ -143,6 +143,12 @@ class LSQInitializer(BaseInitializer):
 
         init_params = {k: v.item() for k, v in init_params.items()}
 
+        # Log normal parameters use a separate sampling site, so they must
+        #  be included explicitly
+        for pn in fit_mod.meta["log_dist"]:
+            if fit_mod.meta["log_dist"][pn] == "log_normal":
+                init_params[f"{pn}_base"] = np.log(init_params.pop(pn))
+
         init_strategy = init_to_value(values=init_params)
 
         # Quick plot

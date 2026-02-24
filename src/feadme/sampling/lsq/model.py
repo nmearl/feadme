@@ -127,8 +127,10 @@ def _compose_model(
             if "log" in param.distribution:
                 param_low = np.log10(param_low)
                 param_high = np.log10(param_high)
-                in_par_log_dist[param.name] = True
-                full_in_par_log_dist[f"{prof.name}_{param.name}"] = True
+                in_par_log_dist[param.name] = param.distribution.value
+                full_in_par_log_dist[f"{prof.name}_{param.name}"] = (
+                    param.distribution.value
+                )
 
             in_par_bounds[param.name] = (
                 param_low,
@@ -177,8 +179,10 @@ def _compose_model(
             if "log" in param.distribution:
                 param_low = np.log10(param_low)
                 param_high = np.log10(param_high)
-                in_par_log_dist[param.name] = True
-                full_in_par_log_dist[f"{prof.name}_{param.name}"] = True
+                in_par_log_dist[param.name] = param.distribution.value
+                full_in_par_log_dist[f"{prof.name}_{param.name}"] = (
+                    param.distribution.value
+                )
 
             in_par_bounds[param.name] = (
                 param_low,
