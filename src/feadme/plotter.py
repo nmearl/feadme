@@ -24,7 +24,9 @@ class Plotter:
 
         # Retrieve additional white noise
         white_noise = self._summary.loc["white_noise", "value"]
-        total_error = self._config.data.masked_flux_err * np.exp(white_noise)
+        total_error = np.sqrt(
+            self._config.data.masked_flux_err**2 + np.exp(2 * white_noise)
+        )
 
         fig, ax = plt.subplots(layout="constrained")
 
