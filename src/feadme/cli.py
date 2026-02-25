@@ -111,8 +111,8 @@ def perform_sampling(config, model, sampler):
     # Plot results and save out figures
     plotter = Plotter(config=config, idata=idata, summary=reporter.summary)
 
-    plotter.plot_corner()
     plotter.plot_model_fit()
+    plotter.plot_corner()
     plotter.plot_prior_corner()
     plotter.plot_trace()
 
