@@ -60,17 +60,26 @@ class Plotter:
         ax.fill_between(rest_wave, lower, upper, alpha=0.5, color="C3")
 
         param_mods = self._summary["value"].to_dict()
-        del param_mods["redshift"]
+        redshift = param_mods.pop("redshift")
         del param_mods["white_noise"]
 
-        new_wave = np.linspace(rest_wave[0], rest_wave[-1], 1000)
+        new_rest_wave = np.linspace(rest_wave[0], rest_wave[-1], 1000)
+        new_obs_wave = np.linspace(
+            self._config.data.masked_wave.min(),
+            self._config.data.masked_wave.max(),
+            1000,
+        )
         tot_flux, disk_flux, line_flux = evaluate_model(
-            self._config.template, new_wave, param_mods
+            self._config.template, new_obs_wave, param_mods, redshift
         )
 
-        ax.plot(new_wave, tot_flux, label="Reconstructed Model", linestyle="--")
-        ax.plot(new_wave, disk_flux, label="Reconstructed Disk Flux", linestyle="--")
-        ax.plot(new_wave, line_flux, label="Reconstructed Line Flux", linestyle="--")
+        ax.plot(new_rest_wave, tot_flux, label="Reconstructed Model", linestyle="--")
+        ax.plot(
+            new_rest_wave, disk_flux, label="Reconstructed Disk Flux", linestyle="--"
+        )
+        ax.plot(
+            new_rest_wave, line_flux, label="Reconstructed Line Flux", linestyle="--"
+        )
         ax.set_ylabel("Flux [mJy]")
         ax.set_xlabel("Wavelength [AA]")
         ax.set_title(
@@ -198,7 +207,8 @@ class Plotter:
             layout="constrained",
         )
 
-        az.plot_trace(self._idata, var_names=var_names, axes=axes)
+        with az.rc_context({"plot.max_subplots": 50}):
+            az.plot_trace(self._idata.posterior, var_names=var_names, axes=axes)
 
         plt.savefig(f"{self._config.output_path}/trace_plot.png")
         plt.close(fig)
