@@ -72,11 +72,6 @@ class LSQInitializer(BaseInitializer):
             config.template,
             integrator=model.integrator,
             remove_broad=False,
-            force_values={
-                f"{prof.name}_vel_width": 100
-                for prof in config.template.line_profiles
-                if "narrow" in prof.name
-            },
         )
 
         # for sm_wob in fit_mod_without_broad:

@@ -15,7 +15,7 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-CC_RES = 32 * 2
+CC_RES = 32 * 3
 GK_RES = 61
 
 fixed_quad_xi = ClenshawCurtisRule(order=CC_RES // 2).integrate
