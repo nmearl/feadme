@@ -7,7 +7,11 @@ import loguru
 import optax
 import corner
 import jax
-from astropy.modeling.fitting import TRFLSQFitter, model_to_fit_params
+from astropy.modeling.fitting import (
+    TRFLSQFitter,
+    model_to_fit_params,
+    DogBoxLSQFitter,
+)
 import matplotlib.pyplot as plt
 from numpyro.infer import SVI, Trace_ELBO
 from numpyro.infer import init_to_median, init_to_value
@@ -19,10 +23,12 @@ import numpy as np
 import astropy.constants as const
 import astropy.units as u
 from numpyro.infer.initialization import init_to_value
+from pygments.unistring import Lm
 
 from ..core.parser import Config
 from .base_model import BaseModel
 from .lsq.model import _compose_model
+from .utils import diagnose_init_params
 
 logger = loguru.logger.opt(colors=True)
 
@@ -48,47 +54,14 @@ class LSQInitializer(BaseInitializer):
         flux = config.data.masked_flux
         flux_err = config.data.masked_flux_err
 
-        # Perform LSQ fit without broad component to get better initial
-        # estimates for disk and line parameters
-        # lsq_model_without_broad = _compose_model(
-        #     config.template, integrator=model.integrator, remove_broad=True
-        # )
+        lsq_model = _compose_model(config.template, integrator=model.integrator)
 
-        # fitter = TRFLSQFitter()
-        #
-        # fit_mod_without_broad = fitter(
-        #     lsq_model_without_broad,
-        #     wave,
-        #     flux,
-        #     maxiter=10000,
-        #     weights=1 / flux_err,
-        #     filter_non_finite=True,
-        # )
-
-        # Use the fitted parameters from the initial fit to construct a new
-        # model that includes the broad component, and perform a second LSQ
-        # fit to refine all parameters together
-        lsq_model = _compose_model(
-            config.template,
-            integrator=model.integrator,
-            remove_broad=False,
-        )
-
-        # for sm_wob in fit_mod_without_broad:
-        #     for sm in lsq_model:
-        #         if sm.name == sm_wob.name:
-        #             for pn in sm.param_names:
-        #                 if pn in sm_wob.param_names:
-        #                     setattr(sm, pn, getattr(sm_wob, pn))
-
-        fitter = TRFLSQFitter()
-
-        fit_mod = fitter(
+        fit_mod = TRFLSQFitter()(
             lsq_model,
             wave,
             flux,
-            # weights=1 / flux_err,
-            maxiter=10000,
+            weights=1 / flux_err,
+            maxiter=10_000,
             filter_non_finite=True,
         )
 
@@ -108,8 +81,8 @@ class LSQInitializer(BaseInitializer):
         init_params = {param_name_map[k]: fit_param_map[k] for k in fit_param_names}
 
         # Transform log-based parameters back to linear space
-        for pn in fit_mod.meta["log_dist"]:
-            if fit_mod.meta["log_dist"][pn]:
+        for pn in fit_mod.meta["distributions"]:
+            if "log" in fit_mod.meta["distributions"][pn]:
                 init_params[pn] = 10 ** init_params.pop(pn)
 
         # Get real redshift samples
@@ -133,16 +106,14 @@ class LSQInitializer(BaseInitializer):
                 apocenter = init_params[pn]
                 init_params[f"{pn}_x_base"] = np.cos(apocenter)
                 init_params[f"{pn}_y_base"] = np.sin(apocenter)
-                init_params[f"{pn}_base"] = apocenter - np.pi
-                init_params[f"{pn}_unwrapped"] = apocenter - np.pi
 
         init_params = {k: v.item() for k, v in init_params.items()}
 
         # Log normal parameters use a separate sampling site, so they must
         #  be included explicitly
-        for pn in fit_mod.meta["log_dist"]:
-            if fit_mod.meta["log_dist"][pn] == "log_normal":
-                init_params[f"{pn}_base"] = np.log(init_params.pop(pn))
+        for pn in fit_mod.meta["distributions"]:
+            if "log_normal" in fit_mod.meta["distributions"][pn]:
+                init_params[f"{pn}_base"] = np.log(init_params[pn]).item()
 
         init_strategy = init_to_value(values=init_params)
 
@@ -285,6 +256,8 @@ class SVIInitializer(BaseInitializer):
         lsq_initializer = LSQInitializer()
         init_params, init_strategy = lsq_initializer(config, model)
 
+        diagnose_init_params(model, init_params, config)
+
         # guide = AutoBNAFNormal(
         #     model,
         #     hidden_factors=[8, 8],
@@ -294,6 +267,7 @@ class SVIInitializer(BaseInitializer):
         # )
         guide = AutoMultivariateNormal(
             model,
+            # init_loc_fn=init_to_median(num_samples=1000),
             init_loc_fn=init_strategy,
         )
 
@@ -337,7 +311,11 @@ class SVIInitializer(BaseInitializer):
         )
 
         # Use median of guide samples
-        init_params = {k: jnp.median(v, axis=0) for k, v in chain_init_params.items()}
+        init_params = {
+            k: jnp.median(v, axis=0)
+            for k, v in chain_init_params.items()
+            if not k.endswith("_flux")
+        }
 
         init_strategy = init_to_value(values=init_params)
 

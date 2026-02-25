@@ -28,19 +28,17 @@ class DiskProfileModel(Fittable1DModel):
     q = Parameter()
     eccentricity = Parameter()
     apocenter = Parameter()
-    flux = Parameter()
+    area = Parameter()
     offset = Parameter()
 
     def __init__(
         self,
-        log_dist: dict = None,
         integrator: Callable = quad_jax_integrate,
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self._integrator = integrator
-        self._log_dist = log_dist or {}
 
     def evaluate(self, x, *args):
         pars = {}
@@ -48,18 +46,11 @@ class DiskProfileModel(Fittable1DModel):
         for i, pn in enumerate(self.param_names):
             pars[f"{pn}"] = np.atleast_1d(args[i])
 
-            if self._log_dist.get(pn, False):
+            if "log" in self.meta["distributions"].get(pn, ""):
                 pars[f"{pn}"] = 10 ** pars[f"{pn}"]
-
-        # Check for unphysical parameters
-        # if (pars["outer_radius"] - pars["inner_radius"]) <= 10:
-        #     return np.ones_like(x) * -99
 
         radius_ratio = pars.pop("radius_ratio")
         pars["outer_radius"] = pars["inner_radius"] * radius_ratio
-
-        if pars["outer_radius"] > 5e4:
-            return np.ones_like(x) * -99
 
         res = _compute_disk_flux_vectorized(x, **pars, integrator=self._integrator)
 
@@ -75,12 +66,8 @@ class DiskProfileModel(Fittable1DModel):
 class LineProfileModel(Fittable1DModel):
     center = Parameter(fixed=True)
     offset = Parameter()
-    flux = Parameter()
+    area = Parameter()
     vel_width = Parameter()
-
-    def __init__(self, log_dist: dict = None, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._log_dist = log_dist or {}
 
     def evaluate(self, x, *args):
         pars = {}
@@ -88,7 +75,7 @@ class LineProfileModel(Fittable1DModel):
         for i, pn in enumerate(self.param_names):
             pars[f"{pn}"] = np.atleast_1d(args[i])
 
-            if self._log_dist.get(pn, False):
+            if "log" in self.meta["distributions"].get(pn, ""):
                 pars[f"{pn}"] = 10 ** pars[f"{pn}"]
 
         res = _compute_line_flux_vectorized(x, **pars, shape=np.array([1]).astype(bool))
@@ -112,91 +99,66 @@ def _compose_model(
     remove_broad: bool = False,
 ):
     full_model = Const1D(amplitude=0, fixed={"amplitude": True}, name="base")
-    full_in_par_log_dist = {}
 
     for prof in template.disk_profiles:
         in_par_values = {}
         in_par_bounds = {}
         in_par_fixed = {}
-        in_par_log_dist = {}
 
         for param in prof.independent:
             param_low = param.low
             param_high = param.high
 
-            if "log" in param.distribution:
+            if "log" in param.distribution.value:
                 param_low = np.log10(param_low)
                 param_high = np.log10(param_high)
-                in_par_log_dist[param.name] = param.distribution.value
-                full_in_par_log_dist[f"{prof.name}_{param.name}"] = (
-                    param.distribution.value
-                )
 
             in_par_bounds[param.name] = (
                 param_low,
                 param_high,
             )
 
-            if force_values is not None and f"{prof.name}_{param.name}" in force_values:
-                param_val = force_values[f"{prof.name}_{param.name}"]
-                param_val = (
-                    np.log10(param_val) if "log" in param.distribution else param_val
-                )
-                in_par_values[param.name] = param_val
-            else:
-                in_par_values[param.name] = (param_high + param_low) / 2
+            in_par_values[param.name] = (param_high + param_low) / 2
 
         for param in prof.fixed:
             in_par_values[param.name] = param.value
             in_par_fixed[param.name] = True
 
         disk_mod = DiskProfileModel(
-            log_dist=in_par_log_dist,
             **in_par_values,
             name=prof.name,
             bounds=in_par_bounds,
             fixed=in_par_fixed,
             integrator=integrator,
+            meta={
+                "distributions": {
+                    param.name: param.distribution.value for param in prof.independent
+                }
+            },
         )
 
         full_model += disk_mod
 
     for prof in template.line_profiles:
-        if remove_broad:
-            if "broad" in prof.name.lower():
-                continue
-
         in_par_values = {}
         in_par_bounds = {}
         in_par_fixed = {}
         in_par_tied = {}
-        in_par_log_dist = {}
 
         for param in prof.independent:
             param_low = param.low
             param_high = param.high
 
-            if "log" in param.distribution:
+            if "log" in param.distribution.value:
                 param_low = np.log10(param_low)
                 param_high = np.log10(param_high)
-                in_par_log_dist[param.name] = param.distribution.value
-                full_in_par_log_dist[f"{prof.name}_{param.name}"] = (
-                    param.distribution.value
-                )
 
             in_par_bounds[param.name] = (
                 param_low,
                 param_high,
             )
 
-            if force_values is not None and f"{prof.name}_{param.name}" in force_values:
-                param_val = force_values[f"{prof.name}_{param.name}"]
-                param_val = (
-                    np.log10(param_val) if "log" in param.distribution else param_val
-                )
-                in_par_values[param.name] = param_val
-            else:
-                in_par_values[param.name] = (param_high + param_low) / 2
+            in_par_values[param.name] = (param_high + param_low) / 2
 
         for param in prof.fixed:
             in_par_values[param.name] = param.value
@@ -216,13 +178,17 @@ def _compose_model(
             )
 
         line_mod = LineProfileModel(
-            log_dist=in_par_log_dist,
             center=prof.center,
             **in_par_values,
             name=prof.name,
             bounds=in_par_bounds,
             fixed=in_par_fixed,
             tied=in_par_tied,
+            meta={
+                "distributions": {
+                    param.name: param.distribution.value for param in prof.independent
+                }
+            },
         )
 
         full_model += line_mod
@@ -243,14 +209,20 @@ def _compose_model(
         | full_model
     )
 
-    full_model.meta["log_dist"] = full_in_par_log_dist
-
+    # Fix NII line ratio if both lines are present
     if (
         "niir_narrow" in full_model.submodel_names
         and "niil_narrow" in full_model.submodel_names
     ):
         niil_sm = full_model["niil_narrow"]
-        niil_sm.flux.tied = lambda m: m["niir_narrow"].flux / 3.0
+        niil_sm.area.tied = lambda m: m["niir_narrow"].area / 3.0
+
+    # Add distribution metadata from sub models
+    full_model.meta["distributions"] = {
+        f"{sm.name}_{pn}": dist
+        for sm in full_model
+        for pn, dist in sm.meta.get("distributions", {}).items()
+    }
 
     return full_model
 

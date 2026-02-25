@@ -18,14 +18,13 @@ c_kms = const.c.to(u.km / u.s).value
 
 
 def compose_param_arrays(
-    template: Template, param_mods: Dict[str, float]
+    template: Template, param_mods: Dict[str, float], redshift: float
 ) -> Tuple[Dict[str, ArrayLike], Dict[str, ArrayLike]]:
     disk_arrays = {}
     line_arrays = {}
 
     if template.disk_profiles:
-        for param_type in [
-            "center",
+        for param_name in [
             "inner_radius",
             "outer_radius",
             "sigma",
@@ -33,42 +32,46 @@ def compose_param_arrays(
             "q",
             "eccentricity",
             "apocenter",
-            "flux",
+            "area",
             "offset",
         ]:
-            disk_arrays[param_type] = jnp.array(
+            disk_arrays[param_name] = jnp.array(
                 [
-                    param_mods.get(f"{prof.name}_{param_type}", jnp.nan)
+                    param_mods[f"{prof.name}_{param_name}"]
                     for prof in template.disk_profiles
                 ]
             )
 
+        disk_arrays["center"] = jnp.array(
+            [
+                param_mods[f"{prof.name}_center"] * (1 + redshift)
+                for prof in template.disk_profiles
+            ]
+        )
+
     if template.line_profiles:
-        line_arrays = {
-            "center": jnp.array([prof.center for prof in template.line_profiles]),
-            "offset": jnp.array(
-                [param_mods[f"{prof.name}_offset"] for prof in template.line_profiles]
-            ),
-            "vel_width": jnp.array(
+        for param_name in ["offset", "vel_width", "area"]:
+            line_arrays[param_name] = jnp.array(
                 [
-                    param_mods[f"{prof.name}_vel_width"]
+                    param_mods[f"{prof.name}_{param_name}"]
                     for prof in template.line_profiles
                 ]
-            ),
-            "flux": jnp.array(
-                [param_mods[f"{prof.name}_flux"] for prof in template.line_profiles]
-            ),
-            "shape": jnp.array(
-                [
-                    (
-                        param_mods[f"{prof.name}_shape"]
-                        if f"{prof.name}_shape" in param_mods
-                        else prof.shape == Shape.GAUSSIAN
-                    )
-                    for prof in template.line_profiles
-                ]
-            ),
-        }
+            )
+
+        line_arrays["center"] = jnp.array(
+            [prof.center * (1 + redshift) for prof in template.line_profiles]
+        )
+
+        line_arrays["shape"] = jnp.array(
+            [
+                (
+                    param_mods[f"{prof.name}_shape"]
+                    if f"{prof.name}_shape" in param_mods
+                    else prof.shape == Shape.GAUSSIAN
+                )
+                for prof in template.line_profiles
+            ]
+        )
 
     return disk_arrays, line_arrays
 
@@ -77,9 +80,10 @@ def evaluate_model(
     template: Template,
     wave: ArrayLike,
     param_mods: Dict[str, float],
+    redshift: float,
     integrator: Callable = quad_jax_integrate,
 ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
-    disk_arrays, line_arrays = compose_param_arrays(template, param_mods)
+    disk_arrays, line_arrays = compose_param_arrays(template, param_mods, redshift)
 
     # Build arrays for ALL disk profiles at once (not in a loop)
     if disk_arrays:
@@ -108,7 +112,7 @@ def _compute_line_flux_vectorized(
     center,
     offset,
     vel_width,
-    flux,  # <-- integrated line flux (area), not peak amplitude
+    area,
     shape,
 ):
     """
@@ -125,10 +129,10 @@ def _compute_line_flux_vectorized(
         Velocity offsets in km/s (n_lines,)
     vel_width : ArrayLike
         Velocity dispersion (sigma_v) in km/s (n_lines,)
-    flux : ArrayLike
+    area : ArrayLike
         Integrated line flux (area under profile in wavelength units) (n_lines,)
-        - Gaussian: integral over lambda equals flux
-        - Lorentzian: integral over lambda equals flux
+        - Gaussian: integral over lambda equals area
+        - Lorentzian: integral over lambda equals area
     shape : ArrayLike
         Boolean array: True for Gaussian, False for Lorentzian (n_lines,)
 
@@ -144,7 +148,7 @@ def _compute_line_flux_vectorized(
     centers_bc = center[None, :]  # (1, n_lines)
     offsets_bc = offset[None, :]  # (1, n_lines)
     vel_widths_bc = vel_width[None, :]  # (1, n_lines)
-    fluxes_bc = flux[None, :]  # (1, n_lines)
+    areas_bc = area[None, :]  # (1, n_lines)
     shapes_bc = shape[None, :]  # (1, n_lines)
 
     # apply velocity offset to center (non-relativistic Doppler)
@@ -159,13 +163,13 @@ def _compute_line_flux_vectorized(
     sigma_lambda = jnp.maximum(sigma_lambda, eps)
 
     # Gaussian: area = amp * sqrt(2pi) * sigma_lambda  => amp = area / (sqrt(2pi)*sigma_lambda)
-    amp_g = fluxes_bc / (jnp.sqrt(2.0 * jnp.pi) * sigma_lambda)
+    amp_g = areas_bc / (jnp.sqrt(2.0 * jnp.pi) * sigma_lambda)
     gau = amp_g * jnp.exp(-0.5 * (delta_lamb / sigma_lambda) ** 2)
 
     # Lorentzian: L = amp * gamma / (x^2 + gamma^2), integral = amp * pi  => amp = area / pi
     fwhm_lambda = 2.35482 * sigma_lambda
     gamma = jnp.maximum(0.5 * fwhm_lambda, eps)  # HWHM
-    amp_l = fluxes_bc / jnp.pi
+    amp_l = areas_bc / jnp.pi
     lor = amp_l * gamma / (delta_lamb**2 + gamma**2)
 
     line_fluxes = jnp.where(shapes_bc, gau, lor)
@@ -183,7 +187,7 @@ def _compute_disk_flux_vectorized(
     q,
     eccentricity,
     apocenter,
-    flux,  # <-- integrated disk flux (area), not "scale"
+    area,
     offset,
     integrator: Callable,
 ):
@@ -202,7 +206,7 @@ def _compute_disk_flux_vectorized(
         Line center wavelengths (n_disks,)
     inner_radius, outer_radius, sigma, inclination, q, eccentricity, apocenter : ArrayLike
         Disk parameters (n_disks,)
-    flux : ArrayLike
+    area : ArrayLike
         Integrated disk flux over the wavelength grid (n_disks,)
     offset : ArrayLike
         Additive offset (continuum-like) (n_disks,)
@@ -219,7 +223,7 @@ def _compute_disk_flux_vectorized(
     eps = 1e-30
 
     def _compute_single(
-        center_i, inner_i, outer_i, sigma_i, inc_i, q_i, ecc_i, apo_i, flux_i, offset_i
+        center_i, inner_i, outer_i, sigma_i, inc_i, q_i, ecc_i, apo_i, area_i, offset_i
     ):
         # X = -v/c; v from wavelength displacement
         velocity = (wave - center_i) / center_i * c_kms
@@ -240,10 +244,9 @@ def _compute_disk_flux_vectorized(
 
         # Normalize to unit area over wavelength grid.
         # Use abs-area to be robust if template changes sign in tails.
-        area = jnp.trapezoid(jnp.abs(res_X), wave)
-        template = res_X / (area + eps)
+        template = res_X / (jnp.trapezoid(jnp.abs(res_X), wave))
 
-        return template * flux_i + offset_i
+        return template * area_i + offset_i
 
     prof_disk_flux = jax.vmap(
         _compute_single,
@@ -257,7 +260,7 @@ def _compute_disk_flux_vectorized(
         q,
         eccentricity,
         apocenter,
-        flux,
+        area,
         offset,
     )
 

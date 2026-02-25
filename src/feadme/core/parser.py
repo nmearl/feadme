@@ -291,7 +291,7 @@ class Disk(Profile, Writable):
     q: Optional[Parameter] = None
     eccentricity: Optional[Parameter] = None
     apocenter: Optional[Parameter] = None
-    flux: Parameter = Parameter(distribution=Distribution.UNIFORM, low=0, high=2)
+    area: Parameter = Parameter(distribution=Distribution.UNIFORM, low=0, high=2)
     offset: Parameter = Parameter(distribution=Distribution.UNIFORM, low=0, high=2)
 
 
@@ -304,7 +304,7 @@ class Shape(str, Enum):
 class Line(Profile):
     center: Optional[float] = None
     offset: Optional[Parameter] = None
-    flux: Optional[Parameter] = None
+    area: Optional[Parameter] = None
     vel_width: Optional[Parameter] = None
     shape: Shape = Shape.GAUSSIAN
 

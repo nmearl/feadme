@@ -50,7 +50,7 @@ class NumpyroModel(BaseModel):
 
             rr_name = prof.radius_ratio.qualified_name
             rr_samp = self.sample_param(
-                rr_name, prof.radius_ratio, prof.radius_ratio.low, 5e4 / rin_samp
+                rr_name, prof.radius_ratio, prof.radius_ratio.low, 2e4 / rin_samp
             )
             param_mods[rr_name] = rr_samp
 
@@ -108,12 +108,12 @@ class NumpyroModel(BaseModel):
             )
             param_mods[f"{prof.name}_outer_radius"] = param_samp
 
-        niil_narrow_flux = param_mods.get("niil_narrow_flux", None)
-        niir_narrow_flux = param_mods.get("niir_narrow_flux", None)
+        niil_narrow_area = param_mods.get("niil_narrow_area", None)
+        niir_narrow_area = param_mods.get("niir_narrow_area", None)
         ratio_factor(
             "nii_ratio_6583_6548",
-            niir_narrow_flux,
-            niil_narrow_flux,
+            niir_narrow_area,
+            niil_narrow_area,
             ratio=2.95,
             sigma_ln=0.02,
         )
@@ -144,12 +144,13 @@ class NumpyroModel(BaseModel):
                 self.config.template.redshift.high,
             )
 
-        rest_wave = wave / (1 + redshift)
+        # rest_wave = wave / (1 + redshift)
 
         total_flux, total_disk_flux, total_line_flux = evaluate_model(
             template=self.config.template,
-            wave=rest_wave,
+            wave=wave,
             param_mods=param_mods,
+            redshift=redshift,
             integrator=self.integrator,
         )
 
