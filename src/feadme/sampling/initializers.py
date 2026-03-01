@@ -54,13 +54,15 @@ class LSQInitializer(BaseInitializer):
         flux = config.data.masked_flux
         flux_err = config.data.masked_flux_err
 
-        lsq_model = _compose_model(config.template, integrator=model.integrator)
+        lsq_model = _compose_model(
+            config.template, integrator=model.integrator, force_values={}
+        )
 
         fit_mod = TRFLSQFitter()(
             lsq_model,
             wave,
             flux,
-            weights=1 / flux_err,
+            # weights=1 / flux_err,
             maxiter=10_000,
             filter_non_finite=True,
         )
@@ -79,6 +81,22 @@ class LSQInitializer(BaseInitializer):
             param_name_map[fpn] = f"{model_names[pi]}_{pn}"
 
         init_params = {param_name_map[k]: fit_param_map[k] for k in fit_param_names}
+        mod_bounds = {param_name_map[k]: fit_mod.bounds[k] for k in fit_param_names}
+
+        # Clip values too close to the bounds; NUTS struggles with parameters
+        #  at the bounds since it samples in unconstrained space where the
+        #  bounds are at infinity
+        EPS_FRAC = 0.02  # stay within 2% of range from each bound
+
+        for pn in [x for x in init_params]:
+            if pn not in mod_bounds or (
+                mod_bounds[pn][0] is None and mod_bounds[pn][1] is None
+            ):
+                continue
+
+            lo, hi = mod_bounds[pn]
+            margin = EPS_FRAC * (hi - lo)
+            init_params[pn] = np.clip(init_params[pn], lo + margin, hi - margin)
 
         # Transform log-based parameters back to linear space
         for pn in fit_mod.meta["distributions"]:
@@ -108,6 +126,18 @@ class LSQInitializer(BaseInitializer):
                 init_params[f"{pn}_y_base"] = np.sin(apocenter)
 
         init_params = {k: v.item() for k, v in init_params.items()}
+
+        # Forcibly clamp the radius ratio due to the dynamic bounds handling
+        #  in the nuts sampler
+        # for pn in [k for k in init_params]:
+        #     if "radius_ratio" in pn:
+        #         init_params[pn] = np.clip(
+        #             init_params[pn],
+        #             1.1,
+        #             2e4
+        #             / init_params[pn.replace("radius_ratio", "inner_radius")]
+        #             * 0.98,
+        #         )
 
         # Log normal parameters use a separate sampling site, so they must
         #  be included explicitly

@@ -245,8 +245,8 @@ def nuts_cmd(
     # sampler = LSQSampler(initializer=initializer, estimate_uncertainties=True)
 
     model = NumpyroModel(config=config).setup()
-    initializer = LSQInitializer()
-    # initializer = SVIInitializer()
+    # initializer = LSQInitializer()
+    initializer = SVIInitializer()
 
     sampler = NUTSSampler(
         num_warmup=num_warmup,
