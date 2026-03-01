@@ -52,6 +52,15 @@ class DiskProfileModel(Fittable1DModel):
         radius_ratio = pars.pop("radius_ratio")
         pars["outer_radius"] = pars["inner_radius"] * radius_ratio
 
+        if pars["outer_radius"] > 2e4:
+            return np.full_like(x, 1e10)
+
+        # if radius_ratio <= 1 or radius_ratio > 2e4 / 5e2:
+        #     return np.full_like(x, 1e10)
+
+        if pars["outer_radius"] <= pars["inner_radius"]:
+            return np.full_like(x, 1e10)
+
         res = _compute_disk_flux_vectorized(x, **pars, integrator=self._integrator)
 
         if not np.all(np.isfinite(list(pars.values()))):
@@ -97,6 +106,7 @@ def _compose_model(
     integrator: Callable = quad_jax_integrate,
     force_values: Dict | None = None,
     remove_broad: bool = False,
+    max_outer_radius: float = 2e4,
 ):
     full_model = Const1D(amplitude=0, fixed={"amplitude": True}, name="base")
 
@@ -108,6 +118,12 @@ def _compose_model(
         for param in prof.independent:
             param_low = param.low
             param_high = param.high
+
+            # Explicitly enforce max outer radius constraint by adjusting
+            #  the bounds of inner_radius and radius_ratio
+            if param.name == "radius_ratio":
+                max_radius_ratio = max_outer_radius / 5e2
+                param_high = min(param_high, max_radius_ratio)
 
             if "log" in param.distribution.value:
                 param_low = np.log10(param_low)
