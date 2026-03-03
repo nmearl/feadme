@@ -103,6 +103,11 @@ class LSQInitializer(BaseInitializer):
             if "log" in fit_mod.meta["distributions"][pn]:
                 init_params[pn] = 10 ** init_params.pop(pn)
 
+                # Log normal parameters use a separate sampling site, so they
+                #  must be included explicitly
+                if "log_normal" in fit_mod.meta["distributions"][pn]:
+                    init_params[f"{pn}_base"] = np.log(init_params[pn])
+
         # Get real redshift samples
         redshift_z = init_params.pop("redshift_z")
 
@@ -110,10 +115,6 @@ class LSQInitializer(BaseInitializer):
             init_params["redshift"] = 1 / (1 + redshift_z) - 1
         else:
             init_params["redshift"] = np.array([config.template.redshift.value])
-
-        init_params = {
-            k: v for k, v in init_params.items() if k in config.template.parameter_names
-        }
 
         # Retrieve deterministic values
         for pn in [k for k in init_params]:
@@ -138,12 +139,6 @@ class LSQInitializer(BaseInitializer):
         #             / init_params[pn.replace("radius_ratio", "inner_radius")]
         #             * 0.98,
         #         )
-
-        # Log normal parameters use a separate sampling site, so they must
-        #  be included explicitly
-        for pn in fit_mod.meta["distributions"]:
-            if "log_normal" in fit_mod.meta["distributions"][pn]:
-                init_params[f"{pn}_base"] = np.log(init_params[pn]).item()
 
         init_strategy = init_to_value(values=init_params)
 
