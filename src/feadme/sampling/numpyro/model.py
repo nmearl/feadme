@@ -38,26 +38,8 @@ class NumpyroModel(BaseModel):
         param_mods = {}
 
         for prof in self.config.template.disk_profiles:
-            # Explicitly handle inner and outer radii
-            rin_name = prof.inner_radius.qualified_name
-            rin_samp = self.sample_param(
-                rin_name,
-                prof.inner_radius,
-                prof.inner_radius.low,
-                prof.inner_radius.high,
-            )
-            param_mods[rin_name] = rin_samp
-
-            rr_name = prof.radius_ratio.qualified_name
-            rr_samp = self.sample_param(
-                rr_name, prof.radius_ratio, prof.radius_ratio.low, 2e4 / rin_samp
-            )
-            param_mods[rr_name] = rr_samp
-
             # Sample independent parameters
             for param in prof.independent:
-                if "radius" in param.name:
-                    continue
 
                 samp_name = param.qualified_name
                 param_samp = self.sample_param(samp_name, param, param.low, param.high)
@@ -108,6 +90,16 @@ class NumpyroModel(BaseModel):
             )
             param_mods[f"{prof.name}_outer_radius"] = param_samp
 
+        # Soft constraint: discourage rout > 2e4 without chopping the prior
+        for prof in self.config.template.disk_profiles:
+            cap = 2e4
+            k = 50.0  # penalty strength
+            excess = jnp.maximum(
+                param_mods[f"{prof.name}_outer_radius"] / cap - 1.0, 0.0
+            )
+            numpyro.factor(f"{prof.name}_outer_radius_factor", -k * excess**2)
+
+        # Soft constraint: [NII] 6583/6548 ratio should be ~2.95
         niil_narrow_area = param_mods.get("niil_narrow_area", None)
         niir_narrow_area = param_mods.get("niir_narrow_area", None)
         ratio_factor(
@@ -143,8 +135,6 @@ class NumpyroModel(BaseModel):
                 self.config.template.redshift.low,
                 self.config.template.redshift.high,
             )
-
-        # rest_wave = wave / (1 + redshift)
 
         total_flux, total_disk_flux, total_line_flux = evaluate_model(
             template=self.config.template,
@@ -211,8 +201,8 @@ class NumpyroModel(BaseModel):
             )
 
         elif param.distribution == Distribution.LOG_NORMAL:
-            sigma_log = jnp.sqrt(jnp.log(1.0 + (param.scale / param.loc) ** 2))
-            mu_log = jnp.log(param.loc) - 0.5 * sigma_log**2
+            sigma_log = jnp.log1p(param.scale / param.loc)
+            mu_log = jnp.log(param.loc)
 
             base = numpyro.sample(
                 f"{samp_name}_base",

@@ -55,6 +55,9 @@ class DiskProfileModel(Fittable1DModel):
         if pars["outer_radius"] > 2e4:
             return np.full_like(x, 1e10)
 
+        if radius_ratio > 2e4 / pars["inner_radius"]:
+            return np.full_like(x, 1e10)
+
         # if radius_ratio <= 1 or radius_ratio > 2e4 / 5e2:
         #     return np.full_like(x, 1e10)
 
@@ -119,12 +122,6 @@ def _compose_model(
             param_low = param.low
             param_high = param.high
 
-            # Explicitly enforce max outer radius constraint by adjusting
-            #  the bounds of inner_radius and radius_ratio
-            if param.name == "radius_ratio":
-                max_radius_ratio = max_outer_radius / 5e2
-                param_high = min(param_high, max_radius_ratio)
-
             if "log" in param.distribution.value:
                 param_low = np.log10(param_low)
                 param_high = np.log10(param_high)
@@ -135,6 +132,17 @@ def _compose_model(
             )
 
             in_par_values[param.name] = (param_high + param_low) / 2
+
+        # Handle radius ratio explicitly
+        # for param in prof.independent:
+        #     if param.name == "radius_ratio":
+        #         max_radius_ratio = max_outer_radius / in_par_values["inner_radius"]
+        #         param_low = np.log10(param.low)
+        #         param_high = np.log10(max_radius_ratio)
+        #         in_par_values[param.name] = (param_high + param_low) / 2
+        #         print(
+        #             f"Adjusted radius_ratio upper bound: {param_low} ({10 ** param_low}), {param_high} ({10 ** param_high}): {in_par_values[param.name]}"
+        #         )
 
         for param in prof.fixed:
             in_par_values[param.name] = param.value
