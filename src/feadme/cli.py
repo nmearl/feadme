@@ -7,8 +7,9 @@ import arviz as az
 import click
 from functools import wraps
 
-from feadme.core.parser import Template, Config, Data
-from feadme.sampling.initializers import (
+from .core.parser import Template, Config, Data, Mask
+from .core.utils import update_from_lsq
+from .sampling.initializers import (
     DefaultInitializer,
     SVIInitializer,
     LSQInitializer,

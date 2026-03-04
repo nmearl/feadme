@@ -273,26 +273,19 @@ class SVIInitializer(BaseInitializer):
     decay_rate: float = 0.1
     decay_steps: int = 2_000  # ~num_steps
     progress_bar: bool = True
+    num_samples: int = 100
 
     def __call__(self, config: Config, model: BaseModel):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
-        rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
+        rng_key, svi_key, sample_key = random.split(rng_key, 3)
 
         lsq_initializer = LSQInitializer()
         init_params, init_strategy = lsq_initializer(config, model)
 
         diagnose_init_params(model, init_params, config)
 
-        # guide = AutoBNAFNormal(
-        #     model,
-        #     hidden_factors=[8, 8],
-        #     num_flows=4,
-        #     # init_loc_fn=init_to_median(num_samples=1000),
-        #     init_loc_fn=init_strategy,
-        # )
         guide = AutoMultivariateNormal(
             model,
-            # init_loc_fn=init_to_median(num_samples=1000),
             init_loc_fn=init_strategy,
         )
 
@@ -308,7 +301,7 @@ class SVIInitializer(BaseInitializer):
 
         svi_result = svi.run(
             svi_key,
-            num_steps=self.num_steps,  # May converge faster now with good init
+            num_steps=self.num_steps,
             wave=config.data.masked_wave,
             flux=config.data.masked_flux,
             flux_err=config.data.masked_flux_err,
@@ -316,7 +309,6 @@ class SVIInitializer(BaseInitializer):
             stable_update=True,
         )
 
-        # Check convergence
         recent_losses = svi_result.losses[-1000:]
         relative_std = jnp.nanstd(recent_losses) / jnp.abs(jnp.nanmean(recent_losses))
 
@@ -327,19 +319,19 @@ class SVIInitializer(BaseInitializer):
         else:
             logger.info(f"SVI converged. Final loss: {svi_result.losses[-1]:.4f}")
 
-        # Sample from guide for initialization
-        init_key, mcmc_key = random.split(mcmc_key)
-        chain_init_params = guide.sample_posterior(
-            init_key,
+        # Draw samples from the fitted guide and take the median as the single
+        # init point. More robust than the raw LSQ point because the guide has
+        # been optimized against the full likelihood, not just the data peak.
+        guide_samples = guide.sample_posterior(
+            sample_key,
             svi_result.params,
             sample_shape=(1000,),
         )
 
-        # Use median of guide samples
         init_params = {
             k: jnp.median(v, axis=0)
-            for k, v in chain_init_params.items()
-            if not k.endswith("_flux")
+            for k, v in guide_samples.items()
+            if not k.endswith("_area")  # filter any guide-internal flux sites
         }
 
         init_strategy = init_to_value(values=init_params)
