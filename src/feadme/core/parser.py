@@ -9,6 +9,12 @@ import jax.numpy as jnp
 from dacite import from_dict, Config as DaciteConfig
 from jax.tree_util import tree_map
 from jax.typing import ArrayLike
+import copy
+import loguru
+import numpy as np
+from functools import cached_property
+
+logger = loguru.logger.opt(colors=True)
 
 
 def jax_array_hook(value, target_type):
@@ -30,7 +36,12 @@ class Writable:
         raw = flax.struct.dataclasses.asdict(self)
 
         serializable = tree_map(
-            lambda v: v.tolist() if hasattr(v, "tolist") else v,
+            lambda v: (
+                v.tolist()
+                if hasattr(v, "tolist")
+                else v.value if isinstance(v, Enum) else v
+            ),
+            # lambda v: v.value if isinstance(v, Enum) else v,
             raw,
         )
 
@@ -46,7 +57,12 @@ class Writable:
         raw = flax.struct.dataclasses.asdict(self)
 
         serializable = tree_map(
-            lambda v: v.tolist() if hasattr(v, "tolist") else v,
+            lambda v: (
+                v.tolist()
+                if hasattr(v, "tolist")
+                else v.value if isinstance(v, Enum) else v
+            ),
+            # lambda v: v.value if isinstance(v, Enum) else v,
             raw,
         )
 
@@ -78,35 +94,6 @@ class Writable:
                 }
             ),
         )
-
-        # Process the instance to populate parameter lists and names
-        return cls._process_profiles(instance)
-
-    @classmethod
-    def _process_profiles(cls, instance):
-        """Process all Profile instances in the object tree"""
-        if isinstance(instance, Profile):
-            return instance.populate_param_lists()
-        elif hasattr(instance, "__dataclass_fields__"):
-            # Handle dataclass instances
-            updates = {}
-            for field_name, field in instance.__dataclass_fields__.items():
-                field_value = getattr(instance, field_name)
-                if isinstance(field_value, list):
-                    # Process lists of profiles
-                    processed_list = [
-                        cls._process_profiles(item) for item in field_value
-                    ]
-                    if processed_list != field_value:
-                        updates[field_name] = processed_list
-                elif isinstance(field_value, Profile):
-                    # Process single profile
-                    processed_profile = cls._process_profiles(field_value)
-                    if processed_profile != field_value:
-                        updates[field_name] = processed_profile
-
-            if updates:
-                return instance.replace(**updates)
 
         return instance
 
@@ -142,143 +129,55 @@ class Parameter:
     scale: Optional[float] = None
     circular: Optional[bool] = False
 
-    # Internal fields set during Profile initialization
-    _field_name: Optional[str] = None
-    _qualified_name: Optional[str] = None
-
-    def with_names(self, field_name: str, qualified_name: str):
-        """Return a new Parameter with both field name and qualified name set."""
-        return self.replace(_field_name=field_name, _qualified_name=qualified_name)
-
-    @property
-    def name(self) -> str:
-        """Get the parameter's field name."""
-        if self._field_name is None:
-            raise ValueError(
-                "Parameter name not set. This parameter hasn't been properly initialized in a Profile."
-            )
-        return self._field_name
-
-    @property
-    def qualified_name(self) -> str:
-        """Get the fully qualified parameter name (profile_name_field_name)."""
-        if self._qualified_name is None:
-            return self.name
-        return self._qualified_name
-
 
 @flax.struct.dataclass
 class Profile:
     name: Optional[str] = None
 
-    # Computed parameter lists
-    _independent_params: list[Parameter] = flax.struct.field(default_factory=list)
-    _shared_params: list[Parameter] = flax.struct.field(default_factory=list)
-    _fixed_params: list[Parameter] = flax.struct.field(default_factory=list)
+    @cached_property
+    def independent(self) -> dict[str, Parameter]:
+        return {
+            field.name: getattr(self, field.name)
+            for field in flax.struct.dataclasses.fields(self)
+            if isinstance(getattr(self, field.name), Parameter)
+            and not getattr(self, field.name).fixed
+            and getattr(self, field.name).shared is None
+        }
 
-    def populate_param_lists(self):
-        """
-        Populate parameter lists and set both field names and qualified names
-        for all parameters. Returns a new instance with populated lists and
-        properly named parameters.
-        """
-        if self._independent_params or self._shared_params or self._fixed_params:
-            return self  # Already populated
+    @cached_property
+    def sampler_independent(self) -> dict[str, Parameter]:
+        return {f"{self.name}_{k}": v for k, v in self.independent.items()}
 
-        if self.name is None:
-            raise ValueError("Profile must have a name before populating parameters")
+    @cached_property
+    def shared(self) -> dict[str, Parameter]:
+        return {
+            field.name: getattr(self, field.name)
+            for field in flax.struct.dataclasses.fields(self)
+            if isinstance(getattr(self, field.name), Parameter)
+            and not getattr(self, field.name).fixed
+            and getattr(self, field.name).shared is not None
+        }
 
-        # Get all Parameter fields from this instance
-        param_fields = {}
-        updates = {}
+    @cached_property
+    def sampler_shared(self) -> dict[str, Parameter]:
+        return {f"{self.name}_{k}": v for k, v in self.shared.items()}
 
-        for field_name in self.__dataclass_fields__:
-            if not field_name.startswith("_") and field_name not in ["name"]:
-                field_value = getattr(self, field_name)
-                if isinstance(field_value, Parameter):
-                    # Set both field name and qualified name
-                    if (
-                        field_value._field_name is None
-                        or field_value._qualified_name is None
-                    ):
-                        qualified_name = f"{self.name}_{field_name}"
-                        updated_param = field_value.with_names(
-                            field_name, qualified_name
-                        )
-                        param_fields[field_name] = updated_param
-                        updates[field_name] = updated_param
-                    else:
-                        param_fields[field_name] = field_value
+    @cached_property
+    def map_shared(self) -> dict[str, str]:
+        return {f"{self.name}_{k}": f"{v.shared}_{k}" for k, v in self.shared.items()}
 
-        independent = []
-        shared = []
-        fixed = []
+    @cached_property
+    def fixed(self) -> dict[str, Parameter]:
+        return {
+            field.name: getattr(self, field.name)
+            for field in flax.struct.dataclasses.fields(self)
+            if isinstance(getattr(self, field.name), Parameter)
+            and getattr(self, field.name).fixed
+        }
 
-        # First pass: categorize fixed vs non-fixed parameters
-        for field_name, param in param_fields.items():
-            if param.fixed:
-                fixed.append(param)
-            else:
-                independent.append(param)
-
-        # Second pass: handle shared parameters
-        shared_candidates = []
-        for field_name, param in param_fields.items():
-            if param.shared is not None and not param.fixed:
-                shared_candidates.append(param)
-
-        for shared_param in shared_candidates:
-            if shared_param in independent:
-                independent.remove(shared_param)
-            shared.append(shared_param)
-
-        updates.update(
-            {
-                "_independent_params": independent,
-                "_shared_params": shared,
-                "_fixed_params": fixed,
-            }
-        )
-
-        return self.replace(**updates)
-
-    @classmethod
-    def create(cls, name, **kwargs):
-        if name is None:
-            raise ValueError("Profile must have a name")
-
-        # Separate parameters from other kwargs
-        param_kwargs = {}
-        other_kwargs = {}
-
-        for k, v in kwargs.items():
-            if not k.startswith("_"):
-                if isinstance(v, Parameter):
-                    # Set both field name and qualified name
-                    qualified_name = f"{name}_{k}"
-                    param_kwargs[k] = v.with_names(k, qualified_name)
-                else:
-                    other_kwargs[k] = v
-            else:
-                other_kwargs[k] = v
-
-        # Create instance
-        instance = cls(name=name, **param_kwargs, **other_kwargs)
-
-        # Populate parameter lists
-        return instance.populate_param_lists()
-
-    @property
-    def independent(self) -> list[Parameter]:
-        return self._independent_params
-
-    @property
-    def shared(self) -> list[Parameter]:
-        return self._shared_params
-
-    @property
-    def fixed(self) -> list[Parameter]:
-        return self._fixed_params
+    @cached_property
+    def sampler_fixed(self) -> dict[str, Parameter]:
+        return {f"{self.name}_{k}": v for k, v in self.fixed.items()}
 
 
 @flax.struct.dataclass
@@ -320,101 +219,77 @@ class Template(Writable):
     name: str = "default_template"
     disk_profiles: list[Disk] = flax.struct.field(default_factory=list)
     line_profiles: list[Line] = flax.struct.field(default_factory=list)
-    redshift: Parameter = Parameter(
-        distribution=Distribution.UNIFORM, low=0, high=1.0, _field_name="redshift"
-    )
+    redshift: Parameter = Parameter(distribution=Distribution.UNIFORM, low=0, high=1.0)
     obs_date: float = 0.0
     white_noise: Parameter = Parameter(
-        distribution=Distribution.UNIFORM, low=-10, high=1, _field_name="white_noise"
+        distribution=Distribution.UNIFORM, low=-10, high=1
     )
     mask: list[Mask] | None = None
 
-    @property
-    def full_parameter_names(self) -> list[str]:
-        params = [self.redshift.qualified_name, self.white_noise.qualified_name]
+    @cached_property
+    def parameters(self) -> dict[str, Parameter]:
+        params = {"redshift": self.redshift, "white_noise": self.white_noise}
 
         for prof in self.disk_profiles + self.line_profiles:
-            params.extend([f"{prof.name}_{param.name}" for param in prof.independent])
-            params.extend([f"{prof.name}_{param.name}" for param in prof.shared])
-            params.extend([f"{prof.name}_{param.name}" for param in prof.fixed])
+            for field in flax.struct.dataclasses.fields(prof):
+                field_value = getattr(prof, field.name)
+                if isinstance(field_value, Parameter):
+                    params[f"{prof.name}_{field.name}"] = field_value
 
         return params
 
-    @property
-    def parameters(self) -> list[Parameter]:
-        params = [self.redshift, self.white_noise]
+    @cached_property
+    def independent_parameters(self) -> dict[str, Parameter]:
+        return {
+            k: v for k, v in self.parameters.items() if not v.fixed and v.shared is None
+        }
+
+    @cached_property
+    def fixed_parameters(self) -> dict[str, Parameter]:
+        return {k: v for k, v in self.parameters.items() if v.fixed}
+
+    @cached_property
+    def shared_parameters(self) -> dict[str, Parameter]:
+        return {k: v for k, v in self.parameters.items() if v.shared is not None}
+
+    @cached_property
+    def map_shared_parameters(self) -> dict[str, str]:
+        shared_map = {}
 
         for prof in self.disk_profiles + self.line_profiles:
-            params.extend(prof.independent)
-            params.extend(prof.shared)
-            params.extend(prof.fixed)
+            shared_map.update(prof.map_shared)
 
-        return params
+        return shared_map
 
-    @property
+    @cached_property
     def parameter_names(self) -> list[str]:
-        return [param.qualified_name for param in self.parameters]
+        return list(self.parameters.keys())
 
-    @property
+    @cached_property
     def circular_parameter_names(self) -> list[str]:
-        return [param.qualified_name for param in self.parameters if param.circular]
+        return [k for k, v in self.parameters.items() if v.circular]
 
-    @property
+    @cached_property
     def fixed_parameter_names(self) -> list[str]:
-        params = []
+        return [k for k, v in self.parameters.items() if v.fixed]
 
-        for prof in self.disk_profiles + self.line_profiles:
-            params.extend([x.qualified_name for x in prof.fixed])
-
-        if self.redshift.fixed:
-            params.append(self.redshift.name)
-
-        if self.white_noise.fixed:
-            params.append(self.white_noise.name)
-
-        return params
-
-    @property
+    @cached_property
     def shared_parameter_names(self) -> list[str]:
-        params = []
-
-        for prof in self.disk_profiles + self.line_profiles:
-            params.extend([x.qualified_name for x in prof.shared])
-
-        if self.redshift.shared:
-            params.append(self.redshift.name)
-
-        if self.white_noise.shared:
-            params.append(self.white_noise.name)
-
-        return params
+        return [k for k, v in self.parameters.items() if v.shared is not None]
 
     def fitted_parameter_names(
         self, include_shared=True, include_circ=False
     ) -> list[str]:
         params = []
 
-        for prof in self.disk_profiles + self.line_profiles:
-            params.extend(
-                [
-                    x.qualified_name
-                    for x in prof.independent
-                    if (include_circ or not x.circular)
-                ]
-            )
-            params.extend(
-                [
-                    x.qualified_name
-                    for x in prof.shared
-                    if include_shared and (include_circ or not x.circular)
-                ]
-            )
-
-        if not self.redshift.fixed:
-            params.append(self.redshift.name)
-
-        if not self.white_noise.fixed:
-            params.append(self.white_noise.name)
+        for k, v in self.parameters.items():
+            if v.fixed:
+                continue
+            if v.shared is not None and not include_shared:
+                continue
+            if v.circular and not include_circ:
+                continue
+            params.append(k)
 
         return params
 
@@ -460,6 +335,6 @@ class Config(Writable):
     template: Template
     data: Data
     output_path: str
-    template_path: str
     data_path: str
+    template_path: str | None = None
     skip_existing: bool = False

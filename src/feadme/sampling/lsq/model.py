@@ -118,7 +118,7 @@ def _compose_model(
         in_par_bounds = {}
         in_par_fixed = {}
 
-        for param in prof.independent:
+        for param_name, param in prof.independent.items():
             param_low = param.low
             param_high = param.high
 
@@ -126,27 +126,16 @@ def _compose_model(
                 param_low = np.log10(param_low)
                 param_high = np.log10(param_high)
 
-            in_par_bounds[param.name] = (
+            in_par_bounds[param_name] = (
                 param_low,
                 param_high,
             )
 
-            in_par_values[param.name] = (param_high + param_low) / 2
+            in_par_values[param_name] = (param_high + param_low) / 2
 
-        # Handle radius ratio explicitly
-        # for param in prof.independent:
-        #     if param.name == "radius_ratio":
-        #         max_radius_ratio = max_outer_radius / in_par_values["inner_radius"]
-        #         param_low = np.log10(param.low)
-        #         param_high = np.log10(max_radius_ratio)
-        #         in_par_values[param.name] = (param_high + param_low) / 2
-        #         print(
-        #             f"Adjusted radius_ratio upper bound: {param_low} ({10 ** param_low}), {param_high} ({10 ** param_high}): {in_par_values[param.name]}"
-        #         )
-
-        for param in prof.fixed:
-            in_par_values[param.name] = param.value
-            in_par_fixed[param.name] = True
+        for param_name, param in prof.fixed.items():
+            in_par_values[param_name] = param.value
+            in_par_fixed[param_name] = True
 
         disk_mod = DiskProfileModel(
             **in_par_values,
@@ -156,7 +145,8 @@ def _compose_model(
             integrator=integrator,
             meta={
                 "distributions": {
-                    param.name: param.distribution.value for param in prof.independent
+                    param_name: param.distribution.value
+                    for param_name, param in prof.independent.items()
                 }
             },
         )
@@ -169,7 +159,7 @@ def _compose_model(
         in_par_fixed = {}
         in_par_tied = {}
 
-        for param in prof.independent:
+        for param_name, param in prof.independent.items():
             param_low = param.low
             param_high = param.high
 
@@ -177,18 +167,18 @@ def _compose_model(
                 param_low = np.log10(param_low)
                 param_high = np.log10(param_high)
 
-            in_par_bounds[param.name] = (
+            in_par_bounds[param_name] = (
                 param_low,
                 param_high,
             )
 
-            in_par_values[param.name] = (param_high + param_low) / 2
+            in_par_values[param_name] = (param_high + param_low) / 2
 
-        for param in prof.fixed:
-            in_par_values[param.name] = param.value
-            in_par_fixed[param.name] = True
+        for param_name, param in prof.fixed.items():
+            in_par_values[param_name] = param.value
+            in_par_fixed[param_name] = True
 
-        for param in prof.shared:
+        for param_name, param in prof.shared.items():
             param_low = param.low
             param_high = param.high
 
@@ -196,8 +186,8 @@ def _compose_model(
                 param_low = np.log10(param_low)
                 param_high = np.log10(param_high)
 
-            in_par_values[param.name] = (param_high + param_low) / 2
-            in_par_tied[param.name] = lambda m, mn=param.shared, pn=param.name: getattr(
+            in_par_values[param_name] = (param_high + param_low) / 2
+            in_par_tied[param_name] = lambda m, mn=param.shared, pn=param_name: getattr(
                 m[mn], pn
             )
 
@@ -210,7 +200,8 @@ def _compose_model(
             tied=in_par_tied,
             meta={
                 "distributions": {
-                    param.name: param.distribution.value for param in prof.independent
+                    param_name: param.distribution.value
+                    for param_name, param in prof.independent.items()
                 }
             },
         )
@@ -218,16 +209,17 @@ def _compose_model(
         full_model += line_mod
 
     # Redshift
+    z_lower_limit = 1 / (1 + template.redshift.high) - 1
+    z_upper_limit = 1 / (1 + template.redshift.low) - 1
+    z_value = (
+        template.redshift.value or 1 / (1 + (z_lower_limit + z_upper_limit) / 2) - 1
+    )
+
     full_model = (
         RedshiftScaleFactor(
-            z=template.redshift.value,
+            z=z_value,
             fixed={"z": template.redshift.fixed},
-            bounds={
-                "z": (
-                    1 / (1 + template.redshift.high) - 1,
-                    1 / (1 + template.redshift.low) - 1,
-                )
-            },
+            bounds={"z": (z_lower_limit, z_upper_limit)},
             name="redshift",
         ).inverse
         | full_model

@@ -6,6 +6,7 @@ import numpy as np
 import numpyro
 import numpyro.distributions as dist
 from jax.typing import ArrayLike
+from numpyro.distributions.transforms import ExpTransform
 from numpyro.infer.reparam import CircularReparam
 
 from ..base_model import BaseModel
@@ -37,54 +38,28 @@ class NumpyroModel(BaseModel):
         # Dictionary to store all sampled parameters
         param_mods = {}
 
-        for prof in self.config.template.disk_profiles:
-            # Sample independent parameters
-            for param in prof.independent:
+        # Sample independent parameters
+        for samp_name, param in self.config.template.independent_parameters.items():
+            param_samp = self.sample_param(samp_name, param, param.low, param.high)
+            param_mods[samp_name] = param_samp
 
-                samp_name = param.qualified_name
-                param_samp = self.sample_param(samp_name, param, param.low, param.high)
-                param_mods[samp_name] = param_samp
-
-            # Add fixed parameters
-            for param in prof.fixed:
-                samp_name = param.qualified_name
-                param_samp = numpyro.deterministic(samp_name, param.value)
-                param_mods[samp_name] = param_samp
-
-        for prof in self.config.template.line_profiles:
-            # Sample independent parameters
-            for param in prof.independent:
-                samp_name = param.qualified_name
-                param_samp = self.sample_param(samp_name, param, param.low, param.high)
-                param_mods[samp_name] = param_samp
-
-            # Add fixed parameters
-            for param in prof.fixed:
-                samp_name = param.qualified_name
-                param_samp = numpyro.deterministic(samp_name, param.value)
-                param_mods[samp_name] = param_samp
+        # Add fixed parameters
+        for samp_name, param in self.config.template.fixed_parameters.items():
+            param_samp = numpyro.deterministic(samp_name, param.value)
+            param_mods[samp_name] = param_samp
 
         # Add shared parameters
-        for prof in self.config.template.disk_profiles:
-            for param in prof.shared:
-                samp_name = param.qualified_name
-                param_samp = numpyro.deterministic(
-                    samp_name, param_mods[f"{param.shared}_{param.name}"]
-                )
-                param_mods[samp_name] = param_samp
-
-        for prof in self.config.template.line_profiles:
-            for param in prof.shared:
-                samp_name = param.qualified_name
-                param_samp = numpyro.deterministic(
-                    samp_name, param_mods[f"{param.shared}_{param.name}"]
-                )
-                param_mods[samp_name] = param_samp
+        for (
+            samp_name,
+            targ_name,
+        ) in self.config.template.map_shared_parameters.items():
+            param_samp = numpyro.deterministic(samp_name, param_mods[targ_name])
+            param_mods[samp_name] = param_samp
 
         # Compose outer radius from inner radius and radius ratio
         for prof in self.config.template.disk_profiles:
-            inner_radius = param_mods[prof.inner_radius.qualified_name]
-            radius_ratio = param_mods.pop(prof.radius_ratio.qualified_name)
+            inner_radius = param_mods[f"{prof.name}_inner_radius"]
+            radius_ratio = param_mods[f"{prof.name}_radius_ratio"]
             param_samp = numpyro.deterministic(
                 f"{prof.name}_outer_radius", inner_radius * radius_ratio
             )
@@ -100,8 +75,8 @@ class NumpyroModel(BaseModel):
             numpyro.factor(f"{prof.name}_outer_radius_factor", -k * excess**2)
 
         # Soft constraint: [NII] 6583/6548 ratio should be ~2.95
-        niil_narrow_area = param_mods.get("niil_narrow_area", None)
-        niir_narrow_area = param_mods.get("niir_narrow_area", None)
+        niil_narrow_area = param_mods["niil_narrow_area"]
+        niir_narrow_area = param_mods["niir_narrow_area"]
         ratio_factor(
             "nii_ratio_6583_6548",
             niir_narrow_area,
@@ -110,41 +85,15 @@ class NumpyroModel(BaseModel):
             sigma_ln=0.02,
         )
 
-        # Sample white noise with better bounds
-        if self.config.template.white_noise.fixed:
-            white_noise = numpyro.deterministic(
-                "white_noise", self.config.template.white_noise.value
-            )
-        else:
-            white_noise = self.sample_param(
-                "white_noise",
-                self.config.template.white_noise,
-                self.config.template.white_noise.low,
-                self.config.template.white_noise.high,
-            )
-
-        # Sample redshift
-        if self.config.template.redshift.fixed:
-            redshift = numpyro.deterministic(
-                "redshift", self.config.template.redshift.value
-            )
-        else:
-            redshift = self.sample_param(
-                "redshift",
-                self.config.template.redshift,
-                self.config.template.redshift.low,
-                self.config.template.redshift.high,
-            )
-
         total_flux, total_disk_flux, total_line_flux = evaluate_model(
             template=self.config.template,
             wave=wave,
             param_mods=param_mods,
-            redshift=redshift,
+            redshift=param_mods["redshift"],
             integrator=self.integrator,
         )
 
-        total_error = jnp.sqrt(flux_err**2 + jnp.exp(2 * white_noise))
+        total_error = jnp.sqrt(flux_err**2 + jnp.exp(2 * param_mods["white_noise"]))
 
         numpyro.deterministic("disk_flux", total_disk_flux)
         numpyro.deterministic("line_flux", total_line_flux)
@@ -170,7 +119,7 @@ class NumpyroModel(BaseModel):
                 samp_name, jnp.mod(jnp.arctan2(y, x), 2 * jnp.pi)
             )
 
-        if param.name == "inclination":
+        if "inclination" in samp_name:
             mu_min = jnp.cos(upper_bound)  # cos(i_max)
             mu_max = jnp.cos(lower_bound)  # cos(i_min)
             # mu = _logit_uniform(f"{samp_name}_base", mu_min, mu_max)
@@ -204,16 +153,18 @@ class NumpyroModel(BaseModel):
             sigma_log = jnp.log1p(param.scale / param.loc)
             mu_log = jnp.log(param.loc)
 
-            base = numpyro.sample(
-                f"{samp_name}_base",
-                dist.TruncatedNormal(
-                    loc=mu_log,
-                    scale=sigma_log,
-                    low=jnp.log(lower_bound),
-                    high=jnp.log(upper_bound),
+            param_samp = numpyro.sample(
+                samp_name,
+                dist.TransformedDistribution(
+                    dist.TruncatedNormal(
+                        loc=mu_log,
+                        scale=sigma_log,
+                        low=jnp.log(lower_bound),
+                        high=jnp.log(upper_bound),
+                    ),
+                    ExpTransform(),
                 ),
             )
-            param_samp = numpyro.deterministic(samp_name, jnp.exp(base))
 
         else:
             raise ValueError(f"Unsupported distribution: {param.distribution}")
