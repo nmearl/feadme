@@ -111,13 +111,7 @@ class Plotter:
         axes_scale = ["linear"] * len(var_names)
 
         for i, var in enumerate(var_names):
-            par = {
-                k: v
-                for k, v in zip(
-                    self._config.template.parameter_names,
-                    self._config.template.parameters,
-                )
-            }.get(var)
+            par = self._config.template.parameters.get(var)
 
             if par is not None and "log" in par.distribution.value:
                 axes_scale[i] = "log"
@@ -161,13 +155,7 @@ class Plotter:
         axes_scale = ["linear"] * len(var_names)
 
         for i, var in enumerate(var_names):
-            par = {
-                k: v
-                for k, v in zip(
-                    self._config.template.parameter_names,
-                    self._config.template.parameters,
-                )
-            }.get(var)
+            par = self._config.template.parameters.get(var)
 
             if par is not None and "log" in par.distribution.value:
                 axes_scale[i] = "log"

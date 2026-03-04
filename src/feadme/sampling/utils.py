@@ -20,16 +20,32 @@ def jitter_unconstrained(init_params, key, scale=0.05):
 
 
 def make_init_params(model, model_args, model_kwargs, base_values, rng_keys):
+    """
+    Convert constrained starting point(s) to unconstrained init_params for
+    mcmc.run(), with small jitter applied to each chain.
+
+    Parameters
+    ----------
+    base_values : dict | list[dict]
+        Either a single constrained parameter dict (all chains share it) or
+        a list of dicts of length num_chains (one starting point per chain).
+    rng_keys : array
+        Per-chain RNG keys, shape (num_chains, 2).
+    """
+    if isinstance(base_values, dict):
+        base_values = [base_values] * len(rng_keys)
+
     inits = []
-    for k in rng_keys:
+    for values, k in zip(base_values, rng_keys):
         init_params, *_ = initialize_model(
             k,
             model,
             model_args=model_args,
             model_kwargs=model_kwargs,
-            init_strategy=init_to_value(values=base_values),
+            init_strategy=init_to_value(values=values),
         )
         inits.append(jitter_unconstrained(init_params, k, scale=0.02))
+
     return jax.tree.map(lambda *xs: jnp.stack(xs, 0), *inits)
 
 
