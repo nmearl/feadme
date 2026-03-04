@@ -35,21 +35,9 @@ class NUTSSampler(BaseSampler):
 
     def __call__(self, config: Config, model: BaseModel) -> az.InferenceData:
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
-        rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
+        rng_key, mcmc_key = random.split(rng_key)
 
         init_params, init_strategy = self.initializer(config, model)
-
-        # init_params = make_init_params(
-        #     model,
-        #     model_args=(),
-        #     model_kwargs=dict(
-        #         wave=config.data.masked_wave,
-        #         flux=config.data.masked_flux,
-        #         flux_err=config.data.masked_flux_err,
-        #     ),
-        #     base_values=base_init_params,
-        #     rng_keys=jax.random.split(jax.random.PRNGKey(0), self.num_chains),
-        # )
 
         kernel = NUTS(
             model,
@@ -70,17 +58,15 @@ class NUTSSampler(BaseSampler):
         )
 
         mcmc.run(
-            rng_key,
+            mcmc_key,
             wave=config.data.masked_wave,
             flux=config.data.masked_flux,
             flux_err=config.data.masked_flux_err,
             extra_fields=("num_steps", "diverging"),
-            # init_params=init_params,
         )
 
         posterior_samples = mcmc.get_samples(group_by_chain=True)
 
-        # Report diagnostics immediately after sampling
         extra = mcmc.get_extra_fields()
         num_steps = extra["num_steps"]
         tree_depth = jnp.log2(num_steps).astype(int) + 1
