@@ -25,6 +25,7 @@ import astropy.units as u
 from numpyro.infer.initialization import init_to_value
 from pygments.unistring import Lm
 
+from .lsq.utils import format_posterior_samples
 from ..core.parser import Config
 from .base_model import BaseModel
 from .lsq.model import _compose_model
@@ -54,9 +55,7 @@ class LSQInitializer(BaseInitializer):
         flux = config.data.masked_flux
         flux_err = config.data.masked_flux_err
 
-        lsq_model = _compose_model(
-            config.template, integrator=model.integrator, force_values={}
-        )
+        lsq_model = _compose_model(config.template, integrator=model.integrator)
 
         fit_mod = TRFLSQFitter()(
             lsq_model,
@@ -67,78 +66,7 @@ class LSQInitializer(BaseInitializer):
             filter_non_finite=True,
         )
 
-        # Construct fitted parameters dictionary
-        model_names = [m.name for m in lsq_model]
-        param_name_map = {}
-
-        _, indices, _ = model_to_fit_params(fit_mod)
-        fit_param_names = np.array(fit_mod.param_names)
-        fit_params = np.array(fit_mod.parameters)
-        fit_param_map = dict(zip(fit_param_names, fit_params))
-
-        for fpn in fit_param_names:
-            pn, pi = "_".join(fpn.split("_")[:-1]), int(fpn.split("_")[-1])
-            param_name_map[fpn] = f"{model_names[pi]}_{pn}"
-
-        init_params = {param_name_map[k]: fit_param_map[k] for k in fit_param_names}
-        mod_bounds = {param_name_map[k]: fit_mod.bounds[k] for k in fit_param_names}
-
-        # Clip values too close to the bounds; NUTS struggles with parameters
-        #  at the bounds since it samples in unconstrained space where the
-        #  bounds are at infinity
-        EPS_FRAC = 0.02  # stay within 2% of range from each bound
-
-        for pn in [x for x in init_params]:
-            if pn not in mod_bounds or (
-                mod_bounds[pn][0] is None and mod_bounds[pn][1] is None
-            ):
-                continue
-
-            lo, hi = mod_bounds[pn]
-            margin = EPS_FRAC * (hi - lo)
-            init_params[pn] = np.clip(init_params[pn], lo + margin, hi - margin)
-
-        # Transform log-based parameters back to linear space
-        for pn in fit_mod.meta["distributions"]:
-            if "log" in fit_mod.meta["distributions"][pn]:
-                init_params[pn] = 10 ** init_params.pop(pn)
-
-                # Log normal parameters use a separate sampling site, so they
-                #  must be included explicitly
-                if "log_normal" in fit_mod.meta["distributions"][pn]:
-                    init_params[f"{pn}_base"] = np.log(init_params[pn])
-
-        # Get real redshift samples
-        redshift_z = init_params.pop("redshift_z")
-
-        if redshift_z is not None:
-            init_params["redshift"] = 1 / (1 + redshift_z) - 1
-        else:
-            init_params["redshift"] = np.array([config.template.redshift.value])
-
-        # Retrieve deterministic values
-        for pn in [k for k in init_params]:
-            if "inclination" in pn:
-                inclination = init_params[pn]
-                init_params[f"{pn}_base"] = np.cos(inclination)
-            elif "apocenter" in pn:
-                apocenter = init_params[pn]
-                init_params[f"{pn}_x_base"] = np.cos(apocenter)
-                init_params[f"{pn}_y_base"] = np.sin(apocenter)
-
-        init_params = {k: v.item() for k, v in init_params.items()}
-
-        # Forcibly clamp the radius ratio due to the dynamic bounds handling
-        #  in the nuts sampler
-        # for pn in [k for k in init_params]:
-        #     if "radius_ratio" in pn:
-        #         init_params[pn] = np.clip(
-        #             init_params[pn],
-        #             1.1,
-        #             2e4
-        #             / init_params[pn.replace("radius_ratio", "inner_radius")]
-        #             * 0.98,
-        #         )
+        init_params = format_posterior_samples(fit_mod, wave, flux, flux_err)
 
         init_strategy = init_to_value(values=init_params)
 
@@ -337,6 +265,12 @@ class SVIInitializer(BaseInitializer):
         init_strategy = init_to_value(values=init_params)
 
         self.quick_plot(svi_result, guide, config)
+
+        # After training the guide, extract the Cholesky factor as an initial mass matrix
+        params = svi_result.params
+        # AutoMultivariateNormal stores its scale_tril under this key
+        scale_tril = params["auto_scale_tril"]
+        mass_matrix = scale_tril @ scale_tril.T
 
         return init_params, init_strategy
 
