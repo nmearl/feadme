@@ -32,7 +32,7 @@ class Reporter:
                 round_to=10,
             )
 
-            if len(self._config.template.circular_parameter_names) > 0:
+            if len(self._config.template.iter_circular) > 0:
                 circular_summary = az.summary(
                     self._idata,
                     stat_focus="mean",
@@ -40,12 +40,12 @@ class Reporter:
                     var_names=[
                         x
                         for x in self._idata.posterior.data_vars
-                        if x in self._config.template.circular_parameter_names
+                        if x in [pr.name for pr in self._config.template.iter_circular]
                     ],
                     circ_var_names=[
                         x
                         for x in self._idata.posterior.data_vars
-                        if x in self._config.template.circular_parameter_names
+                        if x in [pr.name for pr in self._config.template.iter_circular]
                     ],
                     round_to=10,
                 )
@@ -78,10 +78,10 @@ class Reporter:
             summary = linear_summary
 
         # Add in fixed parameters with zero error bars
-        for var in self._config.template.fixed_parameter_names:
-            if var in self._idata.posterior.data_vars:
-                val = float(self._idata.posterior[var].values.flat[0])
-                summary.loc[var] = {
+        for param_ref in self._config.template.iter_fixed:
+            if param_ref.name in self._idata.posterior.data_vars:
+                val = float(self._idata.posterior[param_ref.name].values.flat[0])
+                summary.loc[param_ref.name] = {
                     "value": val,
                     "err_lo": 0.0,
                     "err_hi": 0.0,
@@ -98,11 +98,11 @@ class Reporter:
         ]
 
         summary["shared"] = summary.index.isin(
-            self._config.template.shared_parameter_names
+            [param_ref.name for param_ref in self._config.template.iter_shared]
         )
 
         summary["fixed"] = summary.index.isin(
-            self._config.template.fixed_parameter_names
+            [param_ref.name for param_ref in self._config.template.iter_fixed]
         )
 
         # Sort table so fixed variables are at the bottom, then sort by index

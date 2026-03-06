@@ -326,6 +326,10 @@ class Template(Writable):
         return self.index.shared
 
     @property
+    def iter_circular(self) -> tuple[ParameterRef, ...]:
+        return self.index.circular
+
+    @property
     def iter_all(self) -> tuple[ParameterRef, ...]:
         return self.index.parameters
 

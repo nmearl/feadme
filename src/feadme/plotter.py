@@ -111,9 +111,9 @@ class Plotter:
         axes_scale = ["linear"] * len(var_names)
 
         for i, var in enumerate(var_names):
-            par = self._config.template.parameters.get(var)
+            param_ref = next(x for x in self._config.template.iter_all if x.name == var)
 
-            if par is not None and "log" in par.distribution.value:
+            if param_ref is not None and "log" in param_ref.param.distribution.value:
                 axes_scale[i] = "log"
 
         # Create the corner plot
@@ -155,9 +155,9 @@ class Plotter:
         axes_scale = ["linear"] * len(var_names)
 
         for i, var in enumerate(var_names):
-            par = self._config.template.parameters.get(var)
+            param_ref = next(x for x in self._config.template.iter_all if x.name == var)
 
-            if par is not None and "log" in par.distribution.value:
+            if param_ref is not None and "log" in param_ref.param.distribution.value:
                 axes_scale[i] = "log"
 
         # Create the corner plot
