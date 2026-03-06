@@ -8,7 +8,6 @@ import click
 from functools import wraps
 
 from .core.parser import Template, Config, Data, Mask
-from .core.utils import update_from_lsq
 from .sampling.initializers import (
     DefaultInitializer,
     SVIInitializer,
@@ -20,7 +19,8 @@ from .reporter import Reporter
 from .sampling.lsq.model import LSQModel
 from .sampling.lsq.sampler import LSQSampler
 from .sampling.numpyro.model import NumpyroModel
-from .sampling.numpyro.sampler import NUTSSampler
+from .sampling.numpyro.nuts.sampler import NUTSSampler
+from .sampling.numpyro.neutra.sampler import NeuTraSampler
 from .utils import rebin_spectrum
 
 logger = loguru.logger.opt(colors=True)
@@ -242,12 +242,12 @@ def nuts_cmd(
         skip_existing=skip_existing,
     )
 
-    # model = LSQModel(config).setup()
-    # sampler = LSQSampler(initializer=initializer, estimate_uncertainties=True)
-
     model = NumpyroModel(config=config).setup()
     # initializer = LSQInitializer()
     initializer = SVIInitializer()
+
+    # model = LSQModel(config).setup()
+    # sampler = LSQSampler(estimate_uncertainties=False)
 
     sampler = NUTSSampler(
         num_warmup=num_warmup,
