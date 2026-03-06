@@ -1,101 +1,70 @@
 import json
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-import flax
 import flax.struct
 import jax.numpy as jnp
-from dacite import from_dict, Config as DaciteConfig
+from dacite import Config as DaciteConfig
+from dacite import from_dict as dacite_from_dict
 from jax.tree_util import tree_map
 from jax.typing import ArrayLike
-import copy
-import loguru
-import numpy as np
-from functools import cached_property
-
-logger = loguru.logger.opt(colors=True)
 
 
-def jax_array_hook(value, target_type):
-    # If dacite sees a list for a field typed as ArrayLike, convert it
-    if issubclass(target_type, jnp.ndarray) and isinstance(value, list):
-        return jnp.array(value)
+def _to_serializable(value):
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    if isinstance(value, Enum):
+        return value.value
     return value
 
 
 class Writable:
     """
-    A mixin class for objects that can be serialized to JSON.
+    Mixin for JSON serialization. Subclasses may define
+    `_EXCLUDE_FROM_SERIALIZATION` as a frozenset of field names to omit
+    when writing to disk.
     """
 
-    def to_json(self, path: str):
-        """
-        Serialize the object to a JSON file.
-        """
+    _EXCLUDE_FROM_SERIALIZATION: frozenset[str] = frozenset()
+
+    def to_dict(self) -> dict[str, Any]:
         raw = flax.struct.dataclasses.asdict(self)
+        raw = {
+            k: v for k, v in raw.items() if k not in self._EXCLUDE_FROM_SERIALIZATION
+        }
+        return tree_map(_to_serializable, raw)
 
-        serializable = tree_map(
-            lambda v: (
-                v.tolist()
-                if hasattr(v, "tolist")
-                else v.value if isinstance(v, Enum) else v
-            ),
-            # lambda v: v.value if isinstance(v, Enum) else v,
-            raw,
-        )
-
+    def to_json(self, path: str | Path) -> dict[str, Any]:
+        serializable = self.to_dict()
         with open(path, "w") as f:
             json.dump(serializable, f, indent=4)
-
-        return serializable
-
-    def to_dict(self):
-        """
-        Serialize the object to a JSON file.
-        """
-        raw = flax.struct.dataclasses.asdict(self)
-
-        serializable = tree_map(
-            lambda v: (
-                v.tolist()
-                if hasattr(v, "tolist")
-                else v.value if isinstance(v, Enum) else v
-            ),
-            # lambda v: v.value if isinstance(v, Enum) else v,
-            raw,
-        )
-
         return serializable
 
     @classmethod
     def from_json(cls, path: str | Path):
-        """
-        Deserialize the object from a JSON file.
-        """
         with open(path, "r") as f:
             raw = json.load(f)
-
         return cls.from_dict(raw)
 
     @classmethod
+    def _after_from_dict(cls, instance):
+        return instance
+
+    @classmethod
     def from_dict(cls, raw: dict):
-        """
-        Deserialize the object from a dictionary.
-        """
-        instance = from_dict(
+        instance = dacite_from_dict(
             data_class=cls,
             data=raw,
             config=DaciteConfig(
                 type_hooks={
-                    ArrayLike: lambda v: jnp.array(v),
+                    ArrayLike: lambda v: jnp.asarray(v),
                     Distribution: lambda v: Distribution(v),
                     Shape: lambda v: Shape(v),
                 }
             ),
         )
-
-        return instance
+        return cls._after_from_dict(instance)
 
 
 class Distribution(str, Enum):
@@ -117,67 +86,95 @@ DIST_MAP = {
 }
 
 
+class Shape(str, Enum):
+    GAUSSIAN = "gaussian"
+    LORENTZIAN = "lorentzian"
+
+
 @flax.struct.dataclass
 class Parameter:
     distribution: Distribution = Distribution.UNIFORM
     value: Optional[float] = None
-    fixed: Optional[bool] = False
+    fixed: bool = False
     shared: Optional[str] = None
     low: Optional[float] = None
     high: Optional[float] = None
     loc: Optional[float] = None
     scale: Optional[float] = None
-    circular: Optional[bool] = False
+    circular: bool = False
+
+
+@flax.struct.dataclass
+class ParameterRef:
+    """
+    Canonical reference to a single model parameter. `name` is the
+    fully-qualified sampler name, e.g. ``disk1_inclination``. For
+    profile-level parameters, `profile_name` and `field_name`
+    are set. For top-level parameters (redshift, white_noise) they are None.
+    """
+
+    name: str
+    param: Parameter
+    profile_name: Optional[str] = None
+    field_name: Optional[str] = None
+    target_name: Optional[str] = None
+
+
+@flax.struct.dataclass
+class TemplateIndex:
+    """
+    Single precomputed index consumed by the NumPyro model.
+
+    All four tuples are views over the same `ParameterRef` objects built once
+    by `_build_template_index`.
+    """
+
+    parameters: tuple[ParameterRef, ...] = flax.struct.field(
+        default_factory=tuple, pytree_node=False
+    )
+    independent: tuple[ParameterRef, ...] = flax.struct.field(
+        default_factory=tuple, pytree_node=False
+    )
+    fixed: tuple[ParameterRef, ...] = flax.struct.field(
+        default_factory=tuple, pytree_node=False
+    )
+    shared: tuple[ParameterRef, ...] = flax.struct.field(
+        default_factory=tuple, pytree_node=False
+    )
+    circular: tuple[ParameterRef, ...] = flax.struct.field(
+        default_factory=tuple, pytree_node=False
+    )
 
 
 @flax.struct.dataclass
 class Profile:
     name: Optional[str] = None
 
-    @cached_property
-    def independent(self) -> dict[str, Parameter]:
-        return {
-            field.name: getattr(self, field.name)
+    def iter_parameter_fields(self) -> tuple[tuple[str, Parameter], ...]:
+        """All (field_name, Parameter) pairs on this profile."""
+        return tuple(
+            (field.name, getattr(self, field.name))
             for field in flax.struct.dataclasses.fields(self)
             if isinstance(getattr(self, field.name), Parameter)
-            and not getattr(self, field.name).fixed
-            and getattr(self, field.name).shared is None
-        }
+        )
 
-    @cached_property
-    def sampler_independent(self) -> dict[str, Parameter]:
-        return {f"{self.name}_{k}": v for k, v in self.independent.items()}
+    @property
+    def iter_independent(self) -> tuple[tuple[str, Parameter], ...]:
+        return tuple(
+            (n, p)
+            for n, p in self.iter_parameter_fields()
+            if not p.fixed and p.shared is None
+        )
 
-    @cached_property
-    def shared(self) -> dict[str, Parameter]:
-        return {
-            field.name: getattr(self, field.name)
-            for field in flax.struct.dataclasses.fields(self)
-            if isinstance(getattr(self, field.name), Parameter)
-            and not getattr(self, field.name).fixed
-            and getattr(self, field.name).shared is not None
-        }
+    @property
+    def iter_fixed(self) -> tuple[tuple[str, Parameter], ...]:
+        return tuple((n, p) for n, p in self.iter_parameter_fields() if p.fixed)
 
-    @cached_property
-    def sampler_shared(self) -> dict[str, Parameter]:
-        return {f"{self.name}_{k}": v for k, v in self.shared.items()}
-
-    @cached_property
-    def map_shared(self) -> dict[str, str]:
-        return {f"{self.name}_{k}": f"{v.shared}_{k}" for k, v in self.shared.items()}
-
-    @cached_property
-    def fixed(self) -> dict[str, Parameter]:
-        return {
-            field.name: getattr(self, field.name)
-            for field in flax.struct.dataclasses.fields(self)
-            if isinstance(getattr(self, field.name), Parameter)
-            and getattr(self, field.name).fixed
-        }
-
-    @cached_property
-    def sampler_fixed(self) -> dict[str, Parameter]:
-        return {f"{self.name}_{k}": v for k, v in self.fixed.items()}
+    @property
+    def iter_shared(self) -> tuple[tuple[str, Parameter], ...]:
+        return tuple(
+            (n, p) for n, p in self.iter_parameter_fields() if p.shared is not None
+        )
 
 
 @flax.struct.dataclass
@@ -190,17 +187,16 @@ class Disk(Profile, Writable):
     q: Optional[Parameter] = None
     eccentricity: Optional[Parameter] = None
     apocenter: Optional[Parameter] = None
-    area: Parameter = Parameter(distribution=Distribution.UNIFORM, low=0, high=2)
-    offset: Parameter = Parameter(distribution=Distribution.UNIFORM, low=0, high=2)
-
-
-class Shape(str, Enum):
-    GAUSSIAN = "gaussian"
-    LORENTZIAN = "lorentzian"
+    area: Optional[Parameter] = None
+    offset: Parameter = flax.struct.field(
+        default_factory=lambda: Parameter(
+            distribution=Distribution.UNIFORM, low=0.0, high=2.0
+        )
+    )
 
 
 @flax.struct.dataclass
-class Line(Profile):
+class Line(Profile, Writable):
     center: Optional[float] = None
     offset: Optional[Parameter] = None
     area: Optional[Parameter] = None
@@ -214,84 +210,135 @@ class Mask:
     upper_limit: float
 
 
+def _profile_refs(profile: Profile) -> tuple[ParameterRef, ...]:
+    return tuple(
+        ParameterRef(
+            name=f"{profile.name}_{field_name}",
+            param=param,
+            profile_name=profile.name,
+            field_name=field_name,
+            target_name=(
+                f"{param.shared}_{field_name}" if param.shared is not None else None
+            ),
+        )
+        for field_name, param in profile.iter_parameter_fields()
+    )
+
+
+def _build_template_index(template: "Template") -> TemplateIndex:
+    refs: list[ParameterRef] = [
+        ParameterRef(name="redshift", param=template.redshift),
+        ParameterRef(name="white_noise", param=template.white_noise),
+    ]
+
+    for disk in template.disk_profiles:
+        refs.extend(_profile_refs(disk))
+
+    for line in template.line_profiles:
+        refs.extend(_profile_refs(line))
+
+    all_parameters = tuple(refs)
+
+    return TemplateIndex(
+        parameters=all_parameters,
+        independent=tuple(
+            r for r in all_parameters if not r.param.fixed and r.param.shared is None
+        ),
+        fixed=tuple(r for r in all_parameters if r.param.fixed),
+        shared=tuple(r for r in all_parameters if r.param.shared is not None),
+        circular=tuple(r for r in all_parameters if r.param.circular),
+    )
+
+
 @flax.struct.dataclass
 class Template(Writable):
     name: str = "default_template"
     disk_profiles: list[Disk] = flax.struct.field(default_factory=list)
     line_profiles: list[Line] = flax.struct.field(default_factory=list)
-    redshift: Parameter = Parameter(distribution=Distribution.UNIFORM, low=0, high=1.0)
-    obs_date: float = 0.0
-    white_noise: Parameter = Parameter(
-        distribution=Distribution.UNIFORM, low=-10, high=1
+    redshift: Parameter = flax.struct.field(
+        default_factory=lambda: Parameter(
+            distribution=Distribution.UNIFORM, low=0.0, high=1.0
+        )
     )
-    mask: list[Mask] | None = None
+    obs_date: float = 0.0
+    white_noise: Parameter = flax.struct.field(
+        default_factory=lambda: Parameter(
+            distribution=Distribution.UNIFORM, low=-10.0, high=1.0
+        )
+    )
+    mask: Optional[list[Mask]] = None
 
-    @cached_property
-    def parameters(self) -> dict[str, Parameter]:
-        params = {"redshift": self.redshift, "white_noise": self.white_noise}
+    index: TemplateIndex = flax.struct.field(
+        default_factory=TemplateIndex,
+        pytree_node=False,
+    )
 
-        for prof in self.disk_profiles + self.line_profiles:
-            for field in flax.struct.dataclasses.fields(prof):
-                field_value = getattr(prof, field.name)
-                if isinstance(field_value, Parameter):
-                    params[f"{prof.name}_{field.name}"] = field_value
+    _EXCLUDE_FROM_SERIALIZATION: frozenset[str] = frozenset({"index"})
 
-        return params
+    def refresh(self) -> "Template":
+        """Rebuild the index from current profile/parameter state."""
+        return self.replace(index=_build_template_index(self))
 
-    @cached_property
-    def independent_parameters(self) -> dict[str, Parameter]:
-        return {
-            k: v for k, v in self.parameters.items() if not v.fixed and v.shared is None
-        }
+    @classmethod
+    def create(
+        cls,
+        name: str = "default_template",
+        disk_profiles: Optional[list[Disk]] = None,
+        line_profiles: Optional[list[Line]] = None,
+        redshift: Optional[Parameter] = None,
+        obs_date: float = 0.0,
+        white_noise: Optional[Parameter] = None,
+        mask: Optional[list[Mask]] = None,
+    ) -> "Template":
+        instance = cls(
+            name=name,
+            disk_profiles=[] if disk_profiles is None else disk_profiles,
+            line_profiles=[] if line_profiles is None else line_profiles,
+            redshift=(
+                redshift
+                if redshift is not None
+                else Parameter(distribution=Distribution.UNIFORM, low=0.0, high=1.0)
+            ),
+            obs_date=obs_date,
+            white_noise=(
+                white_noise
+                if white_noise is not None
+                else Parameter(distribution=Distribution.UNIFORM, low=-10.0, high=1.0)
+            ),
+            mask=mask,
+        )
+        return instance.refresh()
 
-    @cached_property
-    def fixed_parameters(self) -> dict[str, Parameter]:
-        return {k: v for k, v in self.parameters.items() if v.fixed}
+    @classmethod
+    def _after_from_dict(cls, instance: "Template") -> "Template":
+        return instance.refresh()
 
-    @cached_property
-    def shared_parameters(self) -> dict[str, Parameter]:
-        return {k: v for k, v in self.parameters.items() if v.shared is not None}
+    @property
+    def iter_independent(self) -> tuple[ParameterRef, ...]:
+        return self.index.independent
 
-    @cached_property
-    def map_shared_parameters(self) -> dict[str, str]:
-        shared_map = {}
+    @property
+    def iter_fixed(self) -> tuple[ParameterRef, ...]:
+        return self.index.fixed
 
-        for prof in self.disk_profiles + self.line_profiles:
-            shared_map.update(prof.map_shared)
+    @property
+    def iter_shared(self) -> tuple[ParameterRef, ...]:
+        return self.index.shared
 
-        return shared_map
-
-    @cached_property
-    def parameter_names(self) -> list[str]:
-        return list(self.parameters.keys())
-
-    @cached_property
-    def circular_parameter_names(self) -> list[str]:
-        return [k for k, v in self.parameters.items() if v.circular]
-
-    @cached_property
-    def fixed_parameter_names(self) -> list[str]:
-        return [k for k, v in self.parameters.items() if v.fixed]
-
-    @cached_property
-    def shared_parameter_names(self) -> list[str]:
-        return [k for k, v in self.parameters.items() if v.shared is not None]
+    @property
+    def iter_all(self) -> tuple[ParameterRef, ...]:
+        return self.index.parameters
 
     def fitted_parameter_names(
-        self, include_shared=True, include_circ=False
+        self, include_shared: bool = True, include_circ: bool = False
     ) -> list[str]:
-        params = []
-
-        for k, v in self.parameters.items():
-            if v.fixed:
-                continue
-            if v.shared is not None and not include_shared:
-                continue
-            if v.circular and not include_circ:
-                continue
-            params.append(k)
-
-        return params
+        return [
+            ref.name
+            for ref in self.index.parameters
+            if not ref.param.fixed
+            and (include_shared or ref.param.shared is None)
+            and (include_circ or not ref.param.circular)
+        ]
 
 
 @flax.struct.dataclass
@@ -305,28 +352,36 @@ class Data(Writable):
     masked_flux_err: ArrayLike
 
     @classmethod
-    def create(cls, wave, flux, flux_err, mask=list[Mask] | None):
+    def create(
+        cls,
+        wave,
+        flux,
+        flux_err,
+        mask: Optional[list[Mask]] = None,
+    ):
+        wave = jnp.asarray(wave)
+        flux = jnp.asarray(flux)
+        flux_err = jnp.asarray(flux_err)
+
         mask_array = jnp.ones(len(wave), dtype=bool)
 
-        if mask is not None:
-            lower_limits = jnp.array([m.lower_limit for m in mask])
-            upper_limits = jnp.array([m.upper_limit for m in mask])
-
+        if mask is not None and len(mask) > 0:
+            lower_limits = jnp.asarray([m.lower_limit for m in mask])
+            upper_limits = jnp.asarray([m.upper_limit for m in mask])
             wave_expanded = wave[:, None]
-
             individual_masks = (wave_expanded >= lower_limits) & (
                 wave_expanded <= upper_limits
             )
             mask_array = jnp.any(individual_masks, axis=1)
 
         return cls(
-            wave=jnp.asarray(wave),
-            flux=jnp.asarray(flux),
-            flux_err=jnp.asarray(flux_err),
+            wave=wave,
+            flux=flux,
+            flux_err=flux_err,
             mask=mask_array,
-            masked_wave=jnp.asarray(wave)[mask_array],
-            masked_flux=jnp.asarray(flux)[mask_array],
-            masked_flux_err=jnp.asarray(flux_err)[mask_array],
+            masked_wave=wave[mask_array],
+            masked_flux=flux[mask_array],
+            masked_flux_err=flux_err[mask_array],
         )
 
 
@@ -336,5 +391,9 @@ class Config(Writable):
     data: Data
     output_path: str
     data_path: str
-    template_path: str | None = None
+    template_path: Optional[str] = None
     skip_existing: bool = False
+
+    @classmethod
+    def _after_from_dict(cls, instance: "Config") -> "Config":
+        return instance.replace(template=instance.template.refresh())
