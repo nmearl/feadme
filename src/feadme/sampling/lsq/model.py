@@ -4,7 +4,7 @@ import astropy.constants as const
 import astropy.units as u
 import flax.struct
 import numpy as np
-from astropy.modeling import Fittable1DModel, Parameter
+from astropy.modeling import Fittable1DModel, Parameter, CompoundModel
 from astropy.modeling.models import Const1D, RedshiftScaleFactor
 
 from ..base_model import BaseModel
@@ -105,12 +105,8 @@ class LineProfileModel(Fittable1DModel):
 
 
 def _compose_model(
-    template: Template,
-    integrator: Callable = quad_jax_integrate,
-    force_values: Dict | None = None,
-    remove_broad: bool = False,
-    max_outer_radius: float = 2e4,
-):
+    template: Template, integrator: Callable = quad_jax_integrate
+) -> CompoundModel:
     full_model = Const1D(amplitude=0, fixed={"amplitude": True}, name="base")
 
     for prof in template.disk_profiles:
@@ -118,7 +114,7 @@ def _compose_model(
         in_par_bounds = {}
         in_par_fixed = {}
 
-        for param_name, param in prof.independent.items():
+        for param_name, param in prof.iter_independent:
             param_low = param.low
             param_high = param.high
 
@@ -133,7 +129,7 @@ def _compose_model(
 
             in_par_values[param_name] = (param_high + param_low) / 2
 
-        for param_name, param in prof.fixed.items():
+        for param_name, param in prof.iter_fixed:
             in_par_values[param_name] = param.value
             in_par_fixed[param_name] = True
 
@@ -146,7 +142,7 @@ def _compose_model(
             meta={
                 "distributions": {
                     param_name: param.distribution.value
-                    for param_name, param in prof.independent.items()
+                    for param_name, param in prof.iter_independent
                 }
             },
         )
@@ -159,7 +155,7 @@ def _compose_model(
         in_par_fixed = {}
         in_par_tied = {}
 
-        for param_name, param in prof.independent.items():
+        for param_name, param in prof.iter_independent:
             param_low = param.low
             param_high = param.high
 
@@ -174,11 +170,11 @@ def _compose_model(
 
             in_par_values[param_name] = (param_high + param_low) / 2
 
-        for param_name, param in prof.fixed.items():
+        for param_name, param in prof.iter_fixed:
             in_par_values[param_name] = param.value
             in_par_fixed[param_name] = True
 
-        for param_name, param in prof.shared.items():
+        for param_name, param in prof.iter_shared:
             param_low = param.low
             param_high = param.high
 
@@ -201,7 +197,7 @@ def _compose_model(
             meta={
                 "distributions": {
                     param_name: param.distribution.value
-                    for param_name, param in prof.independent.items()
+                    for param_name, param in prof.iter_independent
                 }
             },
         )
