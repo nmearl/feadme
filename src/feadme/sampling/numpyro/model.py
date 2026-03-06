@@ -39,22 +39,26 @@ class NumpyroModel(BaseModel):
         param_mods = {}
 
         # Sample independent parameters
-        for samp_name, param in self.config.template.independent_parameters.items():
-            param_samp = self.sample_param(samp_name, param, param.low, param.high)
-            param_mods[samp_name] = param_samp
+        for param_ref in self.config.template.iter_independent:
+            param_samp = self.sample_param(
+                param_ref.name,
+                param_ref.param,
+                param_ref.param.low,
+                param_ref.param.high,
+            )
+            param_mods[param_ref.name] = param_samp
 
         # Add fixed parameters
-        for samp_name, param in self.config.template.fixed_parameters.items():
-            param_samp = numpyro.deterministic(samp_name, param.value)
-            param_mods[samp_name] = param_samp
+        for param_ref in self.config.template.iter_fixed:
+            param_samp = numpyro.deterministic(param_ref.name, param_ref.param.value)
+            param_mods[param_ref.name] = param_samp
 
         # Add shared parameters
-        for (
-            samp_name,
-            targ_name,
-        ) in self.config.template.map_shared_parameters.items():
-            param_samp = numpyro.deterministic(samp_name, param_mods[targ_name])
-            param_mods[samp_name] = param_samp
+        for param_ref in self.config.template.iter_shared:
+            param_samp = numpyro.deterministic(
+                param_ref.name, param_mods[param_ref.target_name]
+            )
+            param_mods[param_ref.name] = param_samp
 
         # Compose outer radius from inner radius and radius ratio
         for prof in self.config.template.disk_profiles:
@@ -122,20 +126,17 @@ class NumpyroModel(BaseModel):
         if "inclination" in samp_name:
             mu_min = jnp.cos(upper_bound)  # cos(i_max)
             mu_max = jnp.cos(lower_bound)  # cos(i_min)
-            # mu = _logit_uniform(f"{samp_name}_base", mu_min, mu_max)
             mu = numpyro.sample(f"{samp_name}_base", dist.Uniform(mu_min, mu_max))
             incl = jnp.arccos(mu)
 
             return numpyro.deterministic(samp_name, incl)
 
         if param.distribution == Distribution.UNIFORM:
-            # param_samp = _logit_uniform(samp_name, lower_bound, upper_bound)
             param_samp = numpyro.sample(
                 samp_name, dist.Uniform(lower_bound, upper_bound)
             )
 
         elif param.distribution == Distribution.LOG_UNIFORM:
-            # param_samp = _logit_loguniform(samp_name, lower_bound, upper_bound)
             param_samp = numpyro.sample(
                 samp_name,
                 dist.LogUniform(lower_bound, upper_bound),

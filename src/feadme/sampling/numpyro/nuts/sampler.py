@@ -9,11 +9,11 @@ import loguru
 from jax.typing import ArrayLike
 from numpyro.infer import MCMC, NUTS
 
-from .model import BaseModel
-from ..base_sampler import BaseSampler
-from ..initializers import BaseInitializer, DefaultInitializer
-from ...core.parser import Config
-from ..utils import make_init_params
+from ..model import BaseModel
+from ...base_sampler import BaseSampler
+from ...initializers import BaseInitializer, DefaultInitializer
+from ....core.parser import Config
+from ...utils import make_init_params
 
 logger = loguru.logger.opt(colors=True)
 
