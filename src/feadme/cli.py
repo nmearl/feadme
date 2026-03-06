@@ -101,13 +101,14 @@ def perform_sampling(config, model, sampler):
 
     # Report results and write to disk
     reporter = Reporter(config=config, idata=idata)
-    logger.info("Displaying sampler results:\n" + reporter.summary.to_markdown())
 
     if not results_exist:
         reporter.write_results()
         logger.info(
             f"Results written to <green>{config.output_path}/results.nc</green>."
         )
+
+    logger.info("Displaying sampler results:\n" + reporter.summary.to_markdown())
 
     # Plot results and save out figures
     plotter = Plotter(config=config, idata=idata, summary=reporter.summary)
