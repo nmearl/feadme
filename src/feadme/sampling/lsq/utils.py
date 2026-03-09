@@ -67,18 +67,6 @@ def format_posterior_samples(
             init_params[f"{pn}_x_base"] = np.cos(apocenter)
             init_params[f"{pn}_y_base"] = np.sin(apocenter)
 
-    # Forcibly clamp the radius ratio due to the dynamic bounds handling
-    #  in the nuts sampler
-    # for pn in [k for k in init_params]:
-    #     if "radius_ratio" in pn:
-    #         init_params[pn] = np.clip(
-    #             init_params[pn],
-    #             1.1,
-    #             2e4
-    #             / init_params[pn.replace("radius_ratio", "inner_radius")]
-    #             * 0.98,
-    #         )
-
     init_params = {k: v.item() for k, v in init_params.items()}
 
     return init_params

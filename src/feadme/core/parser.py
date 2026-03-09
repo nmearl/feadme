@@ -31,7 +31,9 @@ class Writable:
     def to_dict(self) -> dict[str, Any]:
         raw = flax.struct.dataclasses.asdict(self)
         raw = {
-            k: v for k, v in raw.items() if k not in self._EXCLUDE_FROM_SERIALIZATION
+            k: v
+            for k, v in raw.items()
+            if k not in self._EXCLUDE_FROM_SERIALIZATION and not k.startswith("_")
         }
         return tree_map(_to_serializable, raw)
 

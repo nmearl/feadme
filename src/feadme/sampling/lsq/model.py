@@ -52,11 +52,8 @@ class DiskProfileModel(Fittable1DModel):
         radius_ratio = pars.pop("radius_ratio")
         pars["outer_radius"] = pars["inner_radius"] * radius_ratio
 
-        # if pars["outer_radius"] > 1e4:
-        #     return np.full_like(x, 1e10)
-        #
-        # if radius_ratio > 1e4 / pars["inner_radius"]:
-        #     return np.full_like(x, 1e10)
+        # if pars["outer_radius"] > 2e4:
+        #     return np.zeros_like(x)
 
         res = _compute_disk_flux_vectorized(x, **pars, integrator=self._integrator)
 
