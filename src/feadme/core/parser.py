@@ -399,8 +399,6 @@ class Config(Writable):
     data_path: str
     template_path: Optional[str] = None
     skip_existing: bool = False
-    # Plotting controls
-    compute_prior_predictive: bool = False
 
     @classmethod
     def _after_from_dict(cls, instance: "Config") -> "Config":

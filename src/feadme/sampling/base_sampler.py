@@ -23,6 +23,7 @@ class BaseSampler:
         model: BaseModel,
         posterior_samples: dict[str, ArrayLike],
         thinned_samples: dict[str, ArrayLike],
+        compute_prior_predictive: bool = False,
     ) -> tuple[dict, dict, dict]:
         """
         Create inference data for posterior predictive, prior predictive, and
@@ -57,7 +58,7 @@ class BaseSampler:
         )
 
         # Prior predictive
-        if config.compute_prior_predictive:
+        if compute_prior_predictive:
             predictive_prior = Predictive(model, num_samples=300)(
                 rng_key,
                 wave=config.data.masked_wave,

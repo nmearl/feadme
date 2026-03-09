@@ -27,6 +27,7 @@ class NUTSSampler(BaseSampler):
     target_accept_prob: float = 0.85
     max_tree_depth: int = 10
     dense_mass: bool = True
+    compute_prior_predictive: bool = False
     initializer: BaseInitializer = DefaultInitializer()
 
     @property
@@ -105,7 +106,11 @@ class NUTSSampler(BaseSampler):
         }
 
         predictive_post, predictive_prior, log_lik = self._inference_data(
-            config, model, flat_samples, thinned_flat_samples
+            config,
+            model,
+            flat_samples,
+            thinned_flat_samples,
+            compute_prior_predictive=self.compute_prior_predictive,
         )
 
         idata = az.from_numpyro(

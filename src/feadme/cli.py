@@ -240,6 +240,7 @@ def nuts_cmd(
     target_accept_prob: float,
     max_tree_depth: int,
     dense_mass: bool,
+    compute_prior_predictive: bool,
     progress_bar: bool,
     rebin: float | None,
 ):
@@ -277,6 +278,7 @@ def nuts_cmd(
         target_accept_prob=target_accept_prob,
         max_tree_depth=max_tree_depth,
         dense_mass=dense_mass,
+        compute_prior_predictive=compute_prior_predictive,
         progress_bar=progress_bar,
         initializer=initializer,
     )
