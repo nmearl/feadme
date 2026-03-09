@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
-from quadax import ClenshawCurtisRule
+from quadax import ClenshawCurtisRule, GaussKronrodRule
 
 from .disk import integrand
 
@@ -15,15 +15,15 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-CC_RES = 32 * 2
+CC_RES = 32
 GK_RES = 61
 
-fixed_quad_xi = ClenshawCurtisRule(order=CC_RES // 2).integrate
-fixed_quad_phi = ClenshawCurtisRule(order=CC_RES).integrate
+fixed_quad_xi = ClenshawCurtisRule(order=CC_RES).integrate
+fixed_quad_phi = ClenshawCurtisRule(order=CC_RES * 3).integrate
 # fixed_quad_xi = GaussKronrodRule(order=GK_RES).integrate
 # fixed_quad_phi = GaussKronrodRule(order=GK_RES).integrate
 
-N_xi, N_phi = 64, 128
+N_xi, N_phi = 32, 128
 
 LN10 = jnp.log(10.0)
 
@@ -115,90 +115,53 @@ def trap_jax_integrate(
     e: float,
     phi0: float,
 ) -> ArrayLike:
-    """
-    Vmap over wavelengths, direct vectorization for (xi, phi) grid.
-    """
-    # Precompute grids (shared across wavelengths)
     xi_log = jnp.linspace(jnp.log10(xi1), jnp.log10(xi2), N_xi)
-    xi = 10**xi_log
-    jacobian = xi * jnp.log(10)
+    xi = 10.0**xi_log
     phi = jnp.linspace(phi1, phi2, N_phi, endpoint=True)
 
-    def integrate_single_wavelength(x_val):
-        # Create 2D grids for this wavelength
-        xi_2d = xi[:, None]  # (N_xi, 1)
-        phi_2d = phi[None, :]  # (1, N_phi)
-        jac_2d = jacobian[:, None]  # (N_xi, 1)
+    xi_3d = xi[:, None, None]
+    phi_3d = phi[None, :, None]
+    X_3d = jnp.asarray(X)[None, None, :]
 
-        # Compute integrand for all (xi, phi) at once - shape (N_xi, N_phi)
-        integrand_vals = (
-            integrand(phi_2d, xi_2d, x_val, inc, sigma, q, e, phi0) * jac_2d
-        )
+    # Jacobian for dxi = xi ln(10) dlog10(xi)
+    jac_3d = (xi * jnp.log(10.0))[:, None, None]
 
-        # Double trapezoid integration
-        inner = jnp.trapezoid(integrand_vals, x=phi, axis=-1)  # (N_xi,)
-        # d_phi = (phi2 - phi1) / N_phi
-        # inner = d_phi * jnp.sum(integrand_vals, axis=-1)
-        outer = jnp.trapezoid(inner, x=xi_log)  # scalar
-        return outer
+    vals = integrand(phi_3d, xi_3d, X_3d, inc, sigma, q, e, phi0) * jac_3d
 
-    # Vmap only over wavelengths
-    return jax.vmap(integrate_single_wavelength)(X)
+    # Integrate over phi first, then over log10(xi)
+    inner = jnp.trapezoid(vals, x=phi, axis=1)  # (N_xi, n_wave)
+    outer = jnp.trapezoid(inner, x=xi_log, axis=0)  # (n_wave,)
+
+    return outer
 
 
 @partial(jax.jit, static_argnums=(2, 3))
-def mixed_jax_integrate(
-    xi1: float,
-    xi2: float,
-    phi1: float,
-    phi2: float,
-    X: ArrayLike,
-    inc: float,
-    sigma: float,
-    q: float,
-    e: float,
-    phi0: float,
-    nu0: float,
-) -> ArrayLike:
-    """
-    Mixed approach: trapezoid over phi, quadrature over xi.
-    """
+def mixed_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0):
+    phi = jnp.linspace(phi1, phi2, N_phi, endpoint=True)
+    log_xi1 = jnp.log10(xi1)
+    log_xi2 = jnp.log10(xi2)
 
-    def integrate_single_wavelength(x_val: float) -> float:
-        """Compute the double integral for a single wavelength x_val."""
+    def integrand_over_log_xi(log_xi):
+        xi = 10.0**log_xi
+        jacobian_xi = xi * jnp.log(10.0)
 
-        def integrand_over_log_xi(log_xi: float) -> float:
-            """
-            Outer integrand as a function of log10(xi), after
-            integrating over phi with a trapezoid rule.
-            """
-            # Map from log10(xi) to xi, and include Jacobian for d xi / d log10(xi)
-            xi = 10.0**log_xi
-            jacobian_xi = xi * jnp.log(10.0)
+        vals_phi = integrand(
+            phi[:, None],  # (N_phi, 1)
+            xi,  # scalar
+            X[None, :],  # (1, n_wave)
+            inc,
+            sigma,
+            q,
+            e,
+            phi0,
+        )  # -> (N_phi, n_wave)
 
-            # Uniform phi grid for trapezoid integration
-            phi = jnp.linspace(phi1, phi2, N_phi, endpoint=True)
+        inner_phi = jnp.trapezoid(vals_phi, x=phi, axis=0)  # (n_wave,)
+        return inner_phi * jacobian_xi
 
-            # Evaluate model integrand for all phi at this xi, x_val
-            vals_phi = integrand(phi, xi, x_val, inc, sigma, q, e, phi0)
-
-            # Trapezoid over phi (periodic-ish, uniform grid)
-            inner_phi = jnp.trapezoid(vals_phi, x=phi)
-            # d_phi = (phi2 - phi1) / N_phi
-            # inner_phi = d_phi * jnp.sum(vals_phi, axis=-1)
-
-            # Return outer integrand f(log_xi)
-            return inner_phi * jacobian_xi
-
-        # Quadrature over log10(xi)
-        result = fixed_quad_xi(
-            integrand_over_log_xi,
-            jnp.log10(xi1),
-            jnp.log10(xi2),
-            args=(),
-        )[0]
-
-        return result
-
-    # Vectorize over wavelengths
-    return jax.vmap(integrate_single_wavelength)(X)
+    return fixed_quad_xi(
+        integrand_over_log_xi,
+        log_xi1,
+        log_xi2,
+        args=(),
+    )[0]

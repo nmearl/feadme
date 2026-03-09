@@ -156,11 +156,8 @@ def _compute_line_flux_vectorized(
 
     delta_lamb = wave_bc - centers_bc
 
-    # sigma_lambda = (sigma_v / c) * lambda0
-    # guard against sigma_v -> 0
-    eps = 1e-30
-    sigma_lambda = jnp.maximum(vel_widths_bc, eps) / c_kms * centers_bc
-    sigma_lambda = jnp.maximum(sigma_lambda, eps)
+    sigma_lambda = vel_widths_bc / c_kms * centers_bc
+    sigma_lambda = sigma_lambda
 
     # Gaussian: area = amp * sqrt(2pi) * sigma_lambda  => amp = area / (sqrt(2pi)*sigma_lambda)
     amp_g = areas_bc / (jnp.sqrt(2.0 * jnp.pi) * sigma_lambda)
@@ -168,7 +165,7 @@ def _compute_line_flux_vectorized(
 
     # Lorentzian: L = amp * gamma / (x^2 + gamma^2), integral = amp * pi  => amp = area / pi
     fwhm_lambda = 2.35482 * sigma_lambda
-    gamma = jnp.maximum(0.5 * fwhm_lambda, eps)  # HWHM
+    gamma = 0.5 * fwhm_lambda  # HWHM
     amp_l = areas_bc / jnp.pi
     lor = amp_l * gamma / (delta_lamb**2 + gamma**2)
 
@@ -219,19 +216,19 @@ def _compute_disk_flux_vectorized(
         Summed disk flux density evaluated on wave grid (n_wave,)
     """
 
-    # constant guards
-    eps = 1e-30
-
     def _compute_single(
         center_i, inner_i, outer_i, sigma_i, inc_i, q_i, ecc_i, apo_i, area_i, offset_i
     ):
-        # X = -v/c; v from wavelength displacement
         velocity = (wave - center_i) / center_i * c_kms
         X = -velocity / c_kms
 
         res_X = integrator(
             inner_i,
             outer_i,
+            # -jnp.pi,
+            # jnp.pi,
+            # jnp.pi / 2 - jnp.pi,
+            # jnp.pi / 2 + jnp.pi,
             0.0,
             2.0 * jnp.pi,
             jnp.asarray(X),
