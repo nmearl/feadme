@@ -126,7 +126,10 @@ def perform_sampling(config, model, sampler):
 
     plotter.plot_model_fit()
     plotter.plot_corner()
-    plotter.plot_prior_corner()
+
+    if sampler.compute_prior_predictive:
+        plotter.plot_prior_corner()
+
     plotter.plot_trace()
 
     logger.info(f"Plots saved to <green>{config.output_path}</green>.")
