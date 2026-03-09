@@ -19,7 +19,10 @@ class BaseSampler:
 
     @staticmethod
     def _inference_data(
-        config: Config, model: BaseModel, posterior_samples: dict[str, ArrayLike]
+        config: Config,
+        model: BaseModel,
+        posterior_samples: dict[str, ArrayLike],
+        thinned_samples: dict[str, ArrayLike],
     ) -> tuple[dict, dict, dict]:
         """
         Create inference data for posterior predictive, prior predictive, and
@@ -38,7 +41,7 @@ class BaseSampler:
         rng_key = jax.random.PRNGKey(0)
 
         # Posterior predictive
-        predictive_post = Predictive(model, posterior_samples=posterior_samples)(
+        predictive_post = Predictive(model, posterior_samples=thinned_samples)(
             rng_key,
             wave=config.data.masked_wave,
             flux=None,
@@ -48,26 +51,29 @@ class BaseSampler:
         predictive_post.update(
             {
                 k: jnp.zeros_like(v)
-                for k, v in posterior_samples.items()
+                for k, v in thinned_samples.items()
                 if k not in predictive_post
             }
         )
 
         # Prior predictive
-        predictive_prior = Predictive(model, num_samples=1000)(
-            rng_key,
-            wave=config.data.masked_wave,
-            flux=None,
-            flux_err=config.data.masked_flux_err,
-        )
+        if config.compute_prior_predictive:
+            predictive_prior = Predictive(model, num_samples=300)(
+                rng_key,
+                wave=config.data.masked_wave,
+                flux=None,
+                flux_err=config.data.masked_flux_err,
+            )
 
-        predictive_prior.update(
-            {
-                k: jnp.zeros_like(v)
-                for k, v in posterior_samples.items()
-                if k not in predictive_prior
-            }
-        )
+            predictive_prior.update(
+                {
+                    k: jnp.zeros_like(v)
+                    for k, v in posterior_samples.items()
+                    if k not in predictive_prior
+                }
+            )
+        else:
+            predictive_prior = None
 
         # Compute log-likelihood for each posterior sample
         log_lik = log_likelihood(

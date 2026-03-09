@@ -264,13 +264,7 @@ class SVIInitializer(BaseInitializer):
 
         init_strategy = init_to_value(values=init_params)
 
-        self.quick_plot(svi_result, guide, config)
-
-        # After training the guide, extract the Cholesky factor as an initial mass matrix
-        params = svi_result.params
-        # AutoMultivariateNormal stores its scale_tril under this key
-        scale_tril = params["auto_scale_tril"]
-        mass_matrix = scale_tril @ scale_tril.T
+        # self.quick_plot(svi_result, guide, config)
 
         return init_params, init_strategy
 

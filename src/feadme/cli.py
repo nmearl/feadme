@@ -161,6 +161,12 @@ def common_options(f):
         help="Skip sampling if results already exist at the output path.",
     )
     @click.option(
+        "--compute-prior-predictive/--no-compute-prior-predictive",
+        is_flag=True,
+        default=False,
+        help="Whether to compute prior predictive samples for diagnostics.",
+    )
+    @click.option(
         "--progress-bar/--no-progress-bar",
         is_flag=True,
         default=True,

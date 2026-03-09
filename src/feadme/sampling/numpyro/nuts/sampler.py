@@ -66,6 +66,7 @@ class NUTSSampler(BaseSampler):
         )
 
         posterior_samples = mcmc.get_samples(group_by_chain=True)
+        jax.block_until_ready(posterior_samples)
 
         extra = mcmc.get_extra_fields()
         num_steps = extra["num_steps"]
@@ -90,13 +91,21 @@ class NUTSSampler(BaseSampler):
         mcmc: MCMC,
         posterior_samples: dict[str, ArrayLike],
     ) -> az.InferenceData:
+        thin_by = max(1, self.num_samples // 500)
+        thinned = {k: v[:, ::thin_by] for k, v in posterior_samples.items()}
+
+        thinned_flat_samples = {
+            k: v.reshape(-1, *v.shape[2:]) if v.ndim > 2 else v.reshape(-1)
+            for k, v in thinned.items()
+        }
+
         flat_samples = {
             k: v.reshape(-1, *v.shape[2:]) if v.ndim > 2 else v.reshape(-1)
             for k, v in posterior_samples.items()
         }
 
         predictive_post, predictive_prior, log_lik = self._inference_data(
-            config, model, flat_samples
+            config, model, flat_samples, thinned_flat_samples
         )
 
         idata = az.from_numpyro(
