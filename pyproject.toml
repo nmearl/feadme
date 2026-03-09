@@ -16,13 +16,19 @@ dependencies = [
     "dill>=0.4.1",
     "flax>=0.12.3",
     "ipykernel>=7.2.0",
+    "jax>=0.8.3",
+    "jaxlib>=0.8.3",
     "loguru>=0.7.3",
     "matplotlib>=3.10.8",
     "multiprocess>=0.70.19",
-    "numpyro>=0.20.0",
+    "numpyro",
+    "quadax>=0.2.11",
     "seaborn>=0.13.2",
     "tabulate>=0.9.0",
 ]
+
+[project.optional-dependencies]
+gpu = ["jax[cuda12]"]
 
 [project.scripts]
 feadme = "feadme.cli:cli"
