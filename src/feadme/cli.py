@@ -6,6 +6,8 @@ from astropy.time import Time
 import arviz as az
 import click
 from functools import wraps
+import numpy as np
+import astropy.constants as const
 
 from .core.parser import Template, Config, Data, Mask
 from .sampling.initializers import (
@@ -13,7 +15,12 @@ from .sampling.initializers import (
     SVIInitializer,
     LSQInitializer,
 )
-from .core.integrators import trap_jax_integrate
+from .core.integrators import (
+    trap_jax_integrate,
+    quad_jax_integrate,
+    split_quad_jax_integrate,
+    mixed_jax_integrate,
+)
 from .plotter import Plotter
 from .reporter import Reporter
 from .sampling.lsq.model import LSQModel
@@ -21,9 +28,11 @@ from .sampling.lsq.sampler import LSQSampler
 from .sampling.numpyro.model import NumpyroModel
 from .sampling.numpyro.nuts.sampler import NUTSSampler
 from .sampling.numpyro.neutra.sampler import NeuTraSampler
-from .utils import rebin_spectrum
+from .utils import rebin_spectrum_logdv
 
 logger = loguru.logger.opt(colors=True)
+
+C_KMS = const.c.to("km/s").value
 
 
 def load_data(data_path: str, template: Template, rebin: float | None = None) -> Data:
@@ -54,10 +63,12 @@ def load_data(data_path: str, template: Template, rebin: float | None = None) ->
     )
 
     if rebin is not None:
-        wave, flux, flux_err = rebin_spectrum(wave, flux, flux_err, dv=rebin)
-
-        logger.info(
-            f"Rebinned spectrum from {len(data_tab)} to {len(wave)} points (dv=100 km/s)."
+        wave, flux, flux_err, info = rebin_spectrum_logdv(
+            wave,
+            flux,
+            flux_err,
+            dv=rebin,
+            R=2000.0,
         )
 
     return Data.create(
@@ -243,7 +254,10 @@ def nuts_cmd(
         skip_existing=skip_existing,
     )
 
-    model = NumpyroModel(config=config).setup()
+    model = NumpyroModel(
+        config=config,
+        integrator=quad_jax_integrate,
+    ).setup()
     # initializer = LSQInitializer()
     initializer = SVIInitializer()
 
