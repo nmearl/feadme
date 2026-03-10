@@ -19,7 +19,7 @@ CC_RES = 32
 GK_RES = 61
 
 fixed_quad_xi = ClenshawCurtisRule(order=CC_RES).integrate
-fixed_quad_phi = ClenshawCurtisRule(order=CC_RES * 3).integrate
+fixed_quad_phi = ClenshawCurtisRule(order=CC_RES * 4).integrate
 # fixed_quad_xi = GaussKronrodRule(order=GK_RES).integrate
 # fixed_quad_phi = GaussKronrodRule(order=GK_RES).integrate
 
@@ -117,7 +117,7 @@ def trap_jax_integrate(
 ) -> ArrayLike:
     xi_log = jnp.linspace(jnp.log10(xi1), jnp.log10(xi2), N_xi)
     xi = 10.0**xi_log
-    phi = jnp.linspace(phi1, phi2, N_phi, endpoint=True)
+    phi = jnp.linspace(phi1, phi2, N_phi)
 
     xi_3d = xi[:, None, None]
     phi_3d = phi[None, :, None]
@@ -137,7 +137,7 @@ def trap_jax_integrate(
 
 @partial(jax.jit, static_argnums=(2, 3))
 def mixed_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0):
-    phi = jnp.linspace(phi1, phi2, N_phi, endpoint=True)
+    phi = jnp.linspace(phi1, phi2, N_phi)
     log_xi1 = jnp.log10(xi1)
     log_xi2 = jnp.log10(xi2)
 

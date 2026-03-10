@@ -219,6 +219,21 @@ def _compute_disk_flux_vectorized(
     def _compute_single(
         center_i, inner_i, outer_i, sigma_i, inc_i, q_i, ecc_i, apo_i, area_i, offset_i
     ):
+        """
+        Compute a single disk flux profile evaluated on the observed
+        wavelength grid.
+
+        The profile is normalized by integrating over the observed `wave` grid,
+        which is assumed to be wide enough to capture the full disk profile. This
+        is valid as long as `center_i` is tightly constrained (e.g., a narrow
+        prior around a known spectroscopic redshift), because a fixed wavelength
+        grid implies a `center_i`-dependent velocity spacing of
+        `\\Delta v \\approx c \\Delta \\lambda / \\lambda_0`. If `center_i` is ever
+        given a broad prior, this normalization will drift with `center_i` and
+        the correct approach is to evaluate the integrator on a fixed velocity
+        grid, normalize there, and interpolate onto `wave`.
+        """
+
         velocity = (wave - center_i) / center_i * c_kms
         X = -velocity / c_kms
 
