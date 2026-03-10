@@ -92,14 +92,6 @@ class NUTSSampler(BaseSampler):
         mcmc: MCMC,
         posterior_samples: dict[str, ArrayLike],
     ) -> az.InferenceData:
-        thin_by = max(1, self.num_samples // 500)
-        thinned = {k: v[:, ::thin_by] for k, v in posterior_samples.items()}
-
-        thinned_flat_samples = {
-            k: v.reshape(-1, *v.shape[2:]) if v.ndim > 2 else v.reshape(-1)
-            for k, v in thinned.items()
-        }
-
         flat_samples = {
             k: v.reshape(-1, *v.shape[2:]) if v.ndim > 2 else v.reshape(-1)
             for k, v in posterior_samples.items()
@@ -109,7 +101,6 @@ class NUTSSampler(BaseSampler):
             config,
             model,
             flat_samples,
-            thinned_flat_samples,
             compute_prior_predictive=self.compute_prior_predictive,
         )
 

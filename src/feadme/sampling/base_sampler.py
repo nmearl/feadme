@@ -22,7 +22,6 @@ class BaseSampler:
         config: Config,
         model: BaseModel,
         posterior_samples: dict[str, ArrayLike],
-        thinned_samples: dict[str, ArrayLike],
         compute_prior_predictive: bool = False,
     ) -> tuple[dict, dict, dict]:
         """
@@ -42,7 +41,7 @@ class BaseSampler:
         rng_key = jax.random.PRNGKey(0)
 
         # Posterior predictive
-        predictive_post = Predictive(model, posterior_samples=thinned_samples)(
+        predictive_post = Predictive(model, posterior_samples=posterior_samples)(
             rng_key,
             wave=config.data.masked_wave,
             flux=None,
@@ -52,7 +51,7 @@ class BaseSampler:
         predictive_post.update(
             {
                 k: jnp.zeros_like(v)
-                for k, v in thinned_samples.items()
+                for k, v in posterior_samples.items()
                 if k not in predictive_post
             }
         )
