@@ -23,7 +23,6 @@ import numpy as np
 import astropy.constants as const
 import astropy.units as u
 from numpyro.infer.initialization import init_to_value
-from pygments.unistring import Lm
 
 from .lsq.utils import format_posterior_samples
 from ..core.parser import Config
@@ -61,7 +60,7 @@ class LSQInitializer(BaseInitializer):
             lsq_model,
             wave,
             flux,
-            # weights=1 / flux_err,
+            weights=1 / flux_err,
             maxiter=10_000,
             filter_non_finite=True,
         )
@@ -201,7 +200,7 @@ class SVIInitializer(BaseInitializer):
     decay_rate: float = 0.1
     decay_steps: int = 2_000  # ~num_steps
     progress_bar: bool = False
-    num_samples: int = 100
+    num_samples: int = 1000
 
     def __call__(self, config: Config, model: BaseModel):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
@@ -253,13 +252,13 @@ class SVIInitializer(BaseInitializer):
         guide_samples = guide.sample_posterior(
             sample_key,
             svi_result.params,
-            sample_shape=(1000,),
+            sample_shape=(self.num_samples,),
         )
 
         init_params = {
             k: jnp.median(v, axis=0)
             for k, v in guide_samples.items()
-            if not k.endswith("_area")  # filter any guide-internal flux sites
+            if not k.endswith("_flux")
         }
 
         init_strategy = init_to_value(values=init_params)

@@ -225,10 +225,6 @@ def _compute_disk_flux_vectorized(
         res_X = integrator(
             inner_i,
             outer_i,
-            # -jnp.pi,
-            # jnp.pi,
-            # jnp.pi / 2 - jnp.pi,
-            # jnp.pi / 2 + jnp.pi,
             0.0,
             2.0 * jnp.pi,
             jnp.asarray(X),
@@ -239,9 +235,8 @@ def _compute_disk_flux_vectorized(
             apo_i,
         )
 
-        # Normalize to unit area over wavelength grid.
-        # Use abs-area to be robust if template changes sign in tails.
-        template = res_X / (jnp.trapezoid(jnp.abs(res_X), wave))
+        # Normalize to unit area over wavelength grid
+        template = res_X / (jnp.trapezoid(res_X, wave))
 
         return template * area_i + offset_i
 
