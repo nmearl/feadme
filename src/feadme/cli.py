@@ -266,7 +266,7 @@ def nuts_cmd(
 
     model = NumpyroModel(
         config=config,
-        integrator=trap_jax_integrate,
+        integrator=quad_jax_integrate,
     ).setup()
     # initializer = LSQInitializer()
     initializer = SVIInitializer()

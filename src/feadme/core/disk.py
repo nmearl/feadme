@@ -7,12 +7,6 @@ from jax.typing import ArrayLike
 
 c_kms = const.c.to(u.km / u.s).value
 
-# ------------------------------------------------------------------ #
-# Regularization constants                                            #
-#                                                                     #
-# All floors live here so they are easy to find, tune, and document. #
-# ------------------------------------------------------------------ #
-
 # Floor for quantities that must be strictly positive but have no
 # natural physical scale (e.g. intermediate trig terms, xi).
 _EPS_POS: float = 1e-12
@@ -111,9 +105,6 @@ def integrand(
       broader, NUTS-friendly gradient transitions.
     * The Gaussian exponent has a lower clamp at ``_EXPONENT_MIN`` to prevent
       silent underflow/NaN propagation in gradient chains.
-
-    All regularization constants are defined at module level with
-    documented physical motivation.
     """
     # ------------------------------------------------------------------
     # Trig
@@ -210,12 +201,12 @@ def integrand(
     # NOTE: flooring inv_dop changes the sign structure of the Doppler
     # factor directly.  We are unsure if it is appropriate, since it depends
     # on whether inv_dop crossing zero is a numerical artifact or part of the
-    # model's physical support boundary.  Benchmark against an unfloored
-    # version before treating this as settled.
-    inv_dop = smooth_floor(
-        gamma * (inv_sqrt_scale - db_num / dc_val + dd_num / de_val),
-        _EPS_POS,
-    )
+    # model's physical support boundary.
+    # inv_dop = smooth_floor(
+    #     gamma * (inv_sqrt_scale - db_num / dc_val + dd_num / de_val),
+    #     _EPS_POS,
+    # )
+    inv_dop = gamma * (inv_sqrt_scale - db_num / dc_val + dd_num / de_val)
     D = 1.0 / inv_dop
 
     # ------------------------------------------------------------------
@@ -232,12 +223,12 @@ def integrand(
     I_nu = jnp.power(xi, -q) * cc * jnp.exp(exponent)
 
     # ------------------------------------------------------------------
-    # Psi  (reuses psi_geom — same regularized denominator as b/r)
+    # Psi  (reuses psi_geom, same regularized denominator as b/r)
     # ------------------------------------------------------------------
     Psi_ = 1.0 + xi_recip * psi_geom
 
     # ------------------------------------------------------------------
-    # Final
+    # Final flux result
     # ------------------------------------------------------------------
     D_cubed = D_sq * D
     return xi * I_nu * D_cubed * Psi_ * trans_fac
