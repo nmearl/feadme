@@ -32,14 +32,100 @@ def ratio_factor(name, F_num, F_den, ratio, sigma_ln=0.02, eps=1e-30):
     numpyro.factor(name, dist.Normal(jnp.log(ratio), sigma_ln).log_prob(log_r))
 
 
+def _find_ecc_apo_pairs(
+    iter_independent,
+) -> dict[str, tuple]:
+    """
+    Pre-pass over independent parameters to identify (eccentricity, apocenter)
+    pairs that should be sampled jointly via the (h, k) reparameterization.
+
+    Returns a dict keyed by profile_name mapping to (ecc_ref, apo_ref) tuples.
+    Only profiles where *both* eccentricity and apocenter are free and independent
+    are included. Profiles where either is fixed or shared are excluded, and those
+    parameters fall through to standard sampling.
+    """
+    ecc_by_profile = {}
+    apo_by_profile = {}
+
+    for param_ref in iter_independent:
+        if param_ref.field_name == "eccentricity":
+            ecc_by_profile[param_ref.profile_name] = param_ref
+        elif param_ref.field_name == "apocenter":
+            apo_by_profile[param_ref.profile_name] = param_ref
+
+    return {
+        profile_name: (ecc_by_profile[profile_name], apo_by_profile[profile_name])
+        for profile_name in ecc_by_profile
+        if profile_name in apo_by_profile
+    }
+
+
+def _sample_ecc_apo_joint(ecc_ref, apo_ref) -> tuple[ArrayLike, ArrayLike]:
+    """
+    Sample eccentricity and apocenter jointly via a Cartesian (h, k)
+    reparameterization.
+
+    This transformation ignores prior definitions currently, and places
+    Normal(0, 1) priors on unconstrained raws (z_h, z_k), then squashes them
+    into the open unit disk via tanh:
+
+        s    = tanh(r) / r,   where r = sqrt(z_h^2 + z_k^2)
+        h    = z_h * s
+        k    = z_k * s
+        e    = sqrt(h^2 + k^2)        -- guaranteed < 1
+        phi0 = arctan2(h, k) mod 2pi  -- uniform by symmetry
+
+    The induced prior on e is approximately Rayleigh-like with most mass at
+    moderate eccentricities, and falls to zero at e = 0 and e = 1. This is
+    physically reasonable for AGN disk emitters and is sampling-friendlier
+    than the original (bounded radial, circular angular) geometry, which
+    creates coupling issues in HMC near e ~ 0.
+    """
+    base = apo_ref.name
+
+    z_h = numpyro.sample(f"{base}_h_raw", dist.Normal(0.0, 1.0))
+    z_k = numpyro.sample(f"{base}_k_raw", dist.Normal(0.0, 1.0))
+
+    # Squash from R^2 into the open unit disk, preserving direction.
+    r = jnp.sqrt(z_h**2 + z_k**2) + 1e-12
+    s = jnp.tanh(r) / r
+
+    h = z_h * s
+    k = z_k * s
+
+    e = numpyro.deterministic(ecc_ref.name, jnp.sqrt(h**2 + k**2))
+    phi0 = numpyro.deterministic(apo_ref.name, jnp.mod(jnp.arctan2(h, k), 2 * jnp.pi))
+
+    return e, phi0
+
+
 @flax.struct.dataclass
 class NumpyroModel(BaseModel):
     def __call__(self, wave, flux_err, flux=None):
         # Dictionary to store all sampled parameters
         param_mods = {}
 
-        # Sample independent parameters
+        # Pre-pass: identify profiles where both eccentricity and apocenter are
+        # free and independent. These are sampled jointly via (h, k); all other
+        # parameters use the standard per-parameter path.
+        joint_pairs = _find_ecc_apo_pairs(self.config.template.iter_independent)
+        jointly_handled = {
+            ref.name
+            for ecc_ref, apo_ref in joint_pairs.values()
+            for ref in (ecc_ref, apo_ref)
+        }
+
+        # Sample jointly-handled (eccentricity, apocenter) pairs first.
+        for ecc_ref, apo_ref in joint_pairs.values():
+            e, phi0 = _sample_ecc_apo_joint(ecc_ref, apo_ref)
+            param_mods[ecc_ref.name] = e
+            param_mods[apo_ref.name] = phi0
+
+        # Sample all remaining independent parameters via the standard path.
         for param_ref in self.config.template.iter_independent:
+            if param_ref.name in jointly_handled:
+                continue
+
             param_samp = self.sample_param(
                 param_ref.name,
                 param_ref.param,
