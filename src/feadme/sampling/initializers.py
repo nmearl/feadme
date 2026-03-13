@@ -60,7 +60,7 @@ class LSQInitializer(BaseInitializer):
             lsq_model,
             wave,
             flux,
-            weights=1 / flux_err,
+            # weights=1 / flux_err,
             maxiter=10_000,
             filter_non_finite=True,
         )
@@ -75,18 +75,6 @@ class LSQInitializer(BaseInitializer):
         return init_params, init_strategy
 
     def quick_plot(self, fit_mod, config, init_params):
-        fig, ax = plt.subplots(layout="constrained")
-
-        ax.errorbar(
-            config.data.masked_wave / (1 + init_params["redshift"]),
-            config.data.masked_flux,
-            yerr=config.data.masked_flux_err,
-            fmt="o",
-            color="grey",
-            zorder=-10,
-            alpha=0.25,
-        )
-
         disk_submodels = [
             fit_mod[sm_idx]
             for sm_idx in range(fit_mod.n_submodels)
@@ -131,65 +119,90 @@ class LSQInitializer(BaseInitializer):
         else:
             broad_line_model = fit_mod["redshift"] | fit_mod["base"]
 
-        new_wave = np.linspace(
-            config.data.masked_wave[0], config.data.masked_wave[-1], 1000
+        fig, axes = plt.subplots(
+            1,
+            len(config.template.disk_profiles),
+            layout="constrained",
+            figsize=(10 * len(config.template.disk_profiles), 5),
         )
-        tot_flux = fit_mod(new_wave)
-        disk_flux = disk_model(new_wave)
-        narrow_line_flux = narrow_line_model(new_wave)
-        broad_line_flux = broad_line_model(new_wave)
 
-        ax.plot(
-            new_wave / (1 + init_params["redshift"]),
-            tot_flux,
-            label="LSQ Fit",
-            color="C3",
-        )
-        ax.plot(
-            new_wave / (1 + init_params["redshift"]),
-            disk_flux,
-            label="Disk Fit",
-            color="C4",
-        )
-        ax.plot(
-            new_wave / (1 + init_params["redshift"]),
-            narrow_line_flux,
-            label="Narrow Line Fit",
-            color="C5",
-            linestyle="--",
-        )
-        ax.plot(
-            new_wave / (1 + init_params["redshift"]),
-            broad_line_flux,
-            label="Broad Line Fit",
-            color="C6",
-            linestyle="--",
-        )
+        tot_flux = fit_mod(config.data.masked_wave)
+        disk_flux = disk_model(config.data.masked_wave)
+        narrow_line_flux = narrow_line_model(config.data.masked_wave)
+        broad_line_flux = broad_line_model(config.data.masked_wave)
+
+        for i in range(len(config.template.mask)):
+            ax = axes.flat[i] if hasattr(axes, "flat") else axes
+
+            mask = (config.data.masked_wave > config.template.mask[i].lower_limit) & (
+                config.data.masked_wave < config.template.mask[i].upper_limit
+            )
+
+            wave = config.data.masked_wave[mask]
+            flux = config.data.masked_flux[mask]
+            flux_err = config.data.masked_flux_err[mask]
+
+            ax.errorbar(
+                wave / (1 + init_params["redshift"]),
+                flux,
+                yerr=flux_err,
+                fmt="o",
+                color="grey",
+                zorder=-10,
+                alpha=0.25,
+            )
+
+            ax.plot(
+                wave / (1 + init_params["redshift"]),
+                tot_flux[mask],
+                label="LSQ Fit",
+                color="C3",
+            )
+            ax.plot(
+                wave / (1 + init_params["redshift"]),
+                disk_flux[mask],
+                label="Disk Fit",
+                color="C4",
+            )
+            ax.plot(
+                wave / (1 + init_params["redshift"]),
+                narrow_line_flux[mask],
+                label="Narrow Line Fit",
+                color="C5",
+                linestyle="--",
+            )
+            ax.plot(
+                wave / (1 + init_params["redshift"]),
+                broad_line_flux[mask],
+                label="Broad Line Fit",
+                color="C6",
+                linestyle="--",
+            )
 
         # Print the initial parameter estimates on the figure
-        param_text = "\n".join(
-            [
-                f"{k:25} {v:.5g}"
-                for k, v in init_params.items()
-                if np.isfinite(v) and "_base" not in k
-            ]
-        )
-        ax.text(
-            0.05,
-            0.95,
-            param_text,
-            transform=ax.transAxes,
-            fontsize=6,
-            verticalalignment="top",
-            fontfamily="monospace",
-        )
-
-        ax.set_title(f"LSQ Initial Fit for {config.template.name}")
-        ax.set_xlabel("Wavelength (Å)")
-        ax.set_ylabel("Flux (mJy)")
+        # param_text = "\n".join(
+        #     [
+        #         f"{k:25} {v:.5g}"
+        #         for k, v in init_params.items()
+        #         if np.isfinite(v) and "_base" not in k
+        #     ]
+        # )
+        # ax.text(
+        #     0.05,
+        #     0.95,
+        #     param_text,
+        #     transform=ax.transAxes,
+        #     fontsize=6,
+        #     verticalalignment="top",
+        #     fontfamily="monospace",
+        # )
+        #
+        # ax.set_title(f"LSQ Initial Fit for {config.template.name}")
+        # ax.set_xlabel("Wavelength (Å)")
+        # ax.set_ylabel("Flux (mJy)")
 
         ax.legend()
-        fig.savefig(f"{config.output_path}/lsq_fit.png", dpi=300)
+        fig.savefig(f"{config.output_path}/lsq_fit.png")
         plt.close(fig)
 
 
@@ -263,11 +276,21 @@ class SVIInitializer(BaseInitializer):
 
         init_strategy = init_to_value(values=init_params)
 
-        # self.quick_plot(svi_result, guide, config)
+        self.quick_plot(
+            svi_result,
+            guide,
+            init_params,
+            config,
+            ignored={
+                k: True
+                for k, v in init_params.items()
+                if k in [p.name for p in config.template.iter_shared]
+            },
+        )
 
         return init_params, init_strategy
 
-    def quick_plot(self, svi_result, guide, config):
+    def quick_plot(self, svi_result, guide, init_params, config, ignored={}):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         guide_samples = guide.sample_posterior(
             rng_key,
@@ -285,8 +308,8 @@ class SVIInitializer(BaseInitializer):
         guide_mods = {k: jnp.median(v, axis=0) for k, v in guide_samples.items()}
 
         fig = corner.corner(
-            np.array([v for k, v in plot_samples.items()]).T,
-            labels=[k for k, v in plot_samples.items()],
+            np.array([v for k, v in plot_samples.items() if k not in ignored]).T,
+            labels=[k for k, v in plot_samples.items() if k not in ignored],
             # truths=[starters.get(k, None) for k in guide_samples],
             quantiles=[0.16, 0.5, 0.84],
             show_titles=True,
@@ -294,56 +317,56 @@ class SVIInitializer(BaseInitializer):
         fig.savefig(f"{config.output_path}/guide_corner_plot.png")
 
         fig, axes = plt.subplots(
-            nrows=len(plot_samples),
-            ncols=2,
-            figsize=(10, 3 * len(plot_samples)),
+            1,
+            len(config.template.disk_profiles),
             layout="constrained",
+            figsize=(10 * len(config.template.disk_profiles), 5),
         )
 
-        import arviz as az
+        for i in range(len(config.template.mask)):
+            ax = axes.flat[i] if hasattr(axes, "flat") else axes
 
-        az.plot_trace(
-            az.from_dict(plot_samples),
-            var_names=[k for k in plot_samples],
-            axes=axes,
-        )
+            mask = (config.data.masked_wave > config.template.mask[i].lower_limit) & (
+                config.data.masked_wave < config.template.mask[i].upper_limit
+            )
+            wave = config.data.masked_wave[mask]
+            flux = config.data.masked_flux[mask]
+            flux_err = config.data.masked_flux_err[mask]
 
-        # tot_flux, disk_flux, line_flux = evaluate_model(
-        #     config.template, new_wave, param_mods
-        # )
+            disk_flux = guide_mods["disk_flux"][mask]
+            line_flux = guide_mods["line_flux"][mask]
+            tot_flux = disk_flux + line_flux
 
-        fig.savefig(f"{config.output_path}/guide_trace_plot.png")
+            ax.errorbar(
+                wave / (1 + init_params["redshift"]),
+                flux,
+                yerr=flux_err,
+                fmt="o",
+                color="grey",
+                zorder=-10,
+                alpha=0.25,
+            )
 
-        fig, ax = plt.subplots()
+            ax.plot(
+                wave / (1 + init_params["redshift"]),
+                tot_flux,
+                label="LSQ Fit",
+                color="C3",
+            )
+            ax.plot(
+                wave / (1 + init_params["redshift"]),
+                disk_flux,
+                label="Disk Fit",
+                color="C4",
+            )
+            ax.plot(
+                wave / (1 + init_params["redshift"]),
+                line_flux,
+                label="Line Fit",
+                color="C5",
+                linestyle="--",
+            )
+            ax.legend()
 
-        ax.errorbar(
-            config.data.masked_wave,
-            config.data.masked_flux,
-            yerr=config.data.masked_flux_err,
-            fmt="o",
-            color="grey",
-            zorder=-10,
-            alpha=0.25,
-        )
-
-        ax.plot(
-            config.data.masked_wave,
-            guide_mods["disk_flux"],
-            label="Disk Fit",
-            color="C3",
-        )
-        ax.plot(
-            config.data.masked_wave,
-            guide_mods["line_flux"],
-            label="Line Fit",
-            color="C4",
-        )
-        ax.plot(
-            config.data.masked_wave,
-            guide_mods["disk_flux"] + guide_mods["line_flux"],
-            label="Total Fit",
-            color="C5",
-        )
-        ax.legend()
-        fig.savefig(f"{config.output_path}/svi_fit.png", dpi=300)
+        fig.savefig(f"{config.output_path}/svi_fit.png")
         plt.close(fig)
