@@ -175,7 +175,9 @@ class Profile:
     @property
     def iter_shared(self) -> tuple[tuple[str, Parameter], ...]:
         return tuple(
-            (n, p) for n, p in self.iter_parameter_fields() if p.shared is not None
+            (n, p)
+            for n, p in self.iter_parameter_fields()
+            if not p.fixed and p.shared is not None
         )
 
 
@@ -247,7 +249,11 @@ def _build_template_index(template: "Template") -> TemplateIndex:
             r for r in all_parameters if not r.param.fixed and r.param.shared is None
         ),
         fixed=tuple(r for r in all_parameters if r.param.fixed),
-        shared=tuple(r for r in all_parameters if r.param.shared is not None),
+        shared=tuple(
+            r
+            for r in all_parameters
+            if not r.param.fixed and r.param.shared is not None
+        ),
         circular=tuple(r for r in all_parameters if r.param.circular),
     )
 
