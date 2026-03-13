@@ -104,6 +104,7 @@ def _compose_model(
         in_par_values = {}
         in_par_bounds = {}
         in_par_fixed = {}
+        in_par_tied = {}
 
         for param_name, param in prof.iter_independent:
             param_low = param.low
@@ -124,16 +125,32 @@ def _compose_model(
             in_par_values[param_name] = param.value
             in_par_fixed[param_name] = True
 
+        for param_name, param in prof.iter_shared:
+            param_low = param.low
+            param_high = param.high
+
+            if "log" in param.distribution:
+                param_low = np.log10(param_low)
+                param_high = np.log10(param_high)
+
+            in_par_values[param_name] = (param_high + param_low) / 2
+            in_par_tied[param_name] = lambda m, mn=param.shared, pn=param_name: getattr(
+                m[mn], pn
+            )
+
         disk_mod = DiskProfileModel(
             **in_par_values,
             name=prof.name,
             bounds=in_par_bounds,
             fixed=in_par_fixed,
+            tied=in_par_tied,
             integrator=integrator,
             meta={
                 "distributions": {
                     param_name: param.distribution.value
                     for param_name, param in prof.iter_independent
+                    + prof.iter_shared
+                    + prof.iter_fixed
                 }
             },
         )
@@ -189,6 +206,8 @@ def _compose_model(
                 "distributions": {
                     param_name: param.distribution.value
                     for param_name, param in prof.iter_independent
+                    + prof.iter_shared
+                    + prof.iter_fixed
                 }
             },
         )
