@@ -101,6 +101,7 @@ class Plotter:
             in self._config.template.fitted_parameter_names(
                 include_shared=include_shared, include_circ=True
             )
+            or var.endswith("_raw")
         ]
 
         samples_ds = az.extract(
@@ -111,7 +112,9 @@ class Plotter:
         axes_scale = ["linear"] * len(var_names)
 
         for i, var in enumerate(var_names):
-            param_ref = next(x for x in self._config.template.iter_all if x.name == var)
+            param_ref = next(
+                (x for x in self._config.template.iter_all if x.name == var), None
+            )
 
             if param_ref is not None and "log" in param_ref.param.distribution.value:
                 axes_scale[i] = "log"
