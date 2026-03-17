@@ -121,7 +121,7 @@ class LSQInitializer(BaseInitializer):
         else:
             broad_line_model = fit_mod["redshift"] | fit_mod["base"]
 
-        n_sf = min(1, len(config.template.disk_profiles))
+        n_sf = max(1, len(config.template.disk_profiles))
 
         fig, axes = plt.subplots(
             1,
@@ -321,7 +321,7 @@ class SVIInitializer(BaseInitializer):
         )
         fig.savefig(f"{config.output_path}/guide_corner_plot.png")
 
-        n_sf = min(1, len(config.template.disk_profiles))
+        n_sf = max(1, len(config.template.disk_profiles))
 
         fig, axes = plt.subplots(
             1,
