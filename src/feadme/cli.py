@@ -269,7 +269,7 @@ def nuts_cmd(
         integrator=trap_jax_integrate,
     ).setup()
     # initializer = LSQInitializer()
-    initializer = SVIInitializer()
+    initializer = SVIInitializer(debug_plot=True)
 
     # model = LSQModel(config).setup()
     # sampler = LSQSampler(estimate_uncertainties=False)

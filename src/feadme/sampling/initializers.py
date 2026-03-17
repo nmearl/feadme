@@ -37,6 +37,8 @@ c_kms = const.c.to(u.km / u.s).value
 
 @flax.struct.dataclass
 class BaseInitializer:
+    debug_plot: bool = False
+
     def __call__(self, *args, **kwargs):
         raise NotImplementedError("Call method must be implemented by subclasses.")
 
@@ -69,8 +71,8 @@ class LSQInitializer(BaseInitializer):
 
         init_strategy = init_to_value(values=init_params)
 
-        # Quick plot
-        self.quick_plot(fit_mod, config, init_params)
+        if self.debug_plot:
+            self.quick_plot(fit_mod, config, init_params)
 
         return init_params, init_strategy
 
@@ -119,11 +121,13 @@ class LSQInitializer(BaseInitializer):
         else:
             broad_line_model = fit_mod["redshift"] | fit_mod["base"]
 
+        n_sf = min(1, len(config.template.disk_profiles))
+
         fig, axes = plt.subplots(
             1,
-            len(config.template.disk_profiles),
+            n_sf,
             layout="constrained",
-            figsize=(10 * len(config.template.disk_profiles), 5),
+            figsize=(10 * n_sf, 5),
         )
 
         tot_flux = fit_mod(config.data.masked_wave)
@@ -131,7 +135,7 @@ class LSQInitializer(BaseInitializer):
         narrow_line_flux = narrow_line_model(config.data.masked_wave)
         broad_line_flux = broad_line_model(config.data.masked_wave)
 
-        for i in range(len(config.template.mask)):
+        for i in range(n_sf):
             ax = axes.flat[i] if hasattr(axes, "flat") else axes
 
             mask = (config.data.masked_wave > config.template.mask[i].lower_limit) & (
@@ -219,7 +223,7 @@ class SVIInitializer(BaseInitializer):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, sample_key = random.split(rng_key, 3)
 
-        lsq_initializer = LSQInitializer()
+        lsq_initializer = LSQInitializer(debug_plot=self.debug_plot)
         init_params, init_strategy = lsq_initializer(config, model)
 
         diagnose_init_params(model, init_params, config)
@@ -276,17 +280,18 @@ class SVIInitializer(BaseInitializer):
 
         init_strategy = init_to_value(values=init_params)
 
-        self.quick_plot(
-            svi_result,
-            guide,
-            init_params,
-            config,
-            ignored={
-                k: True
-                for k, v in init_params.items()
-                if k in [p.name for p in config.template.iter_shared]
-            },
-        )
+        if self.debug_plot:
+            self.quick_plot(
+                svi_result,
+                guide,
+                init_params,
+                config,
+                ignored={
+                    k: True
+                    for k, v in init_params.items()
+                    if k in [p.name for p in config.template.iter_shared]
+                },
+            )
 
         return init_params, init_strategy
 
@@ -316,14 +321,16 @@ class SVIInitializer(BaseInitializer):
         )
         fig.savefig(f"{config.output_path}/guide_corner_plot.png")
 
+        n_sf = min(1, len(config.template.disk_profiles))
+
         fig, axes = plt.subplots(
             1,
-            len(config.template.disk_profiles),
+            n_sf,
             layout="constrained",
-            figsize=(10 * len(config.template.disk_profiles), 5),
+            figsize=(10 * n_sf, 5),
         )
 
-        for i in range(len(config.template.mask)):
+        for i in range(n_sf):
             ax = axes.flat[i] if hasattr(axes, "flat") else axes
 
             mask = (config.data.masked_wave > config.template.mask[i].lower_limit) & (
