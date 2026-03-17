@@ -66,8 +66,8 @@ def format_posterior_samples(
             apocenter = init_params[pn]
             init_params[f"{pn}_x_base"] = np.cos(apocenter)
             init_params[f"{pn}_y_base"] = np.sin(apocenter)
-            e = init_params.pop(pn.replace("apocenter", "eccentricity"), None)
-            phi0 = init_params.pop(pn)
+            e = init_params.get(pn.replace("apocenter", "eccentricity"), None)
+            phi0 = init_params.get(pn)
             h = e * np.sin(phi0)
             k = e * np.cos(phi0)
             # Approximate inverse of tanh squashing for warm-start
