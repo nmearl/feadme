@@ -165,15 +165,17 @@ class NumpyroModel(BaseModel):
             numpyro.factor(f"{prof.name}_outer_radius_factor", -k * excess**2)
 
         # Soft constraint: [NII] 6583/6548 ratio should be ~2.95
-        niil_narrow_area = param_mods["niil_narrow_area"]
-        niir_narrow_area = param_mods["niir_narrow_area"]
-        ratio_factor(
-            "nii_ratio_6583_6548",
-            niir_narrow_area,
-            niil_narrow_area,
-            ratio=2.95,
-            sigma_ln=0.02,
-        )
+        niil_narrow_area = param_mods.get("niil_narrow_area", False)
+        niir_narrow_area = param_mods.get("niir_narrow_area", False)
+
+        if niil_narrow_area and niir_narrow_area:
+            ratio_factor(
+                "nii_ratio_6583_6548",
+                niir_narrow_area,
+                niil_narrow_area,
+                ratio=2.95,
+                sigma_ln=0.02,
+            )
 
         total_flux, total_disk_flux, total_line_flux = evaluate_model(
             template=self.config.template,

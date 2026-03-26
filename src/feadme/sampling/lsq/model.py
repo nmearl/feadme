@@ -129,7 +129,7 @@ def _compose_model(
             param_low = param.low
             param_high = param.high
 
-            if "log" in param.distribution:
+            if "log" in param.distribution.value:
                 param_low = np.log10(param_low)
                 param_high = np.log10(param_high)
 
@@ -186,7 +186,7 @@ def _compose_model(
             param_low = param.low
             param_high = param.high
 
-            if "log" in param.distribution:
+            if "log" in param.distribution.value:
                 param_low = np.log10(param_low)
                 param_high = np.log10(param_high)
 
