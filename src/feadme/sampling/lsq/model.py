@@ -22,7 +22,7 @@ c_kms = const.c.to(u.km / u.s).value
 class DiskProfileModel(Fittable1DModel):
     center = Parameter()
     inner_radius = Parameter()
-    radius_ratio = Parameter()
+    outer_radius = Parameter()
     inclination = Parameter()
     sigma = Parameter()
     q = Parameter()
@@ -48,12 +48,6 @@ class DiskProfileModel(Fittable1DModel):
 
             if "log" in self.meta["distributions"].get(pn, ""):
                 pars[f"{pn}"] = 10 ** pars[f"{pn}"]
-
-        radius_ratio = pars.pop("radius_ratio")
-        pars["outer_radius"] = pars["inner_radius"] * radius_ratio
-
-        # if pars["outer_radius"] > 2e4:
-        #     return np.zeros_like(x)
 
         res = _compute_disk_flux_vectorized(x, **pars, integrator=self._integrator)
 

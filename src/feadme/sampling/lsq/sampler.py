@@ -260,13 +260,13 @@ class LSQSampler(BaseSampler):
         for pn in fit_mod.meta["log_dist"]:
             posterior_samples[pn] = 10 ** posterior_samples.pop(pn)
 
-        # Add white noise
+        # Add multiplicative log uncertainty inflation
         if self.estimate_uncertainties:
-            posterior_samples["white_noise"] = np.random.normal(
+            posterior_samples["log_white_noise"] = np.random.normal(
                 loc=0, scale=1e-3, size=len(posterior_samples_array)
             )
         else:
-            posterior_samples["white_noise"] = np.zeros(len(posterior_samples_array))
+            posterior_samples["log_white_noise"] = np.zeros(len(posterior_samples_array))
 
         return posterior_samples
 

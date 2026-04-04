@@ -112,7 +112,7 @@ class ParameterRef:
     Canonical reference to a single model parameter. `name` is the
     fully-qualified sampler name, e.g. ``disk1_inclination``. For
     profile-level parameters, `profile_name` and `field_name`
-    are set. For top-level parameters (redshift, white_noise) they are None.
+    are set. For top-level parameters (redshift, log_white_noise) they are None.
     """
 
     name: str
@@ -185,7 +185,7 @@ class Profile:
 class Disk(Profile, Writable):
     center: Optional[Parameter] = None
     inner_radius: Optional[Parameter] = None
-    radius_ratio: Optional[Parameter] = None
+    outer_radius: Optional[Parameter] = None
     inclination: Optional[Parameter] = None
     sigma: Optional[Parameter] = None
     q: Optional[Parameter] = None
@@ -232,7 +232,7 @@ def _profile_refs(profile: Profile) -> tuple[ParameterRef, ...]:
 def _build_template_index(template: "Template") -> TemplateIndex:
     refs: list[ParameterRef] = [
         ParameterRef(name="redshift", param=template.redshift),
-        ParameterRef(name="white_noise", param=template.white_noise),
+        ParameterRef(name="log_white_noise", param=template.log_white_noise),
     ]
 
     for disk in template.disk_profiles:
@@ -269,7 +269,7 @@ class Template(Writable):
         )
     )
     obs_date: float = 0.0
-    white_noise: Parameter = flax.struct.field(
+    log_white_noise: Parameter = flax.struct.field(
         default_factory=lambda: Parameter(
             distribution=Distribution.UNIFORM, low=-10.0, high=1.0
         )
@@ -295,7 +295,7 @@ class Template(Writable):
         line_profiles: Optional[list[Line]] = None,
         redshift: Optional[Parameter] = None,
         obs_date: float = 0.0,
-        white_noise: Optional[Parameter] = None,
+        log_white_noise: Optional[Parameter] = None,
         mask: Optional[list[Mask]] = None,
     ) -> "Template":
         instance = cls(
@@ -308,9 +308,9 @@ class Template(Writable):
                 else Parameter(distribution=Distribution.UNIFORM, low=0.0, high=1.0)
             ),
             obs_date=obs_date,
-            white_noise=(
-                white_noise
-                if white_noise is not None
+            log_white_noise=(
+                log_white_noise
+                if log_white_noise is not None
                 else Parameter(distribution=Distribution.UNIFORM, low=-10.0, high=1.0)
             ),
             mask=mask,

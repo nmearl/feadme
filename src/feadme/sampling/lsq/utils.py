@@ -5,6 +5,9 @@ from astropy.modeling.fitting import (
 )
 import numpy as np
 
+POSITIVE_SHIFT_FLOOR = 1e-3
+OUTER_RADIUS_CAP = 1e5
+
 
 def format_posterior_samples(
     fitted_model: CompoundModel,
@@ -73,6 +76,45 @@ def format_posterior_samples(
             # Approximate inverse of tanh squashing for warm-start
             init_params[f"{pn}_h_raw"] = np.arctanh(np.clip(h, -0.99, 0.99))
             init_params[f"{pn}_k_raw"] = np.arctanh(np.clip(k, -0.99, 0.99))
+        elif "outer_radius" in pn:
+            inner_name = pn.replace("outer_radius", "inner_radius")
+            inner_radius = init_params.get(inner_name)
+            outer_radius = init_params[pn]
+
+            if inner_radius is None or outer_radius is None:
+                continue
+
+            outer_low = max(mod_bounds[pn][0], inner_radius * (1.0 + 1e-6))
+            outer_high = min(mod_bounds[pn][1], OUTER_RADIUS_CAP)
+            outer_high = max(outer_high, outer_low * (1.0 + 1e-6))
+
+            log_outer_low = np.log(outer_low)
+            log_outer_high = np.log(outer_high)
+            log_outer = np.log(np.clip(outer_radius, outer_low, outer_high))
+
+            frac = (log_outer - log_outer_low) / (log_outer_high - log_outer_low)
+            frac = np.clip(frac, 1e-6, 1.0 - 1e-6)
+            raw = np.log(frac / (1.0 - frac))
+
+            profile_name = pn.rsplit("_", 1)[0]
+            init_params[f"{profile_name}_outer_radius_raw"] = raw
+        elif "area" in pn:
+            lo, hi = mod_bounds.get(pn, (None, None))
+            if lo is None or hi is None:
+                continue
+
+            shift = max(POSITIVE_SHIFT_FLOOR, 1e-3 * (hi - lo))
+            shifted_low = lo + shift
+            shifted_high = hi + shift
+            shifted_val = np.clip(init_params[pn] + shift, shifted_low, shifted_high)
+
+            log_low = np.log(shifted_low)
+            log_high = np.log(shifted_high)
+            log_val = np.log(shifted_val)
+
+            frac = (log_val - log_low) / (log_high - log_low)
+            frac = np.clip(frac, 1e-6, 1.0 - 1e-6)
+            init_params[f"{pn}_raw"] = np.log(frac / (1.0 - frac))
 
     init_params = {k: v.item() for k, v in init_params.items()}
 

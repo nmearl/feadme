@@ -1,0 +1,403 @@
+{
+  "name": "PLACEHOLDER",
+  "obs_date": 0.0,
+  "redshift": {
+    "_comment": "Set loc/value/low/high to match your object. scale=0.002 gives ~600 km/s uncertainty, appropriate if redshift is known from narrow lines.",
+    "circular": false,
+    "distribution": "normal",
+    "fixed": false,
+    "loc": 0.05,
+    "scale": 0.002,
+    "low": 0.04,
+    "high": 0.06,
+    "value": 0.05,
+    "shared": null
+  },
+  "mask": [
+    {
+      "_comment": "Set to your observed-frame wavelength window. Add more intervals as needed.",
+      "lower_limit": 6400.0,
+      "upper_limit": 6800.0
+    }
+  ],
+  "disk_profiles": [
+    {
+      "name": "halpha_disk",
+      "area": {
+        "_comment": "Integrated disk flux (mJy*Angstrom). log_normal with sigma_log~0.5 (factor ~1.6 at 1-sigma). Bounds cover faint-to-bright AGN disks.",
+        "circular": false,
+        "distribution": "log_normal",
+        "fixed": false,
+        "loc": 10.0,
+        "scale": 5.33,
+        "low": 0.05,
+        "high": 500.0,
+        "value": 10.0,
+        "shared": null
+      },
+      "center": {
+        "_comment": "Rest-frame Halpha. Fixed — the disk centre is tied to the emission line rest wavelength.",
+        "circular": false,
+        "distribution": "uniform",
+        "fixed": true,
+        "loc": 6562.819,
+        "scale": 5.0,
+        "low": 6557.819,
+        "high": 6567.819,
+        "value": 6562.819,
+        "shared": null
+      },
+      "sigma": {
+        "_comment": "Local turbulent/thermal broadening (km/s). Intentionally tighter than halpha_broad.vel_width to enforce role separation. Median ~600, allows up to 3000.",
+        "circular": false,
+        "distribution": "log_normal",
+        "fixed": false,
+        "loc": 600.0,
+        "scale": 320.0,
+        "low": 200.0,
+        "high": 3000.0,
+        "value": 600.0,
+        "shared": null
+      },
+      "eccentricity": {
+        "_comment": "TruncatedNormal strongly favouring near-circular orbits. High-e solutions are still reachable but require data support. Avoids the uniform-prior bias toward high-e.",
+        "circular": false,
+        "distribution": "normal",
+        "fixed": false,
+        "loc": 0.2,
+        "scale": 0.15,
+        "low": 0.0,
+        "high": 0.95,
+        "value": 0.2,
+        "shared": null
+      },
+      "inclination": {
+        "_comment": "Sampled via cos(i)~Uniform internally so the prior is flat in solid angle. Bounds [0, pi/2] = face-on to edge-on.",
+        "circular": false,
+        "distribution": "uniform",
+        "fixed": false,
+        "loc": 0.7853981633974483,
+        "scale": 0.3926990816987241,
+        "low": 0.0,
+        "high": 1.5707963267948966,
+        "value": 0.7853981633974483,
+        "shared": null
+      },
+      "inner_radius": {
+        "_comment": "Inner disk radius in gravitational radii R_g. log_uniform is scale-invariant across the plausible range. 100-10000 R_g covers LINER to Seyfert regimes.",
+        "circular": false,
+        "distribution": "log_uniform",
+        "fixed": false,
+        "loc": 1000.0,
+        "scale": 10.0,
+        "low": 100.0,
+        "high": 10000.0,
+        "value": 1000.0,
+        "shared": null
+      },
+      "outer_radius": {
+        "_comment": "Outer disk radius in gravitational radii R_g. log_uniform keeps the support broad while enforcing r_out > r_in through the sampler transform. Hard cap at 2e4 R_g.",
+        "circular": false,
+        "distribution": "log_uniform",
+        "fixed": false,
+        "loc": 5000.0,
+        "scale": 10.0,
+        "low": 200.0,
+        "high": 20000.0,
+        "value": 5000.0,
+        "shared": null
+      },
+      "q": {
+        "_comment": "Emissivity power-law index. Normal centred at 2.5 (standard for photoionisation-dominated disks). Truncated to physically meaningful range [1, 4].",
+        "circular": false,
+        "distribution": "normal",
+        "fixed": false,
+        "loc": 2.5,
+        "scale": 1.0,
+        "low": 1.0,
+        "high": 4.0,
+        "value": 2.5,
+        "shared": null
+      },
+      "apocenter": {
+        "_comment": "Azimuthal orientation of the apocenter (radians). Circular uniform — no preferred direction a priori.",
+        "circular": true,
+        "distribution": "uniform",
+        "fixed": false,
+        "loc": 3.141592653589793,
+        "scale": 0.7853981633974483,
+        "low": 0.0,
+        "high": 6.283185307179586,
+        "value": 3.141592653589793,
+        "shared": null
+      },
+      "offset": {
+        "_comment": "Additive continuum offset. Fixed at 0 — continuum should be subtracted before fitting.",
+        "circular": false,
+        "distribution": "uniform",
+        "fixed": true,
+        "loc": 0.0,
+        "scale": 0.001,
+        "low": 0.0,
+        "high": 0.05,
+        "value": 0.0,
+        "shared": null
+      }
+    }
+  ],
+  "line_profiles": [
+    {
+      "name": "halpha_narrow",
+      "center": 6562.819,
+      "shape": "gaussian",
+      "area": {
+        "_comment": "Narrow Halpha flux. Typically weaker than disk. log_normal with sigma_log~0.5.",
+        "circular": false,
+        "distribution": "log_normal",
+        "fixed": false,
+        "loc": 3.0,
+        "scale": 1.60,
+        "low": 0.01,
+        "high": 100.0,
+        "value": 3.0,
+        "shared": null
+      },
+      "vel_width": {
+        "_comment": "Narrow line FWHM in km/s. Uniform — instrumental resolution sets the floor at ~70 km/s, NLR rarely exceeds 500 km/s.",
+        "circular": false,
+        "distribution": "uniform",
+        "fixed": false,
+        "loc": 200.0,
+        "scale": 50.0,
+        "low": 70.0,
+        "high": 500.0,
+        "value": 200.0,
+        "shared": null
+      },
+      "offset": {
+        "_comment": "Velocity offset from rest wavelength (km/s). Fixed at 0 — systemic velocity handled by the redshift parameter.",
+        "circular": false,
+        "distribution": "normal",
+        "fixed": true,
+        "loc": 0.0,
+        "scale": 500.0,
+        "low": -10000.0,
+        "high": 10000.0,
+        "value": 0.0,
+        "shared": null
+      }
+    },
+    {
+      "name": "halpha_broad",
+      "center": 6562.819,
+      "shape": "gaussian",
+      "area": {
+        "_comment": "BLR broad Halpha flux. Can be comparable to or larger than disk. log_normal with wider bounds than narrow.",
+        "circular": false,
+        "distribution": "log_normal",
+        "fixed": false,
+        "loc": 8.0,
+        "scale": 4.26,
+        "low": 0.01,
+        "high": 500.0,
+        "value": 8.0,
+        "shared": null
+      },
+      "vel_width": {
+        "_comment": "BLR velocity width (km/s). log_normal centred at 2000 km/s — typical BLR. Intentionally distinct from disk.sigma range to enforce role separation.",
+        "circular": false,
+        "distribution": "log_normal",
+        "fixed": false,
+        "loc": 2000.0,
+        "scale": 1065.88,
+        "low": 500.0,
+        "high": 6000.0,
+        "value": 2000.0,
+        "shared": null
+      },
+      "offset": {
+        "_comment": "BLR velocity offset (km/s). Free — BLR can be slightly shifted relative to systemic.",
+        "circular": false,
+        "distribution": "normal",
+        "fixed": false,
+        "loc": 0.0,
+        "scale": 500.0,
+        "low": -3000.0,
+        "high": 3000.0,
+        "value": 0.0,
+        "shared": null
+      }
+    },
+    {
+      "name": "niir_narrow",
+      "center": 6583.46,
+      "shape": "gaussian",
+      "area": {
+        "_comment": "[NII]6583. Typically 0.3-1x narrow Halpha in AGN. NII ratio 6583/6548 ~ 2.95 is enforced via numpyro.factor in the model.",
+        "circular": false,
+        "distribution": "log_normal",
+        "fixed": false,
+        "loc": 2.0,
+        "scale": 1.07,
+        "low": 0.01,
+        "high": 50.0,
+        "value": 2.0,
+        "shared": null
+      },
+      "vel_width": {
+        "_comment": "Shared with halpha_narrow — all NLR lines assumed to have the same kinematic width.",
+        "circular": false,
+        "distribution": "uniform",
+        "fixed": false,
+        "loc": 200.0,
+        "scale": 50.0,
+        "low": 70.0,
+        "high": 500.0,
+        "value": 200.0,
+        "shared": "halpha_narrow"
+      },
+      "offset": {
+        "circular": false,
+        "distribution": "normal",
+        "fixed": true,
+        "loc": 0.0,
+        "scale": 500.0,
+        "low": -10000.0,
+        "high": 10000.0,
+        "value": 0.0,
+        "shared": null
+      }
+    },
+    {
+      "name": "niil_narrow",
+      "center": 6548.05,
+      "shape": "gaussian",
+      "area": {
+        "_comment": "[NII]6548. Ratio to [NII]6583 constrained to ~1/2.95 via the model's ratio_factor.",
+        "circular": false,
+        "distribution": "log_normal",
+        "fixed": false,
+        "loc": 0.68,
+        "scale": 0.36,
+        "low": 0.01,
+        "high": 20.0,
+        "value": 0.68,
+        "shared": null
+      },
+      "vel_width": {
+        "circular": false,
+        "distribution": "uniform",
+        "fixed": false,
+        "loc": 200.0,
+        "scale": 50.0,
+        "low": 70.0,
+        "high": 500.0,
+        "value": 200.0,
+        "shared": "halpha_narrow"
+      },
+      "offset": {
+        "circular": false,
+        "distribution": "normal",
+        "fixed": true,
+        "loc": 0.0,
+        "scale": 500.0,
+        "low": -10000.0,
+        "high": 10000.0,
+        "value": 0.0,
+        "shared": null
+      }
+    },
+    {
+      "name": "siir_narrow",
+      "center": 6730.81,
+      "shape": "gaussian",
+      "area": {
+        "_comment": "[SII]6731. In AGN typically 0.3-0.8x narrow Halpha.",
+        "circular": false,
+        "distribution": "log_normal",
+        "fixed": false,
+        "loc": 2.0,
+        "scale": 1.07,
+        "low": 0.01,
+        "high": 50.0,
+        "value": 2.0,
+        "shared": null
+      },
+      "vel_width": {
+        "circular": false,
+        "distribution": "uniform",
+        "fixed": false,
+        "loc": 200.0,
+        "scale": 50.0,
+        "low": 70.0,
+        "high": 500.0,
+        "value": 200.0,
+        "shared": "halpha_narrow"
+      },
+      "offset": {
+        "circular": false,
+        "distribution": "normal",
+        "fixed": true,
+        "loc": 0.0,
+        "scale": 500.0,
+        "low": -10000.0,
+        "high": 10000.0,
+        "value": 0.0,
+        "shared": null
+      }
+    },
+    {
+      "name": "siil_narrow",
+      "center": 6716.44,
+      "shape": "gaussian",
+      "area": {
+        "_comment": "[SII]6716. SII doublet ratio 6716/6731 is density-sensitive (0.44-1.42); left free here.",
+        "circular": false,
+        "distribution": "log_normal",
+        "fixed": false,
+        "loc": 2.0,
+        "scale": 1.07,
+        "low": 0.01,
+        "high": 50.0,
+        "value": 2.0,
+        "shared": null
+      },
+      "vel_width": {
+        "circular": false,
+        "distribution": "uniform",
+        "fixed": false,
+        "loc": 200.0,
+        "scale": 50.0,
+        "low": 70.0,
+        "high": 500.0,
+        "value": 200.0,
+        "shared": "halpha_narrow"
+      },
+      "offset": {
+        "circular": false,
+        "distribution": "normal",
+        "fixed": true,
+        "loc": 0.0,
+        "scale": 500.0,
+        "low": -10000.0,
+        "high": 10000.0,
+        "value": 0.0,
+        "shared": null
+      }
+    }
+  ],
+  "log_white_noise": {
+    "_comment": "Log multiplicative inflation of flux_err. total_error = flux_err * exp(log_white_noise). Zero leaves uncertainties unchanged.",
+    "_field_name": "log_white_noise",
+    "_qualified_name": null,
+    "circular": false,
+    "distribution": "uniform",
+    "fixed": false,
+    "loc": 0.0,
+    "scale": 0.01,
+    "low": -2.0,
+    "high": 1.0,
+    "value": 0.0,
+    "shared": null
+  }
+}

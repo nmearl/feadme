@@ -86,12 +86,12 @@ class LSQSampler(BaseSampler):
             posterior_samples[pn] = 10 ** posterior_samples.pop(pn)
 
         if self.estimate_uncertainties:
-            # Add in simulated normal values for white noise parameter
-            posterior_samples["white_noise"] = np.random.normal(
+            # Add in simulated normal values for log uncertainty inflation
+            posterior_samples["log_white_noise"] = np.random.normal(
                 loc=0, scale=1e-3, size=self.maxiter
             )
         else:
-            posterior_samples["white_noise"] = np.zeros(self.maxiter)
+            posterior_samples["log_white_noise"] = np.zeros(self.maxiter)
 
         # Construct posterior predictive samples for likelihood evaluation
         disk_submodels = [
