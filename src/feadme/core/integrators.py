@@ -18,8 +18,8 @@ c_kms = const.c.to(u.km / u.s).value
 CC_RES = 32
 GK_RES = 61
 
-fixed_quad_xi = ClenshawCurtisRule(order=CC_RES).integrate
-fixed_quad_phi = ClenshawCurtisRule(order=CC_RES * 4).integrate
+fixed_quad_xi = ClenshawCurtisRule(order=CC_RES // 2).integrate
+fixed_quad_phi = ClenshawCurtisRule(order=CC_RES * 6).integrate
 # fixed_quad_xi = GaussKronrodRule(order=GK_RES).integrate
 # fixed_quad_phi = GaussKronrodRule(order=GK_RES).integrate
 

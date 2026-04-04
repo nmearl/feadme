@@ -32,6 +32,11 @@ _GAMMA_WIDTH: float = 1e-6
 _TERM_FLOOR: float = 1e-8
 _TERM_WIDTH: float = 1e-6
 
+# Softplus floor for the Doppler denominator. This prevents sign flips in
+# D = 1 / inv_dop while keeping gradients smooth enough for NUTS.
+_INV_DOP_FLOOR: float = 1e-6
+_INV_DOP_WIDTH: float = 1e-5
+
 # Lower-only exponent clamp for the Gaussian intensity term.
 # The exponent is -(...)^2 / (2D^2) * (c/sigma)^2, which is strictly
 # non-positive by construction.  A large positive value therefore signals
@@ -198,15 +203,10 @@ def integrand(
         sqrt_xi * sqrt_scale * sqrt_one_minus_sinisq_cosphisq, _EPS_POS
     )
 
-    # NOTE: flooring inv_dop changes the sign structure of the Doppler
-    # factor directly.  We are unsure if it is appropriate, since it depends
-    # on whether inv_dop crossing zero is a numerical artifact or part of the
-    # model's physical support boundary.
-    # inv_dop = smooth_floor(
-    #     gamma * (inv_sqrt_scale - db_num / dc_val + dd_num / de_val),
-    #     _EPS_POS,
-    # )
-    inv_dop = gamma * (inv_sqrt_scale - db_num / dc_val + dd_num / de_val)
+    # Keep the Doppler factor positive with a smooth floor so the profile
+    # stays non-negative without introducing a sharp gradient kink.
+    inv_dop_raw = gamma * (inv_sqrt_scale - db_num / dc_val + dd_num / de_val)
+    inv_dop = softplus_floor(inv_dop_raw, _INV_DOP_FLOOR, _INV_DOP_WIDTH)
     D = 1.0 / inv_dop
 
     # ------------------------------------------------------------------

@@ -16,6 +16,9 @@ EPS = 1e-6
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
+_DISK_REST_WIDTH = 600.0
+_DISK_X_SAMPLES = 64
+
 
 def compose_param_arrays(
     template: Template, param_mods: Dict[str, float], redshift: float
@@ -192,8 +195,12 @@ def _compute_disk_flux_vectorized(
     Compute disk flux for multiple disk profiles, using an *area/flux*
     normalization rather than RMS normalization.
 
-    The raw integrator output res_X is converted into a unit-area template
-    over the provided wavelength grid, then scaled by `flux`.
+    The raw integrator output `res_X` is evaluated and normalized on a fixed
+    intrinsic dimensionless velocity grid `X` corresponding to a default
+    rest-frame support of `_DISK_REST_WIDTH` Angstrom around the line center,
+    then interpolated back onto the observed wavelength grid. This keeps the
+    disk `area` parameter tied to the model profile itself rather than to the
+    particular observed wavelength window.
 
     Parameters
     ----------
@@ -220,29 +227,20 @@ def _compute_disk_flux_vectorized(
         center_i, inner_i, outer_i, sigma_i, inc_i, q_i, ecc_i, apo_i, area_i, offset_i
     ):
         """
-        Compute a single disk flux profile evaluated on the observed
+        Compute a single disk flux profile on a fixed intrinsic `X` grid,
+        normalize it in wavelength units, and interpolate onto the observed
         wavelength grid.
-
-        The profile is normalized by integrating over the observed `wave` grid,
-        which is assumed to be wide enough to capture the full disk profile. This
-        is valid as long as `center_i` is tightly constrained (e.g., a narrow
-        prior around a known spectroscopic redshift), because a fixed wavelength
-        grid implies a `center_i`-dependent velocity spacing of
-        `\\Delta v \\approx c \\Delta \\lambda / \\lambda_0`. If `center_i` is ever
-        given a broad prior, this normalization will drift with `center_i` and
-        the correct approach is to evaluate the integrator on a fixed velocity
-        grid, normalize there, and interpolate onto `wave`.
         """
-
-        velocity = (wave - center_i) / center_i * c_kms
-        X = -velocity / c_kms
+        x_wave = (center_i - wave) / center_i
+        x_half_width = 0.5 * _DISK_REST_WIDTH / center_i
+        x_grid = jnp.linspace(-x_half_width, x_half_width, _DISK_X_SAMPLES)
 
         res_X = integrator(
             inner_i,
             outer_i,
             0.0,
             2.0 * jnp.pi,
-            jnp.asarray(X),
+            x_grid,
             inc_i,
             sigma_i,
             q_i,
@@ -250,8 +248,12 @@ def _compute_disk_flux_vectorized(
             apo_i,
         )
 
-        # Normalize to unit area over wavelength grid
-        template = res_X / (jnp.trapezoid(res_X, wave))
+        # X = -(lambda - lambda_0) / lambda_0, so |dlambda/dX| = lambda_0.
+        norm = center_i * jnp.trapezoid(res_X, x_grid)
+        norm = jnp.maximum(norm, ERR)
+        template_x = res_X / norm
+
+        template = jnp.interp(x_wave, x_grid, template_x, left=0.0, right=0.0)
 
         return template * area_i + offset_i
 
