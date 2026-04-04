@@ -177,6 +177,7 @@ class NeuTraSampler(BaseSampler):
             for k, v in guide_samples.items()
             if not k.endswith("_flux")
             and not k.endswith("_base")
+            and not k.endswith("_raw")
             and np.min(v) != np.max(v)
         }
         guide_mods = {k: jnp.median(v, axis=0) for k, v in guide_samples.items()}

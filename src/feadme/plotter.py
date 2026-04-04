@@ -14,6 +14,40 @@ class Plotter:
         self._idata = idata
         self._summary = summary
 
+    def _representative_param_mods(self) -> tuple[dict, float] | tuple[None, None]:
+        """
+        Return one representative posterior sample, preferring the highest
+        summed log-likelihood draw when available.
+        """
+        if not hasattr(self._idata, "posterior"):
+            return None, None
+
+        if hasattr(self._idata, "log_likelihood") and "total_flux" in self._idata.log_likelihood:
+            log_lik = self._idata.log_likelihood["total_flux"].values
+            total_log_lik = np.sum(log_lik, axis=-1)
+            best_idx = np.unravel_index(np.argmax(total_log_lik), total_log_lik.shape)
+            chain_idx, draw_idx = map(int, best_idx)
+        else:
+            chain_idx = 0
+            draw_idx = 0
+
+        posterior = self._idata.posterior
+        param_mods = {}
+
+        for param_ref in self._config.template.iter_all:
+            if param_ref.name == "log_white_noise":
+                continue
+
+            if param_ref.name in posterior.data_vars:
+                param_mods[param_ref.name] = float(
+                    posterior[param_ref.name].values[chain_idx, draw_idx]
+                )
+            elif param_ref.param.fixed:
+                param_mods[param_ref.name] = float(param_ref.param.value)
+
+        redshift = param_mods.pop("redshift", None)
+        return param_mods, redshift
+
     def plot_model_fit(self):
         """
         Plot the model fit using the posterior distributions of the disk and line fluxes.
@@ -22,11 +56,9 @@ class Plotter:
         redshift = self._summary.loc["redshift", "value"]
         rest_wave = self._config.data.masked_wave / (1 + redshift)
 
-        # Retrieve additional white noise
-        white_noise = self._summary.loc["white_noise", "value"]
-        total_error = np.sqrt(
-            self._config.data.masked_flux_err**2 + np.exp(2 * white_noise)
-        )
+        # Retrieve multiplicative uncertainty inflation
+        log_white_noise = self._summary.loc["log_white_noise", "value"]
+        total_error = self._config.data.masked_flux_err * np.exp(log_white_noise)
 
         fig, ax = plt.subplots(layout="constrained")
 
@@ -61,7 +93,7 @@ class Plotter:
 
         param_mods = self._summary["value"].to_dict()
         redshift = param_mods.pop("redshift")
-        del param_mods["white_noise"]
+        del param_mods["log_white_noise"]
 
         new_rest_wave = np.linspace(rest_wave[0], rest_wave[-1], 1000)
         new_obs_wave = np.linspace(
@@ -80,6 +112,20 @@ class Plotter:
         ax.plot(
             new_rest_wave, line_flux, label="Reconstructed Line Flux", linestyle="--"
         )
+
+        rep_param_mods, rep_redshift = self._representative_param_mods()
+        if rep_param_mods is not None and rep_redshift is not None:
+            rep_tot_flux, _, _ = evaluate_model(
+                self._config.template, new_obs_wave, rep_param_mods, rep_redshift
+            )
+            ax.plot(
+                new_rest_wave,
+                rep_tot_flux,
+                label="Representative Posterior Sample",
+                linestyle=":",
+                color="C1",
+            )
+
         ax.set_ylabel("Flux [mJy]")
         ax.set_xlabel("Wavelength [AA]")
         ax.set_title(
@@ -101,7 +147,6 @@ class Plotter:
             in self._config.template.fitted_parameter_names(
                 include_shared=include_shared, include_circ=True
             )
-            or var.endswith("_raw")
         ]
 
         samples_ds = az.extract(

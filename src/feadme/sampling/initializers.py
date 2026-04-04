@@ -46,7 +46,7 @@ class BaseInitializer:
 @flax.struct.dataclass
 class DefaultInitializer(BaseInitializer):
     def __call__(self, config: Config = None, model: BaseModel = None):
-        return init_to_median(num_samples=1000)
+        return {}, init_to_median(num_samples=1000)
 
 
 @flax.struct.dataclass
@@ -55,6 +55,7 @@ class LSQInitializer(BaseInitializer):
         wave = config.data.masked_wave
         flux = config.data.masked_flux
         flux_err = config.data.masked_flux_err
+        safe_weights = np.where(np.isfinite(flux_err) & (flux_err > 0), 1.0 / flux_err, 0.0)
 
         lsq_model = _compose_model(config.template, integrator=model.integrator)
 
@@ -62,7 +63,7 @@ class LSQInitializer(BaseInitializer):
             lsq_model,
             wave,
             flux,
-            # weights=1 / flux_err,
+            weights=safe_weights,
             maxiter=10_000,
             filter_non_finite=True,
         )
@@ -138,9 +139,15 @@ class LSQInitializer(BaseInitializer):
         for i in range(n_sf):
             ax = axes.flat[i] if hasattr(axes, "flat") else axes
 
-            mask = (config.data.masked_wave > config.template.mask[i].lower_limit) & (
-                config.data.masked_wave < config.template.mask[i].upper_limit
-            )
+            mask_arr = []
+
+            for j in range(len(config.template.mask)):
+                mask_arr.append(
+                    (config.data.masked_wave > config.template.mask[j].lower_limit)
+                    & (config.data.masked_wave < config.template.mask[j].upper_limit)
+                )
+
+            mask = np.logical_or.reduce(mask_arr)
 
             wave = config.data.masked_wave[mask]
             flux = config.data.masked_flux[mask]
@@ -308,6 +315,7 @@ class SVIInitializer(BaseInitializer):
             for k, v in guide_samples.items()
             if not k.endswith("_flux")
             and not k.endswith("_base")
+            and not k.endswith("_raw")
             and np.min(v) != np.max(v)
         }
         guide_mods = {k: jnp.median(v, axis=0) for k, v in guide_samples.items()}
@@ -333,9 +341,16 @@ class SVIInitializer(BaseInitializer):
         for i in range(n_sf):
             ax = axes.flat[i] if hasattr(axes, "flat") else axes
 
-            mask = (config.data.masked_wave > config.template.mask[i].lower_limit) & (
-                config.data.masked_wave < config.template.mask[i].upper_limit
-            )
+            mask_arr = []
+
+            for j in range(len(config.template.mask)):
+                mask_arr.append(
+                    (config.data.masked_wave > config.template.mask[j].lower_limit)
+                    & (config.data.masked_wave < config.template.mask[j].upper_limit)
+                )
+
+            mask = np.logical_or.reduce(mask_arr)
+
             wave = config.data.masked_wave[mask]
             flux = config.data.masked_flux[mask]
             flux_err = config.data.masked_flux_err[mask]

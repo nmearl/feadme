@@ -92,13 +92,11 @@ def diagnose_init_params(model, init_params, config):
     # For each suspected bad param, log its value vs prior bounds
     for key in bad_params:
         val = init_params[key]
-        param = next(
-            (p for p in config.template.parameters if p.qualified_name == key), None
-        )
-        if param:
+        param_ref = next((p for p in config.template.iter_all if p.name == key), None)
+        if param_ref and param_ref.param.low is not None and param_ref.param.high is not None:
             logger.warning(
-                f"  {key} = {val:.4g}  bounds=[{param.low:.4g}, {param.high:.4g}]"
-                f"  {'OUT OF BOUNDS' if val <= param.low or val >= param.high else 'in bounds'}"
+                f"  {key} = {val:.4g}  bounds=[{param_ref.param.low:.4g}, {param_ref.param.high:.4g}]"
+                f"  {'OUT OF BOUNDS' if val <= param_ref.param.low or val >= param_ref.param.high else 'in bounds'}"
             )
         else:
             logger.warning(

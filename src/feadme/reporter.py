@@ -27,8 +27,7 @@ class Reporter:
                     x
                     for x in self._idata.posterior.data_vars
                     if x in self._config.template.fitted_parameter_names()
-                    or "outer_radius" in x
-                    or x.endswith("_raw")
+                    or x.endswith("_outer_radius")
                 ],
                 round_to=10,
             )
