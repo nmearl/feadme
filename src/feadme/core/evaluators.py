@@ -17,7 +17,7 @@ c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
 _DISK_REST_WIDTH = 600.0
-_DISK_X_SAMPLES = 64
+_DISK_X_SAMPLES = 256
 
 
 def compose_param_arrays(
