@@ -16,9 +16,6 @@ EPS = 1e-6
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-_DISK_REST_WIDTH = 600.0
-_DISK_X_SAMPLES = 256
-
 
 def compose_param_arrays(
     template: Template, param_mods: Dict[str, float], redshift: float
@@ -38,14 +35,14 @@ def compose_param_arrays(
             "area",
             "offset",
         ]:
-            disk_arrays[param_name] = jnp.array(
+            disk_arrays[param_name] = jnp.stack(
                 [
                     param_mods[f"{prof.name}_{param_name}"]
                     for prof in template.disk_profiles
                 ]
             )
 
-        disk_arrays["center"] = jnp.array(
+        disk_arrays["center"] = jnp.stack(
             [
                 param_mods[f"{prof.name}_center"] * (1 + redshift)
                 for prof in template.disk_profiles
@@ -54,14 +51,14 @@ def compose_param_arrays(
 
     if template.line_profiles:
         for param_name in ["offset", "vel_width", "area"]:
-            line_arrays[param_name] = jnp.array(
+            line_arrays[param_name] = jnp.stack(
                 [
                     param_mods[f"{prof.name}_{param_name}"]
                     for prof in template.line_profiles
                 ]
             )
 
-        line_arrays["center"] = jnp.array(
+        line_arrays["center"] = jnp.stack(
             [prof.center * (1 + redshift) for prof in template.line_profiles]
         )
 
@@ -90,9 +87,10 @@ def evaluate_model(
 
     # Build arrays for ALL disk profiles at once (not in a loop)
     if disk_arrays:
-        # Call vectorized function once with all disk profiles
         total_disk_flux = _compute_disk_flux_vectorized(
-            wave, **disk_arrays, integrator=integrator
+            wave,
+            **disk_arrays,
+            integrator=integrator,
         )
     else:
         total_disk_flux = jnp.zeros_like(wave)
@@ -160,7 +158,6 @@ def _compute_line_flux_vectorized(
     delta_lamb = wave_bc - centers_bc
 
     sigma_lambda = vel_widths_bc / c_kms * centers_bc
-    sigma_lambda = sigma_lambda
 
     # Gaussian: area = amp * sqrt(2pi) * sigma_lambda  => amp = area / (sqrt(2pi)*sigma_lambda)
     amp_g = areas_bc / (jnp.sqrt(2.0 * jnp.pi) * sigma_lambda)
@@ -195,12 +192,10 @@ def _compute_disk_flux_vectorized(
     Compute disk flux for multiple disk profiles, using an *area/flux*
     normalization rather than RMS normalization.
 
-    The raw integrator output `res_X` is evaluated and normalized on a fixed
-    intrinsic dimensionless velocity grid `X` corresponding to a default
-    rest-frame support of `_DISK_REST_WIDTH` Angstrom around the line center,
-    then interpolated back onto the observed wavelength grid. This keeps the
-    disk `area` parameter tied to the model profile itself rather than to the
-    particular observed wavelength window.
+    The raw integrator output `res_X` is evaluated directly on the observed
+    wavelength grid (converted to dimensionless X), normalized via trapezoid
+    integration over the same grid, and scaled by `area`. This automatically
+    covers the full data window without any fixed-width assumptions.
 
     Parameters
     ----------
@@ -232,15 +227,13 @@ def _compute_disk_flux_vectorized(
         wavelength grid.
         """
         x_wave = (center_i - wave) / center_i
-        x_half_width = 0.5 * _DISK_REST_WIDTH / center_i
-        x_grid = jnp.linspace(-x_half_width, x_half_width, _DISK_X_SAMPLES)
 
         res_X = integrator(
             inner_i,
             outer_i,
             0.0,
             2.0 * jnp.pi,
-            x_grid,
+            x_wave,
             inc_i,
             sigma_i,
             q_i,
@@ -249,13 +242,11 @@ def _compute_disk_flux_vectorized(
         )
 
         # X = -(lambda - lambda_0) / lambda_0, so |dlambda/dX| = lambda_0.
-        norm = center_i * jnp.trapezoid(res_X, x_grid)
-        norm = jnp.maximum(norm, ERR)
-        template_x = res_X / norm
+        # x_wave is descending (wave ascending), so take abs of the trapezoid result.
+        norm = jnp.abs(center_i * jnp.trapezoid(res_X, x_wave))
+        # norm = jnp.maximum(norm, ERR)
 
-        template = jnp.interp(x_wave, x_grid, template_x, left=0.0, right=0.0)
-
-        return template * area_i + offset_i
+        return (res_X / norm) * area_i + offset_i
 
     prof_disk_flux = jax.vmap(
         _compute_single,

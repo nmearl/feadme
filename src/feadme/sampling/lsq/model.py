@@ -13,7 +13,7 @@ from ...core.evaluators import (
     _compute_disk_flux_vectorized,
 )
 from ...core.integrators import quad_jax_integrate
-from ...core.parser import Template
+from ...core.parser import Template, Shape
 
 FLOAT_EPSILON = 1e-6
 c_kms = const.c.to(u.km / u.s).value
@@ -49,7 +49,11 @@ class DiskProfileModel(Fittable1DModel):
             if "log" in self.meta["distributions"].get(pn, ""):
                 pars[f"{pn}"] = 10 ** pars[f"{pn}"]
 
-        res = _compute_disk_flux_vectorized(x, **pars, integrator=self._integrator)
+        res = _compute_disk_flux_vectorized(
+            x,
+            **pars,
+            integrator=self._integrator,
+        )
 
         if not np.all(np.isfinite(list(pars.values()))):
             raise ValueError(f"Invalid parameters for {self.name}: {pars}")
@@ -75,7 +79,7 @@ class LineProfileModel(Fittable1DModel):
             if "log" in self.meta["distributions"].get(pn, ""):
                 pars[f"{pn}"] = 10 ** pars[f"{pn}"]
 
-        res = _compute_line_flux_vectorized(x, **pars, shape=np.array([1]).astype(bool))
+        res = _compute_line_flux_vectorized(x, **pars, shape=self.meta["shape"])
 
         if not np.all(np.isfinite(list(pars.values()))):
             print(f"Invalid parameters for {self.name}: {pars}")
@@ -90,7 +94,7 @@ class LineProfileModel(Fittable1DModel):
 
 
 def _compose_model(
-    template: Template, integrator: Callable = quad_jax_integrate
+    template: Template, integrator: Callable = quad_jax_integrate, redshift: float = 0.0
 ) -> CompoundModel:
     full_model = Const1D(amplitude=0, fixed={"amplitude": True}, name="base")
 
@@ -145,7 +149,7 @@ def _compose_model(
                     for param_name, param in prof.iter_independent
                     + prof.iter_shared
                     + prof.iter_fixed
-                }
+                },
             },
         )
 
@@ -202,7 +206,8 @@ def _compose_model(
                     for param_name, param in prof.iter_independent
                     + prof.iter_shared
                     + prof.iter_fixed
-                }
+                },
+                "shape": np.array([prof.shape == Shape.GAUSSIAN]),
             },
         )
 
@@ -248,7 +253,7 @@ class LSQModel(BaseModel):
     model: Callable = lambda *args, **kwargs: None
 
     def setup(self, *args, **kwargs):
-        model = _compose_model(self.config.template, integrator=self.integrator)
+        model = _compose_model(self.config.template, integrator=self.integrator, redshift=self.config.template.redshift.value)
         return self.replace(config=self.config, integrator=self.integrator, model=model)
 
     def __call__(self, wave, param_mods, *args, **kwargs):

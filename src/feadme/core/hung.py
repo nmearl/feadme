@@ -125,6 +125,40 @@ def e_model(theta, x):
     return md
 
 
+def evaluate_hung_disk(
+    wave,
+    *,
+    center,
+    inner_radius,
+    outer_radius,
+    inclination,
+    sigma,
+    q,
+    eccentricity,
+    apocenter,
+    area=1.0,
+    offset=0.0,
+):
+    """
+    Evaluate the Hung elliptical-disk profile on a wavelength grid.
+
+    Parameters are matched to the FEADME disk profile names so this can be used
+    for side-by-side comparisons with the packaged evaluator.
+    """
+    wave = np.asarray(wave, dtype=float)
+    X = (wave - center) / center
+    profile = e_model(
+        [q, sigma, inclination, eccentricity, apocenter, inner_radius, outer_radius],
+        X,
+    )
+
+    norm = np.trapezoid(profile, wave)
+    if not np.isfinite(norm) or norm <= 0:
+        return np.full_like(wave, np.nan)
+
+    return area * profile / norm + offset
+
+
 def model_validate_phi0():
     """Reproduce Fig 3a in Eracleous (1995)..."""
     print("Reproduce Fig 3a in Eracleous (1995)")
@@ -203,7 +237,7 @@ def model_validate_rin():
     plt.close()
 
 
-def jax_hung_integrand(phi, xi, X, inc, sigma, q, ecc, phi0, nu0):
+def jax_hung_integrand(phi, xi, X, inc, sigma, q, ecc, phi0):
     """The integrand F_X.
 
     Parameters
@@ -213,7 +247,7 @@ def jax_hung_integrand(phi, xi, X, inc, sigma, q, ecc, phi0, nu0):
     xi : float
         a dimensionless distance from the black hole in units of Rg.
     X : float
-        velocity in units of c (speed of light).
+        Velocity in units of c (speed of light), matching ``int_func_op``.
     q : float
         the power-law index of surface emissivity.
     V_sig : float
@@ -225,9 +259,6 @@ def jax_hung_integrand(phi, xi, X, inc, sigma, q, ecc, phi0, nu0):
     phi0 : float
         orientation angle (radians) of the disk relative to
         the observers line-of-sight.
-    intnorm : float
-        a normalization factor to alleviate numerical issues.
-
     Returns
     -------
     float
@@ -237,15 +268,8 @@ def jax_hung_integrand(phi, xi, X, inc, sigma, q, ecc, phi0, nu0):
 
     normdist_renorm = 1.0 / (2.0 * jnp.pi) ** 0.5
 
-    # Convert sigma from frequency to velocity units
     c = 3e5  # km/s
-    V_sig = (sigma / nu0) * c
-
-    # Convert X from frequency shift to velocity units
-    lam0_over_lamb = X + 1
-    velocity = (1 / lam0_over_lamb - 1) * c
-    X = -(velocity / c)
-
+    V_sig = sigma
     intnorm = normdist_renorm / V_sig
     sininc = jnp.sin(inc)
     sininccosphi = sininc * jnp.cos(phi)
@@ -283,3 +307,19 @@ def jax_hung_integrand(phi, xi, X, inc, sigma, q, ecc, phi0, nu0):
         * psival
         / D_invval**3
     )
+
+
+def jax_hung_integrand_from_x(phi, xi, X, inc, sigma, q, ecc, phi0):
+    """
+    Adapter from FEADME's wavelength-domain
+
+        X = (lambda_0 - lambda) / lambda_0
+
+    to Hung's velocity-domain convention used by ``int_func_op``:
+
+        X_hung = -v / c = 1 - lambda / lambda_0
+
+    These are algebraically the same quantity, so the adapter is just an
+    explicit naming bridge for comparison scripts.
+    """
+    return jax_hung_integrand(phi, xi, X, inc, sigma, q, ecc, phi0)
