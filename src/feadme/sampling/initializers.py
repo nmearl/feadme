@@ -13,16 +13,17 @@ from astropy.modeling.fitting import (
     DogBoxLSQFitter,
 )
 import matplotlib.pyplot as plt
+from numpyro.handlers import seed, trace
 from numpyro.infer import SVI, Trace_ELBO
 from numpyro.infer import init_to_median, init_to_value
 from numpyro.infer.autoguide import (
     AutoBNAFNormal,
     AutoMultivariateNormal,
 )
+from numpyro.infer.util import log_density
 import numpy as np
 import astropy.constants as const
 import astropy.units as u
-from numpyro.infer.initialization import init_to_value
 
 from .lsq.utils import format_posterior_samples
 from ..core.parser import Config
@@ -33,6 +34,61 @@ from .utils import diagnose_init_params
 logger = loguru.logger.opt(colors=True)
 
 c_kms = const.c.to(u.km / u.s).value
+
+
+def _strip_flux_outputs(sample_dict: dict) -> dict:
+    return {k: v for k, v in sample_dict.items() if not k.endswith("_flux")}
+
+
+def _model_sample_site_names(model: BaseModel, config: Config) -> set[str]:
+    model_trace = trace(seed(model, random.PRNGKey(0))).get_trace(
+        wave=config.data.masked_wave,
+        flux=config.data.masked_flux,
+        flux_err=config.data.masked_flux_err,
+    )
+    return {
+        name
+        for name, site in model_trace.items()
+        if site["type"] == "sample" and not site.get("is_observed", False)
+    }
+
+
+def _best_guide_sample_by_log_density(
+    model: BaseModel,
+    guide_samples: dict,
+    config: Config,
+):
+    sample_site_names = _model_sample_site_names(model, config)
+    candidate_names = [k for k in guide_samples if k in sample_site_names]
+
+    if not candidate_names:
+        raise ValueError("No guide sample parameters available for SVI initialization.")
+
+    num_draws = int(guide_samples[candidate_names[0]].shape[0])
+    best_logp = -np.inf
+    best_idx = None
+
+    model_args = ()
+    model_kwargs = {
+        "wave": config.data.masked_wave,
+        "flux": config.data.masked_flux,
+        "flux_err": config.data.masked_flux_err,
+    }
+
+    for idx in range(num_draws):
+        params = {name: guide_samples[name][idx] for name in candidate_names}
+        logp, _ = log_density(model, model_args, model_kwargs, params)
+        logp_val = float(jax.device_get(logp))
+
+        if np.isfinite(logp_val) and logp_val > best_logp:
+            best_logp = logp_val
+            best_idx = idx
+
+    if best_idx is None:
+        raise ValueError("No finite SVI guide sample had a finite model log density.")
+
+    best_sample = {name: guide_samples[name][best_idx] for name in candidate_names}
+    return best_sample, best_logp, best_idx
 
 
 @flax.struct.dataclass
@@ -55,9 +111,15 @@ class LSQInitializer(BaseInitializer):
         wave = config.data.masked_wave
         flux = config.data.masked_flux
         flux_err = config.data.masked_flux_err
-        safe_weights = np.where(np.isfinite(flux_err) & (flux_err > 0), 1.0 / flux_err, 0.0)
+        safe_weights = np.where(
+            np.isfinite(flux_err) & (flux_err > 0), 1.0 / flux_err, 0.0
+        )
 
-        lsq_model = _compose_model(config.template, integrator=model.integrator)
+        lsq_model = _compose_model(
+            config.template,
+            integrator=model.integrator,
+            redshift=config.template.redshift.value,
+        )
 
         fit_mod = TRFLSQFitter()(
             lsq_model,
@@ -223,7 +285,7 @@ class SVIInitializer(BaseInitializer):
     learning_rate: float = 5e-3
     decay_rate: float = 0.1
     decay_steps: int = 2_000  # ~num_steps
-    progress_bar: bool = False
+    progress_bar: bool = True
     num_samples: int = 1000
 
     def __call__(self, config: Config, model: BaseModel):
@@ -257,7 +319,6 @@ class SVIInitializer(BaseInitializer):
             flux=config.data.masked_flux,
             flux_err=config.data.masked_flux_err,
             progress_bar=self.progress_bar,
-            stable_update=True,
         )
 
         recent_losses = svi_result.losses[-1000:]
@@ -271,19 +332,33 @@ class SVIInitializer(BaseInitializer):
             logger.info(f"SVI converged. Final loss: {svi_result.losses[-1]:.4f}")
 
         # Draw samples from the fitted guide and take the median as the single
-        # init point. More robust than the raw LSQ point because the guide has
-        # been optimized against the full likelihood, not just the data peak.
+        # init point. Use the single best coherent guide sample under the
+        # actual model log density rather than componentwise medians, which
+        # can land in a low-density region when parameters are correlated.
         guide_samples = guide.sample_posterior(
             sample_key,
             svi_result.params,
             sample_shape=(self.num_samples,),
         )
 
-        init_params = {
-            k: jnp.median(v, axis=0)
-            for k, v in guide_samples.items()
-            if not k.endswith("_flux")
-        }
+        lsq_params = init_params
+
+        try:
+            init_params, best_logp, best_idx = _best_guide_sample_by_log_density(
+                model,
+                guide_samples,
+                config,
+            )
+            logger.info(
+                "Using best SVI guide sample for initialization "
+                f"(sample {best_idx}, log_density={best_logp:.4f})"
+            )
+        except Exception as exc:
+            logger.warning(
+                "Falling back to LSQ initialization because SVI sample scoring "
+                f"failed: {exc}"
+            )
+            init_params = lsq_params
 
         init_strategy = init_to_value(values=init_params)
 
@@ -291,6 +366,7 @@ class SVIInitializer(BaseInitializer):
             self.quick_plot(
                 svi_result,
                 guide,
+                model,
                 init_params,
                 config,
                 ignored={
@@ -302,7 +378,7 @@ class SVIInitializer(BaseInitializer):
 
         return init_params, init_strategy
 
-    def quick_plot(self, svi_result, guide, init_params, config, ignored={}):
+    def quick_plot(self, svi_result, guide, model, init_params, config, ignored={}):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         guide_samples = guide.sample_posterior(
             rng_key,
@@ -318,7 +394,24 @@ class SVIInitializer(BaseInitializer):
             and not k.endswith("_raw")
             and np.min(v) != np.max(v)
         }
-        guide_mods = {k: jnp.median(v, axis=0) for k, v in guide_samples.items()}
+        try:
+            best_sample, _, _ = _best_guide_sample_by_log_density(
+                model,
+                guide_samples,
+                config,
+            )
+        except Exception:
+            best_sample = _strip_flux_outputs(
+                {k: jnp.median(v, axis=0) for k, v in guide_samples.items()}
+            )
+
+        guide_mods = {
+            k: best_sample[k] if k in best_sample else jnp.median(v, axis=0)
+            for k, v in guide_samples.items()
+        }
+        redshift = float(
+            jax.device_get(init_params.get("redshift", config.template.redshift.value))
+        )
 
         fig = corner.corner(
             np.array([v for k, v in plot_samples.items() if k not in ignored]).T,
@@ -360,7 +453,7 @@ class SVIInitializer(BaseInitializer):
             tot_flux = disk_flux + line_flux
 
             ax.errorbar(
-                wave / (1 + init_params["redshift"]),
+                wave / (1 + redshift),
                 flux,
                 yerr=flux_err,
                 fmt="o",
@@ -370,19 +463,19 @@ class SVIInitializer(BaseInitializer):
             )
 
             ax.plot(
-                wave / (1 + init_params["redshift"]),
+                wave / (1 + redshift),
                 tot_flux,
-                label="LSQ Fit",
+                label="SVI Fit",
                 color="C3",
             )
             ax.plot(
-                wave / (1 + init_params["redshift"]),
+                wave / (1 + redshift),
                 disk_flux,
                 label="Disk Fit",
                 color="C4",
             )
             ax.plot(
-                wave / (1 + init_params["redshift"]),
+                wave / (1 + redshift),
                 line_flux,
                 label="Line Fit",
                 color="C5",

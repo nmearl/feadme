@@ -8,7 +8,6 @@ import numpyro
 import numpyro.distributions as dist
 from jax.typing import ArrayLike
 from numpyro.distributions.transforms import ExpTransform
-from numpyro.infer.reparam import CircularReparam
 
 from ..base_model import BaseModel
 from ...core.evaluators import (
@@ -21,7 +20,6 @@ EPS = 1e-6
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 OUTER_RADIUS_CAP = 1e5
-POSITIVE_SHIFT_FLOOR = 1e-3
 
 
 def ratio_factor(name, F_num, F_den, ratio, sigma_ln=0.02, eps=1e-30):
@@ -83,6 +81,45 @@ def _find_radius_pairs(
         profile_name: (inner_by_profile[profile_name], outer_by_profile[profile_name])
         for profile_name in inner_by_profile
         if profile_name in outer_by_profile
+    }
+
+
+def _find_area_pairs(
+    iter_independent,
+) -> dict[str, tuple]:
+    """
+    Identify competing disk/broad area pairs that should be sampled jointly
+    as (total_area, disk_fraction).
+
+    Pairing is based on a shared profile stem after removing the first
+    ``_disk`` or ``_broad`` token from the profile name, e.g.
+    ``halpha_disk`` <-> ``halpha_broad`` and ``halpha_disk_2`` <->
+    ``halpha_broad_2``.
+
+    Ambiguous stems with multiple disks or multiple broad components are
+    skipped so the standard per-parameter path remains in control.
+    """
+    disk_by_stem = {}
+    broad_by_stem = {}
+
+    for param_ref in iter_independent:
+        if param_ref.field_name != "area" or param_ref.profile_name is None:
+            continue
+
+        profile_name = param_ref.profile_name
+        if "_disk" in profile_name:
+            stem = profile_name.replace("_disk", "", 1)
+            disk_by_stem.setdefault(stem, []).append(param_ref)
+        elif "_broad" in profile_name:
+            stem = profile_name.replace("_broad", "", 1)
+            broad_by_stem.setdefault(stem, []).append(param_ref)
+
+    return {
+        stem: (disk_refs[0], broad_refs[0])
+        for stem, disk_refs in disk_by_stem.items()
+        if stem in broad_by_stem
+        for broad_refs in [broad_by_stem[stem]]
+        if len(disk_refs) == 1 and len(broad_refs) == 1
     }
 
 
@@ -219,42 +256,74 @@ def _sample_ecc_apo_joint(ecc_ref, apo_ref) -> tuple[ArrayLike, ArrayLike]:
     return e, phi0
 
 
-def _sample_positive_scale(
-    samp_name: str,
-    param: Parameter,
-    lower_bound: float,
-    upper_bound: float,
-) -> ArrayLike:
+def _sample_area_joint(disk_ref, broad_ref) -> tuple[ArrayLike, ArrayLike]:
     """
-    Sample a positive bounded scale parameter in shifted log space while
-    preserving the user-specified prior on the physical parameter.
+    Sample a competing disk/broad area pair via a positive total area and a
+    disk flux fraction, then correct back to the configured component priors.
     """
-    shift = jnp.maximum(POSITIVE_SHIFT_FLOOR, 1e-3 * (upper_bound - lower_bound))
-    shifted_low = lower_bound + shift
-    shifted_high = upper_bound + shift
+    base = disk_ref.profile_name.replace("_disk", "", 1)
+    eps = 1e-8
 
-    base_dist = dist.Normal(0.0, 1.0)
-    raw = numpyro.sample(f"{samp_name}_raw", base_dist)
-    frac = jax.nn.sigmoid(raw)
+    total_low = max(disk_ref.param.low + broad_ref.param.low, eps)
+    total_high = max(disk_ref.param.high + broad_ref.param.high, total_low * (1.0 + 1e-6))
 
-    log_low = jnp.log(shifted_low)
-    log_high = jnp.log(shifted_high)
-    log_val = log_low + frac * (log_high - log_low)
-    shifted_val = jnp.exp(log_val)
-    param_samp = numpyro.deterministic(samp_name, shifted_val - shift)
+    total_raw_dist = dist.Normal(0.0, 1.0)
+    total_raw = numpyro.sample(f"{base}_total_area_raw", total_raw_dist)
+    total_frac = jax.nn.sigmoid(total_raw)
 
-    target_prior = _distribution_from_param(param, lower_bound, upper_bound)
-    log_target = target_prior.log_prob(param_samp)
-    log_base = base_dist.log_prob(raw)
-    log_abs_det = (
-        jnp.log(shifted_val)
-        + jnp.log(log_high - log_low)
-        + jnp.log(frac)
-        + jnp.log1p(-frac)
+    log_total_low = jnp.log(total_low)
+    log_total_high = jnp.log(total_high)
+    log_total_area = log_total_low + total_frac * (log_total_high - log_total_low)
+    total_area = jnp.exp(log_total_area)
+
+    frac_low = jnp.maximum(
+        disk_ref.param.low / total_area,
+        1.0 - broad_ref.param.high / total_area,
     )
-    numpyro.factor(f"{samp_name}_prior_correction", log_target + log_abs_det - log_base)
+    frac_high = jnp.minimum(
+        disk_ref.param.high / total_area,
+        1.0 - broad_ref.param.low / total_area,
+    )
+    frac_low = jnp.clip(frac_low, eps, 1.0 - eps)
+    frac_high = jnp.clip(frac_high, frac_low + eps, 1.0)
 
-    return param_samp
+    frac_raw_dist = dist.Normal(0.0, 1.0)
+    frac_raw = numpyro.sample(f"{base}_disk_fraction_raw", frac_raw_dist)
+    frac_unit = jax.nn.sigmoid(frac_raw)
+    disk_fraction = frac_low + frac_unit * (frac_high - frac_low)
+
+    disk_area = numpyro.deterministic(disk_ref.name, total_area * disk_fraction)
+    broad_area = numpyro.deterministic(
+        broad_ref.name, total_area * (1.0 - disk_fraction)
+    )
+
+    disk_prior = _distribution_from_param(
+        disk_ref.param, disk_ref.param.low, disk_ref.param.high
+    )
+    broad_prior = _distribution_from_param(
+        broad_ref.param, broad_ref.param.low, broad_ref.param.high
+    )
+
+    log_target = disk_prior.log_prob(disk_area) + broad_prior.log_prob(broad_area)
+    log_base = total_raw_dist.log_prob(total_raw) + frac_raw_dist.log_prob(frac_raw)
+
+    log_abs_det = (
+        jnp.log(total_area)
+        + jnp.log(log_total_high - log_total_low)
+        + jnp.log(total_frac)
+        + jnp.log1p(-total_frac)
+        + jnp.log(frac_high - frac_low)
+        + jnp.log(frac_unit)
+        + jnp.log1p(-frac_unit)
+        + jnp.log(total_area)
+    )
+    numpyro.factor(
+        f"{base}_area_prior_correction", log_target + log_abs_det - log_base
+    )
+
+    return disk_area, broad_area
+
+
 
 
 @flax.struct.dataclass
@@ -268,6 +337,7 @@ class NumpyroModel(BaseModel):
         # parameters use the standard per-parameter path.
         joint_pairs = _find_ecc_apo_pairs(self.config.template.iter_independent)
         radius_pairs = _find_radius_pairs(self.config.template.iter_independent)
+        area_pairs = _find_area_pairs(self.config.template.iter_independent)
         jointly_handled = {
             ref.name
             for ecc_ref, apo_ref in joint_pairs.values()
@@ -277,6 +347,11 @@ class NumpyroModel(BaseModel):
             ref.name
             for inner_ref, ratio_ref in radius_pairs.values()
             for ref in (inner_ref, ratio_ref)
+        }
+        jointly_handled |= {
+            ref.name
+            for disk_ref, broad_ref in area_pairs.values()
+            for ref in (disk_ref, broad_ref)
         }
 
         # Sample jointly-handled (eccentricity, apocenter) pairs first.
@@ -289,6 +364,11 @@ class NumpyroModel(BaseModel):
             inner_radius, outer_radius = _sample_radius_joint(inner_ref, ratio_ref)
             param_mods[inner_ref.name] = inner_radius
             param_mods[ratio_ref.name] = outer_radius
+
+        for disk_ref, broad_ref in area_pairs.values():
+            disk_area, broad_area = _sample_area_joint(disk_ref, broad_ref)
+            param_mods[disk_ref.name] = disk_area
+            param_mods[broad_ref.name] = broad_area
 
         # Sample all remaining independent parameters via the standard path.
         for param_ref in self.config.template.iter_independent:
@@ -336,7 +416,11 @@ class NumpyroModel(BaseModel):
             integrator=self.integrator,
         )
 
-        total_error = flux_err * jnp.exp(param_mods["log_white_noise"])
+        # White-noise inflation should never reduce the measured data uncertainty.
+        total_error = jnp.sqrt(
+            jnp.square(flux_err)
+            + jnp.square(total_flux) * jnp.exp(2.0 * param_mods["log_frac_noise"])
+        )
 
         numpyro.deterministic("disk_flux", total_disk_flux)
         numpyro.deterministic("line_flux", total_line_flux)
@@ -370,14 +454,6 @@ class NumpyroModel(BaseModel):
 
             return numpyro.deterministic(samp_name, incl)
 
-        if samp_name.endswith("_area") and lower_bound >= 0.0 and upper_bound > 0.0:
-            return _sample_positive_scale(
-                samp_name,
-                param,
-                lower_bound,
-                upper_bound,
-            )
-
         if param.distribution == Distribution.UNIFORM:
             param_samp = numpyro.sample(
                 samp_name, dist.Uniform(lower_bound, upper_bound)
@@ -400,7 +476,6 @@ class NumpyroModel(BaseModel):
         elif param.distribution == Distribution.LOG_NORMAL:
             sigma_log = jnp.log1p(param.scale / param.loc)
             mu_log = jnp.log(param.loc)
-
             param_samp = numpyro.sample(
                 samp_name,
                 dist.TransformedDistribution(

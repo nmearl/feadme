@@ -386,16 +386,16 @@
       }
     }
   ],
-  "log_white_noise": {
-    "_comment": "Log multiplicative inflation of flux_err. total_error = flux_err * exp(log_white_noise). Zero leaves uncertainties unchanged.",
-    "_field_name": "log_white_noise",
+  "log_frac_noise": {
+    "_comment": "Log fractional model jitter. total_error^2 = flux_err^2 + total_flux^2 * exp(2 * log_frac_noise).",
+    "_field_name": "log_frac_noise",
     "_qualified_name": null,
     "circular": false,
     "distribution": "uniform",
     "fixed": false,
     "loc": 0.0,
     "scale": 0.01,
-    "low": -2.0,
+    "low": -10.0,
     "high": 1.0,
     "value": 0.0,
     "shared": null

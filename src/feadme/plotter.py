@@ -35,7 +35,7 @@ class Plotter:
         param_mods = {}
 
         for param_ref in self._config.template.iter_all:
-            if param_ref.name == "log_white_noise":
+            if param_ref.name == "log_frac_noise":
                 continue
 
             if param_ref.name in posterior.data_vars:
@@ -52,13 +52,20 @@ class Plotter:
         """
         Plot the model fit using the posterior distributions of the disk and line fluxes.
         """
-        # Retrieve the redshift fitted value
-        redshift = self._summary.loc["redshift", "value"]
+        param_mods = self._summary["value"].to_dict()
+        redshift = param_mods.pop("redshift")
+        log_frac_noise = param_mods.pop("log_frac_noise")
         rest_wave = self._config.data.masked_wave / (1 + redshift)
-
-        # Retrieve multiplicative uncertainty inflation
-        log_white_noise = self._summary.loc["log_white_noise", "value"]
-        total_error = self._config.data.masked_flux_err * np.exp(log_white_noise)
+        summary_total_flux, _, _ = evaluate_model(
+            self._config.template,
+            self._config.data.masked_wave,
+            param_mods,
+            redshift,
+        )
+        total_error = np.sqrt(
+            self._config.data.masked_flux_err**2
+            + summary_total_flux**2 * np.exp(2.0 * log_frac_noise)
+        )
 
         fig, ax = plt.subplots(layout="constrained")
 
@@ -90,10 +97,6 @@ class Plotter:
 
         ax.plot(rest_wave, median, label="Sampled Model Fit", color="C3")
         ax.fill_between(rest_wave, lower, upper, alpha=0.5, color="C3")
-
-        param_mods = self._summary["value"].to_dict()
-        redshift = param_mods.pop("redshift")
-        del param_mods["log_white_noise"]
 
         new_rest_wave = np.linspace(rest_wave[0], rest_wave[-1], 1000)
         new_obs_wave = np.linspace(

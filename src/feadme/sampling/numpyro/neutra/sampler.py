@@ -73,7 +73,6 @@ class NeuTraSampler(BaseSampler):
             svi_key,
             num_steps=self.num_svi_steps,
             progress_bar=self.progress_bar,
-            stable_update=True,
             **model_kwargs,
         )
 

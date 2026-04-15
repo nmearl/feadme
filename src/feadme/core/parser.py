@@ -74,8 +74,6 @@ class Distribution(str, Enum):
     LOG_UNIFORM = "log_uniform"
     NORMAL = "normal"
     LOG_NORMAL = "log_normal"
-    HALF_NORMAL = "half_normal"
-    LOG_HALF_NORMAL = "log_half_normal"
 
 
 DIST_MAP = {
@@ -83,8 +81,6 @@ DIST_MAP = {
     Distribution.LOG_UNIFORM: 1,
     Distribution.NORMAL: 2,
     Distribution.LOG_NORMAL: 3,
-    Distribution.HALF_NORMAL: 4,
-    Distribution.LOG_HALF_NORMAL: 5,
 }
 
 
@@ -112,7 +108,7 @@ class ParameterRef:
     Canonical reference to a single model parameter. `name` is the
     fully-qualified sampler name, e.g. ``disk1_inclination``. For
     profile-level parameters, `profile_name` and `field_name`
-    are set. For top-level parameters (redshift, log_white_noise) they are None.
+    are set. For top-level parameters (redshift, log_frac_noise) they are None.
     """
 
     name: str
@@ -232,7 +228,7 @@ def _profile_refs(profile: Profile) -> tuple[ParameterRef, ...]:
 def _build_template_index(template: "Template") -> TemplateIndex:
     refs: list[ParameterRef] = [
         ParameterRef(name="redshift", param=template.redshift),
-        ParameterRef(name="log_white_noise", param=template.log_white_noise),
+        ParameterRef(name="log_frac_noise", param=template.log_frac_noise),
     ]
 
     for disk in template.disk_profiles:
@@ -269,7 +265,7 @@ class Template(Writable):
         )
     )
     obs_date: float = 0.0
-    log_white_noise: Parameter = flax.struct.field(
+    log_frac_noise: Parameter = flax.struct.field(
         default_factory=lambda: Parameter(
             distribution=Distribution.UNIFORM, low=-10.0, high=1.0
         )
@@ -295,7 +291,7 @@ class Template(Writable):
         line_profiles: Optional[list[Line]] = None,
         redshift: Optional[Parameter] = None,
         obs_date: float = 0.0,
-        log_white_noise: Optional[Parameter] = None,
+        log_frac_noise: Optional[Parameter] = None,
         mask: Optional[list[Mask]] = None,
     ) -> "Template":
         instance = cls(
@@ -308,9 +304,9 @@ class Template(Writable):
                 else Parameter(distribution=Distribution.UNIFORM, low=0.0, high=1.0)
             ),
             obs_date=obs_date,
-            log_white_noise=(
-                log_white_noise
-                if log_white_noise is not None
+            log_frac_noise=(
+                log_frac_noise
+                if log_frac_noise is not None
                 else Parameter(distribution=Distribution.UNIFORM, low=-10.0, high=1.0)
             ),
             mask=mask,
@@ -320,6 +316,24 @@ class Template(Writable):
     @classmethod
     def _after_from_dict(cls, instance: "Template") -> "Template":
         return instance.refresh()
+
+    @classmethod
+    def from_dict(cls, raw: dict):
+        raw = dict(raw)
+        if "log_frac_noise" not in raw and "log_white_noise" in raw:
+            raw["log_frac_noise"] = raw.pop("log_white_noise")
+        instance = dacite_from_dict(
+            data_class=cls,
+            data=raw,
+            config=DaciteConfig(
+                type_hooks={
+                    ArrayLike: lambda v: jnp.asarray(v),
+                    Distribution: lambda v: Distribution(v),
+                    Shape: lambda v: Shape(v),
+                }
+            ),
+        )
+        return cls._after_from_dict(instance)
 
     @property
     def iter_independent(self) -> tuple[ParameterRef, ...]:
