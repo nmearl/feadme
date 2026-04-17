@@ -49,14 +49,23 @@ class DiskProfileModel(Fittable1DModel):
             if "log" in self.meta["distributions"].get(pn, ""):
                 pars[f"{pn}"] = 10 ** pars[f"{pn}"]
 
+        if not np.all(np.isfinite(list(pars.values()))):
+            raise ValueError(f"Invalid parameters for {self.name}: {pars}")
+
+        # Build x_grid from the observed wavelength range of the input data.
+        # x is the masked wavelength array, so min/max give the mask bounds.
+        center_val = float(pars["center"][0])
+        n_samples = self.meta.get("n_disk_samples", 256)
+        x_lo = (center_val - float(np.max(x))) / center_val
+        x_hi = (center_val - float(np.min(x))) / center_val
+        x_grids = np.linspace(x_lo, x_hi, n_samples)[np.newaxis, :]
+
         res = _compute_disk_flux_vectorized(
             x,
             **pars,
+            x_grids=x_grids,
             integrator=self._integrator,
         )
-
-        if not np.all(np.isfinite(list(pars.values()))):
-            raise ValueError(f"Invalid parameters for {self.name}: {pars}")
 
         if not np.all(np.isfinite(res)):
             raise ValueError(f"Invalid model evaluation for {self.name}: {pars}")

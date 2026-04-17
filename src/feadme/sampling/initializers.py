@@ -64,7 +64,8 @@ def _best_guide_sample_by_log_density(
     if not candidate_names:
         raise ValueError("No guide sample parameters available for SVI initialization.")
 
-    num_draws = int(guide_samples[candidate_names[0]].shape[0])
+    # Score a subset — finding the argmax doesn't need the full sample set.
+    num_draws = min(200, int(guide_samples[candidate_names[0]].shape[0]))
     best_logp = -np.inf
     best_idx = None
 
