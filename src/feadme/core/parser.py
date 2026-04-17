@@ -300,7 +300,7 @@ class Template(Writable):
         )
     )
     mask: Optional[list[Mask]] = None
-    n_disk_samples: int = 256
+    n_disk_samples: int = 512
 
     index: TemplateIndex = flax.struct.field(
         default_factory=TemplateIndex,
