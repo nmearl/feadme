@@ -7,66 +7,21 @@ from jax.typing import ArrayLike
 
 c_kms = const.c.to(u.km / u.s).value
 
-# Floor for quantities that must be strictly positive but have no
-# natural physical scale (e.g. intermediate trig terms, xi).
+# Small numerical floor for the explicitly guarded singular denominator.
 _EPS_POS: float = 1e-12
 
-# Numerical floor for the near-edge-on singularity in Psi.
-# The sqrt-norm regularization is symmetric near zero, so _DENOM_FLOOR is
-# not a literal disk scale height — it is a numerical hyperparameter with
-# a thickness-like physical interpretation.  It primarily affects the tiny
-# pathological corner near (i -> pi/2, phi -> pi).
-_DENOM_FLOOR: float = 3e-4
-
-# Softplus parameters for the gamma denominator.  The floor prevents
-# gamma from blowing up if the denominator crosses zero; the width sets
-# the gradient-smoothing scale for NUTS.
-_GAMMA_FLOOR: float = 1e-8
-_GAMMA_WIDTH: float = 1e-6
-
-# Radicand floor for the Doppler term sqrt(1 - (b/r)^2 * scale).
-# A strictly positive floor ensures the sqrt stays away from zero near
-# the photon capture radius, preventing a downstream 1/inv_dop divergence.
-# Using softplus with this floor (rather than 0.0) gives a genuine lower
-# bound on term_binner.
+# Minimal retained guard: keep the Doppler radicand slightly positive so
+# sqrt(term_raw) remains defined in the small pathological region where
+# the raw Eracleous/Hung algebra crosses zero.
 _TERM_FLOOR: float = 1e-8
 _TERM_WIDTH: float = 1e-6
-
-# Softplus floor for the Doppler denominator. This prevents sign flips in
-# D = 1 / inv_dop while keeping gradients smooth enough for NUTS.
-_INV_DOP_FLOOR: float = 1e-6
-_INV_DOP_WIDTH: float = 1e-5
-
-# Lower-only exponent clamp for the Gaussian intensity term.
-# The exponent is -(...)^2 / (2D^2) * (c/sigma)^2, which is strictly
-# non-positive by construction.  A large positive value therefore signals
-# upstream numerical breakage rather than a physical state, so only the
-# lower bound is enforced here.  We can add an upper clip too if we observe
-# genuine positive excursions (e.g. from sigma -> 0 or D -> 0 edge cases).
-_EXPONENT_MIN: float = -37.0
-
-
-def smooth_floor(x: ArrayLike, floor: float) -> ArrayLike:
-    """
-    Smooth approximation to max(x, floor) via a sqrt-based softplus.
-
-    For x >> floor returns ~x; for x << floor returns ~floor.
-    The transition half-width scales with ``floor``, so very small floors
-    produce correspondingly sharp transitions, nearly identical to a hard
-    clamp.  Choose ``floor`` with the gradient-smoothness requirement in
-    mind, not just numerical stability.
-    """
-    y = x - floor
-    return floor + 0.5 * (y + jnp.sqrt(y * y + floor * floor))
-
 
 def softplus_floor(x: ArrayLike, floor: float, width: float) -> ArrayLike:
     """
     Smooth lower bound using softplus.
 
     Returns approximately max(x, floor) with a transition scale controlled
-    by ``width``.  Produces a broader, gentler gradient than the sqrt-based
-    ``smooth_floor``, which is generally preferable for NUTS samplers.
+    by ``width``.
 
     Parameters
     ----------
@@ -94,22 +49,21 @@ def integrand(
     phi0: float,
 ) -> ArrayLike:
     """
-    Eracleous disk integrand with smooth, physically motivated regularization.
+    Near-literal Eracleous/Hung disk integrand with minimal numerical guards.
 
     Notes
     -----
     Regularization strategy
     ~~~~~~~~~~~~~~~~~~~~~~~
-    * Near-zero trig/algebraic quantities use ``smooth_floor`` with
-      ``_EPS_POS`` as a purely numerical guard.
-    * The Psi denominator (1 + sin i cos phi) is regularized with a
-      finite-thickness floor ``_DENOM_FLOOR`` via the manifestly non-negative
-      half-angle form, which avoids the thin-disk singularity in a physically
-      interpretable way.
-    * The gamma denominator and Doppler radicand use ``softplus_floor`` for
-      broader, NUTS-friendly gradient transitions.
-    * The Gaussian exponent has a lower clamp at ``_EXPONENT_MIN`` to prevent
-      silent underflow/NaN propagation in gradient chains.
+    * Most of the algebra is left unguarded so failure surfaces in the raw
+      Eracleous/Hung kernel are preserved.
+    * ``1 + sin(i) cos(phi)`` is clamped only to avoid the exact razor-thin
+      denominator singularity at the edge-on limit.
+    * ``term_raw`` retains a soft floor so ``sqrt(term_raw)`` stays defined;
+      this was the dominant practical initialization failure mode in ad hoc
+      scans of representative disk regimes.
+    * No guards are applied to ``gamma_raw``, ``inv_dop_raw``, ``scale``, or
+      the Gaussian exponent in this minimal version.
     """
     # ------------------------------------------------------------------
     # Trig
@@ -128,14 +82,14 @@ def integrand(
     sini_cosphi = sini * cosphi
     sini_cosphi_sq = sini_cosphi * sini_cosphi
 
-    one_minus_sinisq_cosphisq = smooth_floor(1.0 - sini_cosphi_sq, _EPS_POS)
-    one_minus_e_cosphiphinot = smooth_floor(1.0 - e * cosphiphinot, _EPS_POS)
+    one_minus_sinisq_cosphisq = 1.0 - sini_cosphi_sq
+    one_minus_e_cosphiphinot = 1.0 - e * cosphiphinot
 
     # ------------------------------------------------------------------
     # Transform xi_tilde -> xi
     # ------------------------------------------------------------------
     trans_fac = (1.0 + e) / one_minus_e_cosphiphinot
-    xi = smooth_floor(xi_tilde * trans_fac, _EPS_POS)
+    xi = xi_tilde * trans_fac
 
     xi_recip = 1.0 / xi
     sqrt_xi = jnp.sqrt(xi)
@@ -143,23 +97,19 @@ def integrand(
     # ------------------------------------------------------------------
     # Schwarzschild-like factor
     # ------------------------------------------------------------------
-    scale = smooth_floor(1.0 - 2.0 * xi_recip, _EPS_POS)
+    scale = 1.0 - 2.0 * xi_recip
     sqrt_scale = jnp.sqrt(scale)
 
     sqrt_one_minus_e_cosphiphinot = jnp.sqrt(one_minus_e_cosphiphinot)
     sqrt_one_minus_sinisq_cosphisq = jnp.sqrt(one_minus_sinisq_cosphisq)
 
     # ------------------------------------------------------------------
-    # Psi geometry denominator
-    #
-    # 1 + sin(i)cos(phi) is rewritten via the half-angle identity as
-    #   (1 - sin i) + 2 sin i cos^2(phi/2)
-    # The sqrt-norm regularization is symmetric near zero, so _DENOM_FLOOR
-    # should be read as a numerical hyperparameter with a thickness-like
-    # physical interpretation, not a literal geometric scale height.
+    # Psi geometry denominator.
+    # Using the half-angle form makes the edge-on singular surface explicit;
+    # the hard floor only prevents exact division by zero.
     # ------------------------------------------------------------------
     one_plus_sini_cosphi_raw = (1.0 - sini) + 2.0 * sini * jnp.cos(phi / 2.0) ** 2
-    one_plus_sini_cosphi = jnp.sqrt(one_plus_sini_cosphi_raw**2 + _DENOM_FLOOR**2)
+    one_plus_sini_cosphi = jnp.maximum(one_plus_sini_cosphi_raw, _EPS_POS)
     one_minus_sini_cosphi = 1.0 - sini_cosphi
 
     # Factor shared by both b/r and Psi so both use the same (regularized)
@@ -169,7 +119,7 @@ def integrand(
     b_div_r = sqrt_one_minus_sinisq_cosphisq * (1.0 + xi_recip * psi_geom)
 
     # ------------------------------------------------------------------
-    # Gamma factor  (softplus floor for NUTS-friendly gradients)
+    # Gamma factor (unguarded in the minimal implementation)
     # ------------------------------------------------------------------
     e_sq_sin_sq = e * e * sinphiphinot * sinphiphinot
     scale_sq = scale * scale
@@ -178,15 +128,12 @@ def integrand(
     gamma_raw = 1.0 - (e_sq_sin_sq + scale * one_minus_e_cosphiphinot_sq) / (
         xi * scale_sq * one_minus_e_cosphiphinot
     )
-    gamma_denom = softplus_floor(gamma_raw, _GAMMA_FLOOR, _GAMMA_WIDTH)
+    gamma_denom = gamma_raw
     gamma = jnp.sqrt(1.0 / gamma_denom)
 
     # ------------------------------------------------------------------
-    # Doppler term radicand
-    #
-    # A strictly positive _TERM_FLOOR (rather than 0.0) ensures sqrt stays
-    # away from zero near the photon capture radius, preventing a downstream
-    # 1/inv_dop divergence.
+    # Doppler term radicand. This is the only retained smooth guard because
+    # term_raw <= 0 was the leading observed raw-algebra failure surface.
     # ------------------------------------------------------------------
     term_raw = 1.0 - b_div_r * b_div_r * scale
     term_binner = softplus_floor(term_raw, _TERM_FLOOR, _TERM_WIDTH)
@@ -194,30 +141,20 @@ def integrand(
     inv_sqrt_scale = 1.0 / sqrt_scale
 
     db_num = jnp.sqrt(term_binner) * e * sinphiphinot
-    dc_val = smooth_floor(
-        sqrt_xi * scale * sqrt_scale * sqrt_one_minus_e_cosphiphinot, _EPS_POS
-    )
+    dc_val = sqrt_xi * scale * sqrt_scale * sqrt_one_minus_e_cosphiphinot
 
     dd_num = b_div_r * sqrt_one_minus_e_cosphiphinot * sini * sinphi
-    de_val = smooth_floor(
-        sqrt_xi * sqrt_scale * sqrt_one_minus_sinisq_cosphisq, _EPS_POS
-    )
+    de_val = sqrt_xi * sqrt_scale * sqrt_one_minus_sinisq_cosphisq
 
-    # Keep the Doppler factor positive with a smooth floor so the profile
-    # stays non-negative without introducing a sharp gradient kink.
     inv_dop_raw = gamma * (inv_sqrt_scale - db_num / dc_val + dd_num / de_val)
-    inv_dop = softplus_floor(inv_dop_raw, _INV_DOP_FLOOR, _INV_DOP_WIDTH)
+    inv_dop = inv_dop_raw
     D = 1.0 / inv_dop
 
     # ------------------------------------------------------------------
     # Intensity
-    #
-    # Exponent is clamped to prevent silent NaN propagation through NUTS
-    # gradient chains on overflow/underflow.
     # ------------------------------------------------------------------
     D_sq = D * D
     exponent = -((1.0 + X - D) ** 2) / (2.0 * D_sq) * (c_kms / sigma) ** 2
-    # exponent = jnp.maximum(exponent, _EXPONENT_MIN)
 
     cc = c_kms / (jnp.sqrt(2.0 * jnp.pi) * sigma)
     I_nu = jnp.power(xi, -q) * cc * jnp.exp(exponent)
