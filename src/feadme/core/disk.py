@@ -217,7 +217,7 @@ def integrand(
     # ------------------------------------------------------------------
     D_sq = D * D
     exponent = -((1.0 + X - D) ** 2) / (2.0 * D_sq) * (c_kms / sigma) ** 2
-    exponent = jnp.maximum(exponent, _EXPONENT_MIN)
+    # exponent = jnp.maximum(exponent, _EXPONENT_MIN)
 
     cc = c_kms / (jnp.sqrt(2.0 * jnp.pi) * sigma)
     I_nu = jnp.power(xi, -q) * cc * jnp.exp(exponent)
