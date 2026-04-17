@@ -286,7 +286,7 @@ class SVIInitializer(BaseInitializer):
     learning_rate: float = 5e-3
     decay_rate: float = 0.1
     decay_steps: int = 2_000  # ~num_steps
-    progress_bar: bool = True
+    progress_bar: bool = False
     num_samples: int = 1000
 
     def __call__(self, config: Config, model: BaseModel):
