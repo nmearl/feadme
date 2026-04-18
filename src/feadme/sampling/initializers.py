@@ -414,12 +414,22 @@ class SVIInitializer(BaseInitializer):
             jax.device_get(init_params.get("redshift", config.template.redshift.value))
         )
 
+        plot_keys = [k for k in plot_samples if k not in ignored]
+        axes_scale = []
+        for k in plot_keys:
+            param_ref = next((p for p in config.template.iter_all if p.name == k), None)
+            axes_scale.append(
+                "log"
+                if param_ref is not None and "log" in param_ref.param.distribution.value
+                else "linear"
+            )
+
         fig = corner.corner(
-            np.array([v for k, v in plot_samples.items() if k not in ignored]).T,
-            labels=[k for k, v in plot_samples.items() if k not in ignored],
-            # truths=[starters.get(k, None) for k in guide_samples],
+            np.array([plot_samples[k] for k in plot_keys]).T,
+            labels=plot_keys,
             quantiles=[0.16, 0.5, 0.84],
             show_titles=True,
+            axes_scale=axes_scale,
         )
         fig.savefig(f"{config.output_path}/guide_corner_plot.png")
 

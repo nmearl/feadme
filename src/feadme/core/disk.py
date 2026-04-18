@@ -16,6 +16,12 @@ _EPS_POS: float = 1e-12
 _TERM_FLOOR: float = 1e-8
 _TERM_WIDTH: float = 1e-6
 
+# Lower clamp for the Gaussian exponent to prevent float64 underflow.
+# exp(exponent) underflows to 0 below ~-709; clamping at -37 keeps
+# exp(exponent) > ~1e-16 and avoids zero gradients in the far wings.
+_EXPONENT_MIN: float = -37.0
+
+
 def softplus_floor(x: ArrayLike, floor: float, width: float) -> ArrayLike:
     """
     Smooth lower bound using softplus.
