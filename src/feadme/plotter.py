@@ -1,15 +1,15 @@
 import arviz as az
+import xarray as xr
 from .core.parser import Config
 import corner
 import matplotlib.pyplot as plt
 import numpy as np
-from pathlib import Path
 import pandas as pd
 from .core.evaluators import evaluate_model
 
 
 class Plotter:
-    def __init__(self, config: Config, idata: az.InferenceData, summary: pd.DataFrame):
+    def __init__(self, config: Config, idata: xr.DataTree, summary: pd.DataFrame):
         self._config = config
         self._idata = idata
         self._summary = summary
@@ -19,11 +19,11 @@ class Plotter:
         Return one representative posterior sample, preferring the highest
         summed log-likelihood draw when available.
         """
-        if not hasattr(self._idata, "posterior"):
+        if "posterior" not in self._idata:
             return None, None
 
-        if hasattr(self._idata, "log_likelihood") and "total_flux" in self._idata.log_likelihood:
-            log_lik = self._idata.log_likelihood["total_flux"].values
+        if "log_likelihood" in self._idata and "total_flux" in self._idata["log_likelihood"].dataset:
+            log_lik = self._idata["log_likelihood"].dataset["total_flux"].values
             total_log_lik = np.sum(log_lik, axis=-1)
             best_idx = np.unravel_index(np.argmax(total_log_lik), total_log_lik.shape)
             chain_idx, draw_idx = map(int, best_idx)
@@ -31,7 +31,7 @@ class Plotter:
             chain_idx = 0
             draw_idx = 0
 
-        posterior = self._idata.posterior
+        posterior = self._idata["posterior"].dataset
         param_mods = {}
 
         for param_ref in self._config.template.iter_all:
@@ -82,12 +82,12 @@ class Plotter:
         # Plot the posterior distributions for disk and line flux
         for var in ["disk_flux", "line_flux"]:
             var_name = " ".join([x.capitalize() for x in var.split("_")])
-            var_dist = self._idata.posterior_predictive[var].mean(dim=("chain",)).values
+            var_dist = self._idata["posterior_predictive"].dataset[var].mean(dim=("chain",)).values
             median = np.percentile(var_dist, 50, axis=0)
             ax.plot(rest_wave, median, label=f"Sampled {var_name}")
 
         obs_dist = (
-            self._idata.posterior_predictive["total_flux"]
+            self._idata["posterior_predictive"].dataset["total_flux"]
             .stack(sample=("chain", "draw"))
             .values
         )
@@ -145,7 +145,7 @@ class Plotter:
         """
         var_names = [
             var
-            for var in self._idata.posterior.data_vars
+            for var in self._idata["posterior"].dataset.data_vars
             if var
             in self._config.template.fitted_parameter_names(
                 include_shared=include_shared, include_circ=True
@@ -191,7 +191,7 @@ class Plotter:
         """
         var_names = [
             var
-            for var in self._idata.prior.data_vars
+            for var in self._idata["prior"].dataset.data_vars
             if var
             in self._config.template.fitted_parameter_names(
                 include_shared=include_shared, include_circ=True
@@ -232,22 +232,15 @@ class Plotter:
     def plot_trace(self):
         var_names = [
             var
-            for var in self._idata.posterior.data_vars
+            for var in self._idata["posterior"].dataset.data_vars
             if var
             in self._config.template.fitted_parameter_names(
                 include_shared=False, include_circ=True
             )
         ]
 
-        fig, axes = plt.subplots(
-            nrows=len(var_names),
-            ncols=2,
-            figsize=(10, 3 * len(var_names)),
-            layout="constrained",
-        )
-
         with az.rc_context({"plot.max_subplots": 50}):
-            az.plot_trace(self._idata.posterior, var_names=var_names, axes=axes)
+            pc = az.plot_trace(self._idata, var_names=var_names)
 
-        plt.savefig(f"{self._config.output_path}/trace_plot.png")
-        plt.close(fig)
+        pc.savefig(f"{self._config.output_path}/trace_plot.png")
+        plt.close("all")

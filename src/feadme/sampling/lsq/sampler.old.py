@@ -27,7 +27,7 @@ class LSQSampler(BaseSampler):
     estimate_uncertainties: bool = False
     initializer: BaseInitializer = DefaultInitializer()
 
-    def __call__(self, config: Config, model: LSQModel) -> az.InferenceData:
+    def __call__(self, config: Config, model: LSQModel):
         wave = config.data.masked_wave
         flux = config.data.masked_flux
         flux_err = config.data.masked_flux_err
@@ -144,7 +144,7 @@ class LSQSampler(BaseSampler):
         model: LSQModel,
         posterior_samples: dict[str, ArrayLike],
         posterior_predictive_samples: dict[str, ArrayLike],
-    ) -> az.InferenceData:
+    ):
         # "Simulate" multiple chains by reshaping the samples. This is a bit
         # hacky, but it allows us to use ArviZ's functionality for multiple
         # chains without actually running multiple MCMC chains.

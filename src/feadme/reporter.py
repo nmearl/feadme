@@ -2,13 +2,16 @@ from astropy.utils import lazyproperty
 
 from .core.parser import Config
 import arviz as az
+import arviz_stats
 import pandas as pd
 import numpy as np
+import scipy.stats
+import xarray as xr
 from pathlib import Path
 
 
 class Reporter:
-    def __init__(self, config: Config, idata: az.InferenceData):
+    def __init__(self, config: Config, idata: xr.DataTree):
         self._config = config
         self._idata = idata
 
@@ -21,56 +24,57 @@ class Reporter:
         with pd.option_context("display.precision", 10):
             linear_summary = az.summary(
                 self._idata,
-                stat_focus="median",
-                hdi_prob=0.68,
+                kind="all_median",
+                ci_prob=0.68,
                 var_names=[
                     x
-                    for x in self._idata.posterior.data_vars
+                    for x in self._idata["posterior"].dataset.data_vars
                     if x in self._config.template.fitted_parameter_names()
                     or x.endswith("_outer_radius")
                 ],
                 round_to=10,
             )
 
-            if len(self._config.template.iter_circular) > 0:
-                circular_summary = az.summary(
-                    self._idata,
-                    stat_focus="mean",
-                    hdi_prob=0.68,
-                    var_names=[
-                        x
-                        for x in self._idata.posterior.data_vars
-                        if x in [pr.name for pr in self._config.template.iter_circular]
-                    ],
-                    circ_var_names=[
-                        x
-                        for x in self._idata.posterior.data_vars
-                        if x in [pr.name for pr in self._config.template.iter_circular]
-                    ],
-                    round_to=10,
-                )
+            circ_names = [
+                x
+                for x in self._idata["posterior"].dataset.data_vars
+                if x in [pr.name for pr in self._config.template.iter_circular]
+            ]
+            if circ_names:
+                circ_rows = {}
+                for var in circ_names:
+                    samples = self._idata["posterior"].dataset[var].values.ravel()
+                    circ_mean = scipy.stats.circmean(samples, high=2 * np.pi, low=0)
+                    hdi_bounds = arviz_stats.hdi(
+                        self._idata["posterior"].dataset[var], prob=0.68, circular=True
+                    )
+                    lb = float(hdi_bounds.sel(ci_bound="lower")) % (2 * np.pi)
+                    ub = float(hdi_bounds.sel(ci_bound="upper")) % (2 * np.pi)
+                    # err_lo/err_hi are wrapped distances from the circular mean
+                    # to the HDI bounds. The HDI is computed independently from
+                    # the mean, so these are not symmetric errors about the mean;
+                    # they are forward wrapped distances from the reported center
+                    # to each reported interval endpoint.
+                    circ_rows[var] = {
+                        "value": circ_mean,
+                        "mean": circ_mean,
+                        "hdi68_lb": lb,
+                        "hdi68_ub": ub,
+                        "err_lo": (circ_mean - lb) % (2 * np.pi),
+                        "err_hi": (ub - circ_mean) % (2 * np.pi),
+                    }
+                circular_summary = pd.DataFrame.from_dict(circ_rows, orient="index")
+                circular_summary.index.name = "parameter"
             else:
                 circular_summary = None
 
-        for summary in [linear_summary, circular_summary]:
-            if summary is None:
-                continue
-
-            # Rename index column to "parameter", then remove index
-            summary.index.name = "parameter"
-
-            col_stat = "hdi" if "hdi_16%" in summary.columns else "eti"
-            val_stat = "median" if "median" in summary.columns else "mean"
-
-            if summary is circular_summary:
-                # Wrap mean and percentiles to [0, 2π]
-                summary["mean"] = summary["mean"] % (2 * np.pi)
-                summary[f"{col_stat}_16%"] = summary[f"{col_stat}_16%"] % (2 * np.pi)
-                summary[f"{col_stat}_84%"] = summary[f"{col_stat}_84%"] % (2 * np.pi)
-
-            summary["err_lo"] = summary[val_stat] - summary[f"{col_stat}_16%"]
-            summary["err_hi"] = summary[f"{col_stat}_84%"] - summary[val_stat]
-            summary["value"] = summary[val_stat]
+        linear_summary.index.name = "parameter"
+        ci_kind = "hdi" if "hdi68_lb" in linear_summary.columns else "eti"
+        lb_col = f"{ci_kind}68_lb"
+        ub_col = f"{ci_kind}68_ub"
+        linear_summary["err_lo"] = linear_summary["median"] - linear_summary[lb_col]
+        linear_summary["err_hi"] = linear_summary[ub_col] - linear_summary["median"]
+        linear_summary["value"] = linear_summary["median"]
 
         if circular_summary is not None:
             summary = pd.concat([linear_summary, circular_summary])
@@ -79,8 +83,8 @@ class Reporter:
 
         # Add in fixed parameters with zero error bars
         for param_ref in self._config.template.iter_fixed:
-            if param_ref.name in self._idata.posterior.data_vars:
-                val = float(self._idata.posterior[param_ref.name].values.flat[0])
+            if param_ref.name in self._idata["posterior"].dataset.data_vars:
+                val = float(self._idata["posterior"].dataset[param_ref.name].values.flat[0])
                 summary.loc[param_ref.name] = {
                     "value": val,
                     "err_lo": 0.0,
@@ -121,7 +125,7 @@ class Reporter:
 
         out_path = Path(f"{self._config.output_path}") / "results.nc"
 
-        az.to_netcdf(self._idata, str(out_path))
+        self._idata.to_netcdf(str(out_path))
 
         self.summary.to_csv(
             f"{self._config.output_path}/summary.csv",

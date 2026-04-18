@@ -43,7 +43,7 @@ class NeuTraSampler(BaseSampler):
     def chain_method(self) -> str:
         return "vectorized" if jax.local_device_count() == 1 else "parallel"
 
-    def __call__(self, config: Config, model: BaseModel) -> az.InferenceData:
+    def __call__(self, config: Config, model: BaseModel):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, mcmc_key = random.split(rng_key, 3)
 
@@ -137,7 +137,7 @@ class NeuTraSampler(BaseSampler):
         model: BaseModel,
         mcmc: MCMC,
         posterior_samples: dict[str, ArrayLike],
-    ) -> az.InferenceData:
+    ):
         # NeuTraReparam stores whitened draws under a single joint site named
         # "_{model_name}_latent" — these have no physical meaning and should
         # be excluded from the posterior.
@@ -159,9 +159,9 @@ class NeuTraSampler(BaseSampler):
         )
 
         # Drop NeuTra's internal whitened sites from the ArviZ posterior group
-        vars_to_drop = [v for v in idata.posterior.data_vars if v.endswith("_latent")]
+        vars_to_drop = [v for v in idata["posterior"].dataset.data_vars if v.endswith("_latent")]
         if vars_to_drop:
-            idata.posterior = idata.posterior.drop_vars(vars_to_drop)
+            idata["posterior"].dataset = idata["posterior"].dataset.drop_vars(vars_to_drop)
 
         return idata
 

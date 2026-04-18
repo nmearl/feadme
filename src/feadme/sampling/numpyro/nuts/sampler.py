@@ -34,7 +34,7 @@ class NUTSSampler(BaseSampler):
     def chain_method(self) -> str:
         return "vectorized" if jax.local_device_count() == 1 else "parallel"
 
-    def __call__(self, config: Config, model: BaseModel) -> az.InferenceData:
+    def __call__(self, config: Config, model: BaseModel):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, mcmc_key = random.split(rng_key)
 
@@ -91,7 +91,7 @@ class NUTSSampler(BaseSampler):
         model: BaseModel,
         mcmc: MCMC,
         posterior_samples: dict[str, ArrayLike],
-    ) -> az.InferenceData:
+    ):
         flat_samples = {
             k: v.reshape(-1, *v.shape[2:]) if v.ndim > 2 else v.reshape(-1)
             for k, v in posterior_samples.items()
