@@ -64,10 +64,8 @@ def _best_guide_sample_by_log_density(
     if not candidate_names:
         raise ValueError("No guide sample parameters available for SVI initialization.")
 
-    # Score a subset — finding the argmax doesn't need the full sample set.
     num_draws = min(200, int(guide_samples[candidate_names[0]].shape[0]))
-    best_logp = -np.inf
-    best_idx = None
+    batch_params = {name: guide_samples[name][:num_draws] for name in candidate_names}
 
     model_args = ()
     model_kwargs = {
@@ -76,20 +74,19 @@ def _best_guide_sample_by_log_density(
         "flux_err": config.data.masked_flux_err,
     }
 
-    for idx in range(num_draws):
-        params = {name: guide_samples[name][idx] for name in candidate_names}
+    def score_one(params):
         logp, _ = log_density(model, model_args, model_kwargs, params)
-        logp_val = float(jax.device_get(logp))
+        return logp
 
-        if np.isfinite(logp_val) and logp_val > best_logp:
-            best_logp = logp_val
-            best_idx = idx
+    all_logps = np.array(jax.device_get(jax.vmap(score_one)(batch_params)))
 
-    if best_idx is None:
+    finite_mask = np.isfinite(all_logps)
+    if not np.any(finite_mask):
         raise ValueError("No finite SVI guide sample had a finite model log density.")
 
+    best_idx = int(np.argmax(np.where(finite_mask, all_logps, -np.inf)))
     best_sample = {name: guide_samples[name][best_idx] for name in candidate_names}
-    return best_sample, best_logp, best_idx
+    return best_sample, float(all_logps[best_idx]), best_idx
 
 
 @flax.struct.dataclass

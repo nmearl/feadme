@@ -6,6 +6,7 @@ from astropy.time import Time
 import arviz as az
 import click
 from functools import wraps
+import jax
 import numpy as np
 import astropy.constants as const
 
@@ -33,6 +34,17 @@ from .utils import rebin_spectrum_logdv
 logger = loguru.logger.opt(colors=True)
 
 C_KMS = const.c.to("km/s").value
+
+INTEGRATORS = {
+    "quad": quad_jax_integrate,
+    "mixed": mixed_jax_integrate,
+    "trap": trap_jax_integrate,
+    "split_quad": split_quad_jax_integrate,
+}
+
+
+def default_integrator_name() -> str:
+    return "mixed" if jax.default_backend() == "gpu" else "quad"
 
 
 def log_grid_debug(template: Template, data: Data) -> None:
@@ -244,6 +256,12 @@ def cli():
     default=False,
     help="Use dense mass matrix for the NUTS sampler.",
 )
+@click.option(
+    "--integrator",
+    type=click.Choice(sorted(INTEGRATORS)),
+    default=None,
+    help="Disk integrator to use. Defaults to quad on CPU and mixed on GPU.",
+)
 def nuts_cmd(
     template_path: str,
     data_path: str,
@@ -255,6 +273,7 @@ def nuts_cmd(
     target_accept_prob: float,
     max_tree_depth: int,
     dense_mass: bool,
+    integrator: str | None,
     compute_prior_predictive: bool,
     progress_bar: bool,
     rebin: float | None,
@@ -277,9 +296,13 @@ def nuts_cmd(
     )
     log_grid_debug(template, data)
 
+    integrator_name = integrator or default_integrator_name()
+    integrator_fn = INTEGRATORS[integrator_name]
+    logger.debug(f"Using disk integrator: <cyan>{integrator_name}</cyan>")
+
     model = NumpyroModel(
         config=config,
-        integrator=quad_jax_integrate,
+        integrator=integrator_fn,
     ).setup()
     # initializer = LSQInitializer()
     initializer = SVIInitializer(debug_plot=True)
