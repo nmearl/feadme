@@ -41,6 +41,12 @@ class Reporter:
                 if x in [pr.name for pr in self._config.template.iter_circular]
             ]
             if circ_names:
+                circ_diagnostics = az.summary(
+                    self._idata,
+                    kind="diagnostics",
+                    var_names=circ_names,
+                    round_to=10,
+                )
                 circ_rows = {}
                 for var in circ_names:
                     samples = self._idata["posterior"].dataset[var].values.ravel()
@@ -55,7 +61,7 @@ class Reporter:
                     # the mean, so these are not symmetric errors about the mean;
                     # they are forward wrapped distances from the reported center
                     # to each reported interval endpoint.
-                    circ_rows[var] = {
+                    row = {
                         "value": circ_mean,
                         "mean": circ_mean,
                         "hdi68_lb": lb,
@@ -63,6 +69,9 @@ class Reporter:
                         "err_lo": (circ_mean - lb) % (2 * np.pi),
                         "err_hi": (ub - circ_mean) % (2 * np.pi),
                     }
+                    if var in circ_diagnostics.index:
+                        row.update(circ_diagnostics.loc[var].to_dict())
+                    circ_rows[var] = row
                 circular_summary = pd.DataFrame.from_dict(circ_rows, orient="index")
                 circular_summary.index.name = "parameter"
             else:
