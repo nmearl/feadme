@@ -21,11 +21,11 @@ c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
 
-def ratio_factor(name, F_num, F_den, ratio, sigma_ln=0.02, eps=1e-30):
+def ratio_factor(name, F_num, F_den, ratio, sigma_ln=0.05, eps=1e-30):
     """
     Softly constrain F_num / F_den ~= ratio via a Normal penalty in log-space.
     sigma_ln is the 1-sigma width in ln(ratio).
-      - sigma_ln=0.02 ~ 2% (tight)
+      - sigma_ln=0.05 ~ 5% (moderately tight)
       - sigma_ln=0.10 ~ 10% (loose)
     """
     log_r = jnp.log((F_num + eps) / (F_den + eps))
@@ -243,7 +243,8 @@ class NumpyroModel(BaseModel):
             )
             param_mods[param_ref.name] = param_samp
 
-        # Soft constraint: [NII] 6583/6548 ratio should be ~2.95
+        # Soft constraint: [NII] 6583/6548 ratio should be close to the
+        # atomic-physics expectation, while allowing modest decomposition error.
         niil_narrow_area = param_mods.get("niil_narrow_area")
         niir_narrow_area = param_mods.get("niir_narrow_area")
 
@@ -252,8 +253,8 @@ class NumpyroModel(BaseModel):
                 "nii_ratio_6583_6548",
                 niir_narrow_area,
                 niil_narrow_area,
-                ratio=2.95,
-                sigma_ln=0.02,
+                ratio=3.05,
+                sigma_ln=0.05,
             )
 
         total_flux, total_disk_flux, total_line_flux = evaluate_model(
