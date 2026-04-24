@@ -255,33 +255,6 @@ def _build_template_index(template: "Template") -> TemplateIndex:
     )
 
 
-def _compute_disk_x_grids(template: "Template") -> Optional[np.ndarray]:
-    """
-    Precompute a fixed X-grid for each disk profile based on the template mask
-    bounds and the nominal observed center wavelength.
-
-    X = (center - lambda) / center, so the grid spans the mask in X-space.
-    Positive X is the blue side; negative X is the red side. The grid is
-    ascending (x_lo < x_hi) and is passed directly to the disk integrator.
-
-    Returns None if there are no disk profiles or no mask is defined.
-    """
-    if not template.disk_profiles or not template.mask:
-        return None
-
-    z = template.redshift.value if template.redshift.value is not None else 0.0
-    wave_min = min(m.lower_limit for m in template.mask)
-    wave_max = max(m.upper_limit for m in template.mask)
-
-    grids = []
-    for disk in template.disk_profiles:
-        center_obs = disk.center.value * (1.0 + z)
-        x_lo = (center_obs - wave_max) / center_obs
-        x_hi = (center_obs - wave_min) / center_obs
-        grids.append(np.linspace(x_lo, x_hi, template.n_disk_samples))
-
-    return np.stack(grids)  # (n_disks, n_disk_samples)
-
 
 @flax.struct.dataclass
 class Template(Writable):
@@ -300,25 +273,16 @@ class Template(Writable):
         )
     )
     mask: Optional[list[Mask]] = None
-    n_disk_samples: int = 256
-
     index: TemplateIndex = flax.struct.field(
         default_factory=TemplateIndex,
         pytree_node=False,
     )
-    x_grids: Any = flax.struct.field(
-        default=None,
-        pytree_node=False,
-    )
 
-    _EXCLUDE_FROM_SERIALIZATION: frozenset[str] = frozenset({"index", "x_grids"})
+    _EXCLUDE_FROM_SERIALIZATION: frozenset[str] = frozenset({"index"})
 
     def refresh(self) -> "Template":
-        """Rebuild the index and per-disk X-grids from current state."""
-        return self.replace(
-            index=_build_template_index(self),
-            x_grids=_compute_disk_x_grids(self),
-        )
+        """Rebuild the index from current state."""
+        return self.replace(index=_build_template_index(self))
 
     @classmethod
     def create(

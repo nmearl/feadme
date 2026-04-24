@@ -82,6 +82,7 @@ def _find_radius_pairs(
         if profile_name in outer_by_profile
     }
 
+
 def _distribution_from_param(
     param: Parameter, lower_bound: float, upper_bound: float
 ) -> dist.Distribution:
@@ -126,7 +127,9 @@ def _sample_radius_joint(inner_ref, outer_ref) -> tuple[ArrayLike, ArrayLike]:
     inner_radius = numpyro.sample(inner_ref.name, inner_prior)
 
     outer_low = jnp.maximum(outer_ref.param.low, inner_radius)
-    outer_prior = _distribution_from_param(outer_ref.param, outer_low, outer_ref.param.high)
+    outer_prior = _distribution_from_param(
+        outer_ref.param, outer_low, outer_ref.param.high
+    )
     outer_radius = numpyro.sample(outer_ref.name, outer_prior)
 
     return inner_radius, outer_radius
@@ -184,6 +187,7 @@ def _sample_ecc_apo_joint(ecc_ref, apo_ref) -> tuple[ArrayLike, ArrayLike]:
     numpyro.factor(f"{base}_prior_correction", log_target + log_abs_det - log_base)
 
     return e, phi0
+
 
 @flax.struct.dataclass
 class NumpyroModel(BaseModel):

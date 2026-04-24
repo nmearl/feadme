@@ -51,8 +51,8 @@ def _log_term_stats(name, arr):
     )
 
 
-def diagnose_disk_failure(init_params, config, *, n_xi=64, n_phi=128):
-    if not config.template.disk_profiles or config.template.x_grids is None:
+def diagnose_disk_failure(init_params, config, *, n_xi=64, n_phi=128, n_x=256):
+    if not config.template.disk_profiles:
         return
 
     redshift = float(init_params.get("redshift", config.template.redshift.value))
@@ -74,7 +74,11 @@ def diagnose_disk_failure(init_params, config, *, n_xi=64, n_phi=128):
             continue
 
         center_obs = float(center) * (1.0 + redshift)
-        x_grid = np.asarray(config.template.x_grids[disk_idx], dtype=float)
+        wave_min = min(m.lower_limit for m in config.template.mask) if config.template.mask else center_obs * 0.9
+        wave_max = max(m.upper_limit for m in config.template.mask) if config.template.mask else center_obs * 1.1
+        x_lo = (center_obs - wave_max) / center_obs
+        x_hi = (center_obs - wave_min) / center_obs
+        x_grid = np.linspace(x_lo, x_hi, n_x)
         xi_log = np.linspace(np.log10(float(inner_radius)), np.log10(float(outer_radius)), n_xi)
         xi_tilde = 10.0 ** xi_log
 

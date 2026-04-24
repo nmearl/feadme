@@ -49,9 +49,6 @@ def compose_param_arrays(
             ]
         )
 
-        # Precomputed per-disk X-grids: shape (n_disks, n_disk_samples)
-        disk_arrays["x_grids"] = jnp.asarray(template.x_grids)
-
     if template.line_profiles:
         for param_name in ["offset", "vel_width", "area"]:
             line_arrays[param_name] = jnp.stack(
@@ -189,13 +186,12 @@ def _compute_disk_flux_vectorized(
     apocenter,
     area,
     offset,
-    x_grids,
     integrator: Callable,
 ):
     """
-    Compute disk flux for multiple disk profiles using a precomputed per-disk
-    X-grid for integration and normalization, then interpolate onto the
-    observed wavelength grid.
+    Compute disk flux for multiple disk profiles by evaluating the integrator
+    directly on the observed wavelength grid (converted to X-space per sample),
+    then summing onto the observed wavelength grid.
 
     Parameters
     ----------
@@ -209,9 +205,6 @@ def _compute_disk_flux_vectorized(
         Integrated disk flux (n_disks,)
     offset : ArrayLike
         Additive continuum offset (n_disks,)
-    x_grids : ArrayLike
-        Precomputed X-grids derived from mask bounds, shape (n_disks, n_samples).
-        Each row is an ascending linspace in X = (center - lambda) / center.
     integrator : Callable
         Signature: (rin, rout, phi_min, phi_max, X, inc, sigma, q, ecc, apo) -> res_X
 
@@ -222,15 +215,18 @@ def _compute_disk_flux_vectorized(
     """
 
     def _compute_single(
-        center_i, inner_i, outer_i, sigma_i, inc_i, q_i, ecc_i, apo_i, area_i, offset_i, x_grid_i
+        center_i, inner_i, outer_i, sigma_i, inc_i, q_i, ecc_i, apo_i, area_i, offset_i
     ):
-        # Integrate on the fixed, evenly-spaced X-grid (ascending)
+        # Convert observed wavelengths to X = (center - lambda) / center.
+        # wave is ascending so x_wave is descending; flip to ascending for trapezoid.
+        x_wave_asc = jnp.flip((center_i - wave) / center_i)
+
         res_X = integrator(
             inner_i,
             outer_i,
             0.0,
             2.0 * jnp.pi,
-            x_grid_i,
+            x_wave_asc,
             inc_i,
             sigma_i,
             q_i,
@@ -238,30 +234,16 @@ def _compute_disk_flux_vectorized(
             apo_i,
         )
 
-        # Normalize on the fixed grid: stable, data-independent, no gap issues.
-        # x_grid_i is ascending so trapezoid sign is correct.
-        norm = center_i * jnp.trapezoid(res_X, x_grid_i)
+        norm = center_i * jnp.trapezoid(res_X, x_wave_asc)
         norm = jnp.maximum(norm, ERR)
         profile_X = res_X / norm
 
-        # Interpolate onto observed wavelengths. x_grid_i is a uniform linspace
-        # so we can compute the fractional index directly — no searchsorted needed.
-        # This keeps the XLA graph simple and gives correct gradients through x_wave.
-        x_wave = (center_i - wave) / center_i
-        n = profile_X.shape[0]
-        x_lo = x_grid_i[0]
-        x_hi = x_grid_i[-1]
-        idx_f = jnp.clip((x_wave - x_lo) / (x_hi - x_lo) * (n - 1), 0.0, n - 1.0)
-        idx_lo = jnp.floor(idx_f).astype(jnp.int32)
-        idx_hi = jnp.minimum(idx_lo + 1, n - 1)
-        frac = idx_f - idx_lo
-        profile_wave = profile_X[idx_lo] * (1.0 - frac) + profile_X[idx_hi] * frac
-
-        return profile_wave * area_i + offset_i
+        # Flip back to match ascending-wavelength order.
+        return jnp.flip(profile_X) * area_i + offset_i
 
     prof_disk_flux = jax.vmap(
         _compute_single,
-        in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+        in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
     )(
         center,
         inner_radius,
@@ -273,7 +255,6 @@ def _compute_disk_flux_vectorized(
         apocenter,
         area,
         offset,
-        x_grids,
     )
 
     return jnp.sum(prof_disk_flux, axis=0)

@@ -66,11 +66,11 @@ def format_posterior_samples(
 
         elif "apocenter" in pn:
             apocenter = init_params[pn]
-            # Circular fallback (apocenter sampled independently via sample_param)
+            # Circular fallback path for independently sampled circular variables.
             init_params[f"{pn}_x_base"] = np.cos(apocenter)
             init_params[f"{pn}_y_base"] = np.sin(apocenter)
             # Joint ecc/apo sampler: invert e = tanh(r), phi0 = arctan2(z_h, z_k)
-            # => r = arctanh(e), z_h = r*sin(phi0), z_k = r*cos(phi0)
+            # so r = arctanh(e), z_h = r*sin(phi0), z_k = r*cos(phi0).
             e = init_params.get(pn.replace("apocenter", "eccentricity"))
             if e is not None:
                 r = np.arctanh(np.clip(float(e), 0.0, 0.9999))

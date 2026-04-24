@@ -51,11 +51,11 @@ def log_grid_debug(template: Template, data: Data) -> None:
     masked_count = int(np.asarray(data.masked_wave).shape[0])
     logger.debug(f"Masked wavelength bins retained: {masked_count}")
 
-    if template.x_grids is not None:
-        x_grids = np.asarray(template.x_grids)
+    if template.disk_profiles:
         logger.debug(
-            f"Disk X-grid setup for <cyan>{template.name}</cyan>: "
-            f"{x_grids.shape[1]} X-grid bins across {x_grids.shape[0]} disk profile(s)"
+            f"Disk evaluation for <cyan>{template.name}</cyan>: "
+            f"{masked_count} wavelength bins across {len(template.disk_profiles)} disk profile(s) "
+            f"(X-grid derived per sample from observed wavelengths)"
         )
 
 
