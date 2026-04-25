@@ -117,7 +117,8 @@ def trap_jax_integrate(
 ) -> ArrayLike:
     xi_log = jnp.linspace(jnp.log10(xi1), jnp.log10(xi2), N_xi)
     xi = 10.0**xi_log
-    phi = jnp.linspace(phi1, phi2, N_phi)
+    dphi = (phi2 - phi1) / N_phi
+    phi = phi1 + (jnp.arange(N_phi) + 0.5) * dphi  # midpoint grid: avoids phi=0/2pi
 
     xi_3d = xi[:, None, None]
     phi_3d = phi[None, :, None]
@@ -128,8 +129,8 @@ def trap_jax_integrate(
 
     vals = integrand(phi_3d, xi_3d, X_3d, inc, sigma, q, e, phi0) * jac_3d
 
-    # Integrate over phi first, then over log10(xi)
-    inner = jnp.trapezoid(vals, x=phi, axis=1)  # (N_xi, n_wave)
+    # Midpoint Riemann sum over phi: full [0, 2pi] coverage, no endpoint singularity
+    inner = jnp.sum(vals * dphi, axis=1)  # (N_xi, n_wave)
     outer = jnp.trapezoid(inner, x=xi_log, axis=0)  # (n_wave,)
 
     return outer
@@ -137,7 +138,8 @@ def trap_jax_integrate(
 
 @partial(jax.jit, static_argnums=(2, 3))
 def mixed_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0):
-    phi = jnp.linspace(phi1, phi2, N_phi)
+    dphi = (phi2 - phi1) / N_phi
+    phi = phi1 + (jnp.arange(N_phi) + 0.5) * dphi  # midpoint grid: avoids phi=0/2pi
     log_xi1 = jnp.log10(xi1)
     log_xi2 = jnp.log10(xi2)
 
@@ -156,7 +158,8 @@ def mixed_jax_integrate(xi1, xi2, phi1, phi2, X, inc, sigma, q, e, phi0):
             phi0,
         )  # -> (N_phi, n_wave)
 
-        inner_phi = jnp.trapezoid(vals_phi, x=phi, axis=0)  # (n_wave,)
+        # Midpoint Riemann sum over phi: full [0, 2pi] coverage, no endpoint singularity
+        inner_phi = jnp.sum(vals_phi * dphi, axis=0)  # (n_wave,)
         return inner_phi * jacobian_xi
 
     return fixed_quad_xi(
