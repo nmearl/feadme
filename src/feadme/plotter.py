@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from .core.evaluators import evaluate_model
+from .posterior_utils import extract_draw_values, select_representative_draw
 
 
 class Plotter:
@@ -16,55 +17,69 @@ class Plotter:
 
     def _representative_param_mods(self) -> tuple[dict, float] | tuple[None, None]:
         """
-        Return one representative posterior sample, preferring the highest
-        summed log-likelihood draw when available.
+        Return the posterior draw whose model flux is closest to the posterior
+        predictive median flux (L2 distance in flux space).  This gives a
+        coherent parameter vector that is representative of the posterior bulk
+        rather than a sharp local extreme.
         """
         if "posterior" not in self._idata:
             return None, None
 
-        if "log_likelihood" in self._idata and "total_flux" in self._idata["log_likelihood"].dataset:
-            log_lik = self._idata["log_likelihood"].dataset["total_flux"].values
-            total_log_lik = np.sum(log_lik, axis=-1)
-            best_idx = np.unravel_index(np.argmax(total_log_lik), total_log_lik.shape)
-            chain_idx, draw_idx = map(int, best_idx)
-        else:
-            chain_idx = 0
-            draw_idx = 0
-
         posterior = self._idata["posterior"].dataset
-        param_mods = {}
 
+        posterior_predictive = (
+            self._idata["posterior_predictive"].dataset
+            if "posterior_predictive" in self._idata
+            else None
+        )
+        chain_idx, draw_idx = select_representative_draw(
+            posterior,
+            posterior_predictive,
+            flux_name="total_flux",
+        )
+
+        param_mods = extract_draw_values(posterior, chain_idx, draw_idx)
+
+        full_param_mods = {}
+        redshift = param_mods.pop("redshift", None)
         for param_ref in self._config.template.iter_all:
             if param_ref.name == "log_frac_noise":
                 continue
-
-            if param_ref.name in posterior.data_vars:
-                param_mods[param_ref.name] = float(
-                    posterior[param_ref.name].values[chain_idx, draw_idx]
-                )
+            if param_ref.name in param_mods:
+                full_param_mods[param_ref.name] = param_mods[param_ref.name]
             elif param_ref.param.fixed:
-                param_mods[param_ref.name] = float(param_ref.param.value)
-
-        redshift = param_mods.pop("redshift", None)
-        return param_mods, redshift
+                full_param_mods[param_ref.name] = float(param_ref.param.value)
+        return full_param_mods, redshift
 
     def plot_model_fit(self):
         """
-        Plot the model fit using the posterior distributions of the disk and line fluxes.
+        Plot the model fit using the posterior predictive distribution.
+
+        The shaded band and median curve come from posterior predictive samples,
+        so they faithfully represent the posterior bulk.  The dashed component
+        curves (disk / line) are evaluated on a high-resolution wavelength grid
+        using the draw whose total flux is closest to the posterior predictive
+        median — a coherent parameter vector representative of the bulk rather
+        than a marginal-median Frankenstein vector or a max-log-likelihood
+        extreme.
         """
-        param_mods = self._summary["value"].to_dict()
-        redshift = param_mods.pop("redshift")
-        log_frac_noise = param_mods.pop("log_frac_noise")
-        rest_wave = self._config.data.masked_wave / (1 + redshift)
-        summary_total_flux, _, _ = evaluate_model(
+        rep_param_mods, rep_redshift = self._representative_param_mods()
+        if rep_param_mods is None or rep_redshift is None:
+            return
+
+        rest_wave = self._config.data.masked_wave / (1 + rep_redshift)
+
+        # Error bars: use the representative draw to set the noise floor
+        rep_total_flux, _, _ = evaluate_model(
             self._config.template,
             self._config.data.masked_wave,
-            param_mods,
-            redshift,
+            rep_param_mods,
+            rep_redshift,
         )
+        log_frac_noise = float(self._summary.loc["log_frac_noise", "value"])
         total_error = np.sqrt(
             self._config.data.masked_flux_err**2
-            + summary_total_flux**2 * np.exp(2.0 * log_frac_noise)
+            + rep_total_flux**2 * np.exp(2.0 * log_frac_noise)
         )
 
         fig, ax = plt.subplots(layout="constrained")
@@ -79,55 +94,33 @@ class Plotter:
             alpha=0.25,
         )
 
-        # Plot the posterior distributions for disk and line flux
-        for var in ["disk_flux", "line_flux"]:
-            var_name = " ".join([x.capitalize() for x in var.split("_")])
-            var_dist = self._idata["posterior_predictive"].dataset[var].mean(dim=("chain",)).values
-            median = np.percentile(var_dist, 50, axis=0)
-            ax.plot(rest_wave, median, label=f"Sampled {var_name}")
-
+        # Posterior predictive envelope (data-resolution)
         obs_dist = (
             self._idata["posterior_predictive"].dataset["total_flux"]
             .stack(sample=("chain", "draw"))
             .values
-        )
-        median = np.percentile(obs_dist, 50, axis=1)
-        lower = np.percentile(obs_dist, 16, axis=1)
-        upper = np.percentile(obs_dist, 84, axis=1)
+        )  # (n_wave, n_samples)
+        pp_median = np.percentile(obs_dist, 50, axis=1)
+        pp_lower = np.percentile(obs_dist, 16, axis=1)
+        pp_upper = np.percentile(obs_dist, 84, axis=1)
 
-        ax.plot(rest_wave, median, label="Sampled Model Fit", color="C3")
-        ax.fill_between(rest_wave, lower, upper, alpha=0.5, color="C3")
+        ax.plot(rest_wave, pp_median, label="Posterior Predictive Median", color="C3")
+        ax.fill_between(rest_wave, pp_lower, pp_upper, alpha=0.5, color="C3")
 
+        # High-resolution component decomposition from the representative draw
         new_rest_wave = np.linspace(rest_wave[0], rest_wave[-1], 1000)
         new_obs_wave = np.linspace(
             self._config.data.masked_wave.min(),
             self._config.data.masked_wave.max(),
             1000,
         )
-        tot_flux, disk_flux, line_flux = evaluate_model(
-            self._config.template, new_obs_wave, param_mods, redshift
+        rep_tot, rep_disk, rep_line = evaluate_model(
+            self._config.template, new_obs_wave, rep_param_mods, rep_redshift
         )
 
-        ax.plot(new_rest_wave, tot_flux, label="Reconstructed Model", linestyle="--")
-        ax.plot(
-            new_rest_wave, disk_flux, label="Reconstructed Disk Flux", linestyle="--"
-        )
-        ax.plot(
-            new_rest_wave, line_flux, label="Reconstructed Line Flux", linestyle="--"
-        )
-
-        rep_param_mods, rep_redshift = self._representative_param_mods()
-        if rep_param_mods is not None and rep_redshift is not None:
-            rep_tot_flux, _, _ = evaluate_model(
-                self._config.template, new_obs_wave, rep_param_mods, rep_redshift
-            )
-            ax.plot(
-                new_rest_wave,
-                rep_tot_flux,
-                label="Representative Posterior Sample",
-                linestyle=":",
-                color="C1",
-            )
+        ax.plot(new_rest_wave, rep_tot, label="Representative Draw", linestyle="--")
+        ax.plot(new_rest_wave, rep_disk, label="Disk Component", linestyle="--")
+        ax.plot(new_rest_wave, rep_line, label="Line Component", linestyle="--")
 
         ax.set_ylabel("Flux [mJy]")
         ax.set_xlabel("Wavelength [AA]")
