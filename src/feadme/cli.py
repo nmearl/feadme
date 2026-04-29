@@ -294,7 +294,6 @@ def nuts_cmd(
         data_path=data_path,
         skip_existing=skip_existing,
     )
-    log_grid_debug(template, data)
 
     integrator_name = integrator or default_integrator_name()
     integrator_fn = INTEGRATORS[integrator_name]
@@ -304,8 +303,8 @@ def nuts_cmd(
         config=config,
         integrator=integrator_fn,
     ).setup()
-    # initializer = LSQInitializer()
-    initializer = SVIInitializer(debug_plot=True)
+    initializer = LSQInitializer()
+    # initializer = SVIInitializer(debug_plot=True)
 
     # model = LSQModel(config).setup()
     # sampler = LSQSampler(estimate_uncertainties=False)
