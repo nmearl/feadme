@@ -51,6 +51,25 @@ class Plotter:
                 full_param_mods[param_ref.name] = float(param_ref.param.value)
         return full_param_mods, redshift
 
+    def _summary_param_mods(self) -> tuple[dict, float]:
+        summary_param_mods = {}
+        redshift = None
+        for param_ref in self._config.template.iter_all:
+            if param_ref.name == "log_frac_noise":
+                continue
+            if param_ref.name in self._summary.index and pd.notna(
+                self._summary.loc[param_ref.name, "value"]
+            ):
+                value = float(self._summary.loc[param_ref.name, "value"])
+                if param_ref.name == "redshift":
+                    redshift = value
+                summary_param_mods[param_ref.name] = value
+            elif param_ref.param.fixed:
+                summary_param_mods[param_ref.name] = float(param_ref.param.value)
+        if redshift is None:
+            redshift = float(getattr(self._config.template.redshift, "value", 0.0))
+        return summary_param_mods, redshift
+
     def plot_model_fit(self):
         """
         Plot the model fit using the posterior predictive distribution.
@@ -63,23 +82,24 @@ class Plotter:
         than a marginal-median Frankenstein vector or a max-log-likelihood
         extreme.
         """
+        summary_param_mods, summary_redshift = self._summary_param_mods()
         rep_param_mods, rep_redshift = self._representative_param_mods()
         if rep_param_mods is None or rep_redshift is None:
             return
 
-        rest_wave = self._config.data.masked_wave / (1 + rep_redshift)
+        rest_wave = self._config.data.masked_wave / (1 + summary_redshift)
 
         # Error bars: use the representative draw to set the noise floor
-        rep_total_flux, _, _ = evaluate_model(
+        summary_total_flux, _, _ = evaluate_model(
             self._config.template,
             self._config.data.masked_wave,
-            rep_param_mods,
-            rep_redshift,
+            summary_param_mods,
+            summary_redshift,
         )
         log_frac_noise = float(self._summary.loc["log_frac_noise", "value"])
         total_error = np.sqrt(
             self._config.data.masked_flux_err**2
-            + rep_total_flux**2 * np.exp(2.0 * log_frac_noise)
+            + summary_total_flux**2 * np.exp(2.0 * log_frac_noise)
         )
 
         fig, ax = plt.subplots(layout="constrained")
@@ -107,20 +127,26 @@ class Plotter:
         ax.plot(rest_wave, pp_median, label="Posterior Predictive Median", color="C3")
         ax.fill_between(rest_wave, pp_lower, pp_upper, alpha=0.5, color="C3")
 
-        # High-resolution component decomposition from the representative draw
+        # High-resolution component decomposition from the summary fiducial
         new_rest_wave = np.linspace(rest_wave[0], rest_wave[-1], 1000)
         new_obs_wave = np.linspace(
             self._config.data.masked_wave.min(),
             self._config.data.masked_wave.max(),
             1000,
         )
+        sum_tot, sum_disk, sum_line = evaluate_model(
+            self._config.template, new_obs_wave, summary_param_mods, summary_redshift
+        )
         rep_tot, rep_disk, rep_line = evaluate_model(
             self._config.template, new_obs_wave, rep_param_mods, rep_redshift
         )
 
-        ax.plot(new_rest_wave, rep_tot, label="Representative Draw", linestyle="--")
-        ax.plot(new_rest_wave, rep_disk, label="Disk Component", linestyle="--")
-        ax.plot(new_rest_wave, rep_line, label="Line Component", linestyle="--")
+        ax.plot(new_rest_wave, sum_tot, label="Summary Total", color="C3", lw=1.6)
+        ax.plot(new_rest_wave, sum_disk, label="Summary Disk", color="C1", lw=1.4)
+        ax.plot(new_rest_wave, sum_line, label="Summary Lines", color="C2", lw=1.4)
+        ax.plot(new_rest_wave, rep_tot, label="Representative Total", linestyle="--", color="C3")
+        ax.plot(new_rest_wave, rep_disk, label="Representative Disk", linestyle="--", color="C1")
+        ax.plot(new_rest_wave, rep_line, label="Representative Lines", linestyle="--", color="C2")
 
         ax.set_ylabel("Flux [mJy]")
         ax.set_xlabel("Wavelength [AA]")
