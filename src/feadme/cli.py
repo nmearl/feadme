@@ -303,8 +303,8 @@ def nuts_cmd(
         config=config,
         integrator=integrator_fn,
     ).setup()
-    initializer = LSQInitializer()
-    # initializer = SVIInitializer(debug_plot=True)
+    # initializer = LSQInitializer()
+    initializer = SVIInitializer(debug_plot=False)
 
     # model = LSQModel(config).setup()
     # sampler = LSQSampler(estimate_uncertainties=False)
