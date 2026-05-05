@@ -20,7 +20,8 @@ c_kms = const.c.to(u.km / u.s).value
 
 
 class DiskProfileModel(Fittable1DModel):
-    center = Parameter()
+    center = Parameter(fixed=True)
+    offset = Parameter()
     inner_radius = Parameter()
     outer_radius = Parameter()
     inclination = Parameter()
@@ -29,7 +30,7 @@ class DiskProfileModel(Fittable1DModel):
     eccentricity = Parameter()
     apocenter = Parameter()
     area = Parameter()
-    offset = Parameter()
+    baseline = Parameter()
 
     def __init__(
         self,
@@ -137,6 +138,7 @@ def _compose_model(
             )
 
         disk_mod = DiskProfileModel(
+            center=prof.center,
             **in_par_values,
             name=prof.name,
             bounds=in_par_bounds,

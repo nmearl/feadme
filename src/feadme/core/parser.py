@@ -180,7 +180,8 @@ class Profile:
 
 @flax.struct.dataclass
 class Disk(Profile, Writable):
-    center: Optional[Parameter] = None
+    center: Optional[float] = None
+    offset: Optional[Parameter] = None
     inner_radius: Optional[Parameter] = None
     outer_radius: Optional[Parameter] = None
     inclination: Optional[Parameter] = None
@@ -189,7 +190,7 @@ class Disk(Profile, Writable):
     eccentricity: Optional[Parameter] = None
     apocenter: Optional[Parameter] = None
     area: Optional[Parameter] = None
-    offset: Parameter = flax.struct.field(
+    baseline: Parameter = flax.struct.field(
         default_factory=lambda: Parameter(
             distribution=Distribution.UNIFORM, low=0.0, high=2.0
         )
@@ -253,6 +254,64 @@ def _build_template_index(template: "Template") -> TemplateIndex:
         ),
         circular=tuple(r for r in all_parameters if r.param.circular),
     )
+
+
+def _default_disk_offset_param() -> dict[str, Any]:
+    return {
+        "distribution": Distribution.NORMAL.value,
+        "value": 0.0,
+        "fixed": True,
+        "shared": None,
+        "low": -1.0e4,
+        "high": 1.0e4,
+        "loc": 0.0,
+        "scale": 600.0,
+        "circular": False,
+    }
+
+
+def _default_disk_baseline_param() -> dict[str, Any]:
+    return {
+        "distribution": Distribution.UNIFORM.value,
+        "value": 0.0,
+        "fixed": True,
+        "shared": None,
+        "low": 0.0,
+        "high": 2.0,
+        "loc": 0.0,
+        "scale": 0.001,
+        "circular": False,
+    }
+
+
+def _migrate_disk_profile_raw(raw_profile: dict[str, Any]) -> dict[str, Any]:
+    profile = dict(raw_profile)
+
+    center_raw = profile.get("center")
+    if isinstance(center_raw, dict):
+        center_value = center_raw.get("value", center_raw.get("loc"))
+        if center_value is None:
+            raise ValueError(
+                f"Disk profile {profile.get('name', '<unnamed>')} is missing a "
+                "serializable center value."
+            )
+        profile["center"] = float(center_value)
+
+    legacy_baseline = None
+    if "baseline" not in profile and "offset" in profile:
+        legacy_baseline = profile.pop("offset")
+
+    if "offset" not in profile:
+        profile["offset"] = _default_disk_offset_param()
+
+    if "baseline" not in profile:
+        profile["baseline"] = (
+            legacy_baseline
+            if legacy_baseline is not None
+            else _default_disk_baseline_param()
+        )
+
+    return profile
 
 
 
@@ -323,6 +382,10 @@ class Template(Writable):
         raw = dict(raw)
         if "log_frac_noise" not in raw and "log_white_noise" in raw:
             raw["log_frac_noise"] = raw.pop("log_white_noise")
+        if "disk_profiles" in raw:
+            raw["disk_profiles"] = [
+                _migrate_disk_profile_raw(profile) for profile in raw["disk_profiles"]
+            ]
         instance = dacite_from_dict(
             data_class=cls,
             data=raw,

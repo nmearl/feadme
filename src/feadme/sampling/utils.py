@@ -67,7 +67,7 @@ def diagnose_disk_failure(init_params, config, *, n_xi=64, n_phi=128, n_x=256):
         q = _resolve_param_value(init_params, config, profile_name, "q")
         eccentricity = _resolve_param_value(init_params, config, profile_name, "eccentricity")
         apocenter = _resolve_param_value(init_params, config, profile_name, "apocenter")
-        center = _resolve_param_value(init_params, config, profile_name, "center")
+        center = float(disk.center) if disk.center is not None else None
 
         if any(v is None for v in [inner_radius, outer_radius, inclination, sigma, q, eccentricity, apocenter, center]):
             logger.warning(f"  Disk diagnostics skipped for {profile_name}: missing resolved parameter(s)")

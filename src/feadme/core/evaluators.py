@@ -25,6 +25,7 @@ def compose_param_arrays(
 
     if template.disk_profiles:
         for param_name in [
+            "offset",
             "inner_radius",
             "outer_radius",
             "sigma",
@@ -33,7 +34,7 @@ def compose_param_arrays(
             "eccentricity",
             "apocenter",
             "area",
-            "offset",
+            "baseline",
         ]:
             disk_arrays[param_name] = jnp.stack(
                 [
@@ -43,10 +44,7 @@ def compose_param_arrays(
             )
 
         disk_arrays["center"] = jnp.stack(
-            [
-                param_mods[f"{prof.name}_center"] * (1 + redshift)
-                for prof in template.disk_profiles
-            ]
+            [prof.center * (1 + redshift) for prof in template.disk_profiles]
         )
 
     if template.line_profiles:
@@ -186,6 +184,7 @@ def _compute_disk_flux_vectorized(
     apocenter,
     area,
     offset,
+    baseline,
     integrator: Callable,
 ):
     """
@@ -204,7 +203,9 @@ def _compute_disk_flux_vectorized(
     area : ArrayLike
         Integrated disk flux (n_disks,)
     offset : ArrayLike
-        Additive continuum offset (n_disks,)
+        Velocity offsets in km/s (n_disks,)
+    baseline : ArrayLike
+        Additive continuum baseline (n_disks,)
     integrator : Callable
         Signature: (rin, rout, phi_min, phi_max, X, inc, sigma, q, ecc, apo) -> res_X
 
@@ -215,8 +216,19 @@ def _compute_disk_flux_vectorized(
     """
 
     def _compute_single(
-        center_i, inner_i, outer_i, sigma_i, inc_i, q_i, ecc_i, apo_i, area_i, offset_i
+        center_i,
+        offset_i,
+        inner_i,
+        outer_i,
+        sigma_i,
+        inc_i,
+        q_i,
+        ecc_i,
+        apo_i,
+        area_i,
+        baseline_i,
     ):
+        center_i = center_i * (1.0 + offset_i / c_kms)
         # Convert observed wavelengths to X = (center - lambda) / center.
         # wave is ascending so x_wave is descending; flip to ascending for trapezoid.
         x_wave_asc = jnp.flip((center_i - wave) / center_i)
@@ -239,13 +251,14 @@ def _compute_disk_flux_vectorized(
         profile_X = res_X / norm
 
         # Flip back to match ascending-wavelength order.
-        return jnp.flip(profile_X) * area_i + offset_i
+        return jnp.flip(profile_X) * area_i + baseline_i
 
     prof_disk_flux = jax.vmap(
         _compute_single,
-        in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+        in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
     )(
         center,
+        offset,
         inner_radius,
         outer_radius,
         sigma,
@@ -254,7 +267,7 @@ def _compute_disk_flux_vectorized(
         eccentricity,
         apocenter,
         area,
-        offset,
+        baseline,
     )
 
     return jnp.sum(prof_disk_flux, axis=0)

@@ -35,16 +35,17 @@
         "value": 10.0,
         "shared": null
       },
-      "center": {
-        "_comment": "Rest-frame Halpha. Fixed — the disk centre is tied to the emission line rest wavelength.",
+      "center": 6562.819,
+      "offset": {
+        "_comment": "Disk velocity offset from rest wavelength (km/s). Fixed at 0 by default so the systemic shift is carried by the redshift parameter, but this can be shared with other components if needed.",
         "circular": false,
-        "distribution": "uniform",
+        "distribution": "normal",
         "fixed": true,
-        "loc": 6562.819,
-        "scale": 5.0,
-        "low": 6557.819,
-        "high": 6567.819,
-        "value": 6562.819,
+        "loc": 0.0,
+        "scale": 600.0,
+        "low": -10000.0,
+        "high": 10000.0,
+        "value": 0.0,
         "shared": null
       },
       "sigma": {
@@ -131,8 +132,8 @@
         "value": 3.141592653589793,
         "shared": null
       },
-      "offset": {
-        "_comment": "Additive continuum offset. Fixed at 0 — continuum should be subtracted before fitting.",
+      "baseline": {
+        "_comment": "Additive continuum baseline. Fixed at 0 — continuum should be subtracted before fitting.",
         "circular": false,
         "distribution": "uniform",
         "fixed": true,
