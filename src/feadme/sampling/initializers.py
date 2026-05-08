@@ -9,7 +9,6 @@ import corner
 import jax
 from astropy.modeling.fitting import (
     TRFLSQFitter,
-    model_to_fit_params,
     DogBoxLSQFitter,
 )
 import matplotlib.pyplot as plt
@@ -34,6 +33,226 @@ from .utils import diagnose_init_params
 logger = loguru.logger.opt(colors=True)
 
 c_kms = const.c.to(u.km / u.s).value
+
+
+def _resolve_bounds(config: Config, full_name: str) -> tuple[float | None, float | None]:
+    param_ref = next((p for p in config.template.iter_all if p.name == full_name), None)
+    if param_ref is None:
+        return None, None
+    return param_ref.param.low, param_ref.param.high
+
+
+def _interp_within_bounds(
+    low: float | None,
+    high: float | None,
+    frac: float,
+    *,
+    log_space: bool = False,
+) -> float | None:
+    if low is None or high is None:
+        return None
+    if not np.isfinite(low) or not np.isfinite(high) or not high > low:
+        return None
+    frac = float(np.clip(frac, 0.0, 1.0))
+    if log_space and low > 0 and high > 0:
+        return float(10 ** (np.log10(low) + frac * (np.log10(high) - np.log10(low))))
+    return float(low + frac * (high - low))
+
+
+def _apply_structured_start(
+    candidate: dict[str, float],
+    config: Config,
+    *,
+    profile_name: str,
+    field_name: str,
+    frac: float,
+    log_space: bool = False,
+):
+    full_name = f"{profile_name}_{field_name}"
+    low, high = _resolve_bounds(config, full_name)
+    value = _interp_within_bounds(low, high, frac, log_space=log_space)
+    if value is not None:
+        candidate[full_name] = value
+
+
+def _structured_lsq_candidates(config: Config) -> list[dict[str, float]]:
+    candidates: list[dict[str, float]] = [{}]
+
+    disk_profiles = list(config.template.disk_profiles)
+    line_profiles = list(config.template.line_profiles)
+    broad_profiles = [prof for prof in line_profiles if "broad" in (prof.name or "")]
+
+    if disk_profiles:
+        disk_presets = [
+            {
+                "inner_radius": (0.12, True),
+                "outer_radius": (0.28, True),
+                "inclination": (0.18, False),
+                "sigma": (0.25, True),
+                "q": (0.45, False),
+                "eccentricity": (0.15, False),
+                "apocenter": (0.18, False),
+            },
+            {
+                "inner_radius": (0.18, True),
+                "outer_radius": (0.34, True),
+                "inclination": (0.78, False),
+                "sigma": (0.35, True),
+                "q": (0.30, False),
+                "eccentricity": (0.82, False),
+                "apocenter": (0.62, False),
+            },
+            {
+                "inner_radius": (0.28, True),
+                "outer_radius": (0.72, True),
+                "inclination": (0.24, False),
+                "sigma": (0.55, True),
+                "q": (0.55, False),
+                "eccentricity": (0.45, False),
+                "apocenter": (0.38, False),
+            },
+            {
+                "inner_radius": (0.35, True),
+                "outer_radius": (0.82, True),
+                "inclination": (0.82, False),
+                "sigma": (0.68, True),
+                "q": (0.25, False),
+                "eccentricity": (0.88, False),
+                "apocenter": (0.85, False),
+            },
+            {
+                "inner_radius": (0.22, True),
+                "outer_radius": (0.52, True),
+                "inclination": (0.52, False),
+                "sigma": (0.42, True),
+                "q": (0.82, False),
+                "eccentricity": (0.55, False),
+                "apocenter": (0.12, False),
+            },
+            {
+                "inner_radius": (0.10, True),
+                "outer_radius": (0.26, True),
+                "inclination": (0.48, False),
+                "sigma": (0.12, True),
+                "q": (0.52, False),
+                "eccentricity": (0.72, False),
+                "apocenter": (0.72, False),
+            },
+        ]
+
+        for preset in disk_presets:
+            candidate: dict[str, float] = {}
+            for prof in disk_profiles:
+                for field_name, (frac, log_space) in preset.items():
+                    _apply_structured_start(
+                        candidate,
+                        config,
+                        profile_name=prof.name,
+                        field_name=field_name,
+                        frac=frac,
+                        log_space=log_space,
+                    )
+            if candidate:
+                candidates.append(candidate)
+
+    if broad_profiles:
+        broad_presets = [
+            {
+                "vel_width": (0.18, True),
+                "offset": (0.20, False),
+                "area": (0.22, True),
+            },
+            {
+                "vel_width": (0.42, True),
+                "offset": (0.50, False),
+                "area": (0.35, True),
+            },
+            {
+                "vel_width": (0.78, True),
+                "offset": (0.80, False),
+                "area": (0.55, True),
+            },
+        ]
+        for preset in broad_presets:
+            candidate: dict[str, float] = {}
+            for prof in broad_profiles:
+                for field_name, (frac, log_space) in preset.items():
+                    _apply_structured_start(
+                        candidate,
+                        config,
+                        profile_name=prof.name,
+                        field_name=field_name,
+                        frac=frac,
+                        log_space=log_space,
+                    )
+            if candidate:
+                candidates.append(candidate)
+
+    combined: list[dict[str, float]] = []
+    disk_only = [c for c in candidates if c]
+    if disk_profiles and broad_profiles:
+        disk_candidates = [
+            c
+            for c in disk_only
+            if any("_inclination" in k or "_eccentricity" in k for k in c)
+        ][:4]
+        broad_candidates = [
+            c for c in disk_only if any("_vel_width" in k and "broad" in k for k in c)
+        ][:3]
+        for d in disk_candidates:
+            for b in broad_candidates:
+                combined.append({**d, **b})
+
+    all_candidates = candidates + combined
+    unique: list[dict[str, float]] = []
+    seen: set[tuple[tuple[str, float], ...]] = set()
+    for candidate in all_candidates:
+        key = tuple(sorted((k, round(float(v), 10)) for k, v in candidate.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
+def _set_model_start_values(model, candidate: dict[str, float]) -> None:
+    for full_name, value in candidate.items():
+        parts = full_name.split("_")
+        if len(parts) < 2:
+            continue
+        profile_name = "_".join(parts[:-1])
+        field_name = parts[-1]
+
+        if profile_name == "redshift":
+            try:
+                model["redshift"].z = 1.0 / (1.0 + float(value)) - 1.0
+            except Exception:
+                pass
+            continue
+
+        try:
+            submodel = model[profile_name]
+        except Exception:
+            continue
+
+        distributions = submodel.meta.get("distributions", {})
+        param_value = float(value)
+        if "log" in distributions.get(field_name, ""):
+            param_value = float(np.log10(param_value))
+        setattr(submodel, field_name, param_value)
+
+
+def _weighted_objective(fit_mod, wave, flux, flux_err) -> float:
+    safe_weights = np.where(
+        np.isfinite(flux_err) & (flux_err > 0.0),
+        1.0 / flux_err,
+        0.0,
+    )
+    model_flux = np.asarray(fit_mod(wave), dtype=float)
+    resid = (model_flux - np.asarray(flux, dtype=float)) * safe_weights
+    if not np.all(np.isfinite(resid)):
+        return float("inf")
+    return float(np.sum(np.square(resid)))
 
 
 def _strip_flux_outputs(sample_dict: dict) -> dict:
@@ -105,6 +324,10 @@ class DefaultInitializer(BaseInitializer):
 
 @flax.struct.dataclass
 class LSQInitializer(BaseInitializer):
+    use_multistart: bool = True
+    max_candidates: int = 8
+    use_dogbox: bool = False
+
     def __call__(self, config: Config = None, model: BaseModel = None):
         wave = config.data.masked_wave
         flux = config.data.masked_flux
@@ -112,21 +335,73 @@ class LSQInitializer(BaseInitializer):
         safe_weights = np.where(
             np.isfinite(flux_err) & (flux_err > 0), 1.0 / flux_err, 0.0
         )
+        fit_mod = None
 
-        lsq_model = _compose_model(
-            config.template,
-            integrator=model.integrator,
-            redshift=config.template.redshift.value,
-        )
+        if not self.use_multistart:
+            lsq_model = _compose_model(
+                config.template,
+                integrator=model.integrator,
+                redshift=config.template.redshift.value,
+            )
+            fit_mod = TRFLSQFitter()(
+                lsq_model,
+                wave,
+                flux,
+                weights=safe_weights,
+                maxiter=10_000,
+                filter_non_finite=True,
+            )
+        else:
+            candidates = _structured_lsq_candidates(config)[: self.max_candidates]
+            fitters = [("trf", TRFLSQFitter())]
+            if self.use_dogbox:
+                fitters.append(("dogbox", DogBoxLSQFitter()))
+            best_obj = float("inf")
+            best_meta = None
+            failures = 0
 
-        fit_mod = TRFLSQFitter()(
-            lsq_model,
-            wave,
-            flux,
-            weights=safe_weights,
-            maxiter=10_000,
-            filter_non_finite=True,
-        )
+            for candidate in candidates:
+                for fitter_name, fitter in fitters:
+                    lsq_model = _compose_model(
+                        config.template,
+                        integrator=model.integrator,
+                        redshift=config.template.redshift.value,
+                    )
+                    _set_model_start_values(lsq_model, candidate)
+
+                    try:
+                        trial_fit = fitter(
+                            lsq_model,
+                            wave,
+                            flux,
+                            weights=safe_weights,
+                            maxiter=10_000,
+                            filter_non_finite=True,
+                        )
+                        obj = _weighted_objective(trial_fit, wave, flux, flux_err)
+                        if np.isfinite(obj) and obj < best_obj:
+                            best_obj = obj
+                            fit_mod = trial_fit
+                            best_meta = (
+                                fitter_name,
+                                candidate,
+                                obj,
+                            )
+                    except Exception:
+                        failures += 1
+
+            if fit_mod is None:
+                raise RuntimeError(
+                    "All multi-start LSQ attempts failed "
+                    f"({len(candidates)} candidates, {len(fitters)} fitters)."
+                )
+
+            logger.info(
+                "Multi-start LSQ selected "
+                f"{best_meta[0]} basin with objective={best_meta[2]:.4g} "
+                f"from {len(candidates) * len(fitters)} attempts "
+                f"({failures} failed)."
+            )
 
         init_params = format_posterior_samples(fit_mod, wave, flux, flux_err)
 
@@ -279,6 +554,7 @@ class LSQInitializer(BaseInitializer):
 
 @flax.struct.dataclass
 class SVIInitializer(BaseInitializer):
+    lsq_candidates: int = 1
     num_steps: int = 2_000
     learning_rate: float = 5e-3
     decay_rate: float = 0.1
@@ -290,7 +566,11 @@ class SVIInitializer(BaseInitializer):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, svi_key, sample_key = random.split(rng_key, 3)
 
-        lsq_initializer = LSQInitializer(debug_plot=self.debug_plot)
+        lsq_initializer = LSQInitializer(
+            debug_plot=self.debug_plot,
+            use_multistart=self.lsq_candidates > 1,
+            max_candidates=max(1, int(self.lsq_candidates)),
+        )
         init_params, init_strategy = lsq_initializer(config, model)
 
         diagnose_init_params(model, init_params, config)
@@ -340,21 +620,20 @@ class SVIInitializer(BaseInitializer):
         )
 
         lsq_params = init_params
-
         try:
-            init_params, best_logp, best_idx = _best_guide_sample_by_log_density(
-                model,
-                guide_samples,
-                config,
-            )
-            logger.info(
-                "Using best SVI guide sample for initialization "
-                f"(sample {best_idx}, log_density={best_logp:.4f})"
-            )
+            sample_site_names = _model_sample_site_names(model, config)
+            init_params = {
+                name: jnp.median(value, axis=0)
+                for name, value in guide_samples.items()
+                if name in sample_site_names
+            }
+            if not init_params:
+                raise ValueError("No guide sample parameters matched model sample sites.")
+            logger.info("Using SVI guide median for initialization")
         except Exception as exc:
             logger.warning(
-                "Falling back to LSQ initialization because SVI sample scoring "
-                f"failed: {exc}"
+                "Falling back to LSQ initialization because SVI guide median "
+                f"construction failed: {exc}"
             )
             init_params = lsq_params
 

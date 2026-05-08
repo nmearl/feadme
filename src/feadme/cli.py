@@ -265,6 +265,16 @@ def cli():
     default=None,
     help="Disk integrator to use. Defaults to quad on CPU and mixed on GPU.",
 )
+@click.option(
+    "--lsq-init-candidates",
+    type=int,
+    default=1,
+    show_default=True,
+    help=(
+        "Number of structured LSQ starting basins to try before SVI/NUTS "
+        "initialization. Use 1 to recover the old single-start behavior."
+    ),
+)
 def nuts_cmd(
     template_path: str,
     data_path: str,
@@ -277,6 +287,7 @@ def nuts_cmd(
     max_tree_depth: int,
     dense_mass: bool,
     integrator: str | None,
+    lsq_init_candidates: int,
     compute_prior_predictive: bool,
     progress_bar: bool,
     rebin: float | None,
@@ -307,7 +318,10 @@ def nuts_cmd(
         integrator=integrator_fn,
     ).setup()
     # initializer = LSQInitializer()
-    initializer = SVIInitializer(debug_plot=False)
+    initializer = SVIInitializer(
+        debug_plot=False,
+        lsq_candidates=max(1, int(lsq_init_candidates)),
+    )
 
     # model = LSQModel(config).setup()
     # sampler = LSQSampler(estimate_uncertainties=False)
