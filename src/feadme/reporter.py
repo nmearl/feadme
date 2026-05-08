@@ -125,18 +125,27 @@ class Reporter:
 
         return summary
 
-    def write_results(self):
-        """
-        Write the results of the sampling to the output path specified in the config.
-        """
+    def write_netcdf(self):
+        """Write the inference data to results.nc."""
         if self._idata is None:
             raise ValueError("Inference data not available. Run the sampler first.")
 
         out_path = Path(f"{self._config.output_path}") / "results.nc"
-
         self._idata.to_netcdf(str(out_path))
+
+    def write_summary(self):
+        """Write the tabular posterior summary to summary.csv."""
+        if self._idata is None:
+            raise ValueError("Inference data not available. Run the sampler first.")
 
         self.summary.to_csv(
             f"{self._config.output_path}/summary.csv",
             index=True,
         )
+
+    def write_results(self):
+        """
+        Write the inference data and summary products to the output path.
+        """
+        self.write_netcdf()
+        self.write_summary()

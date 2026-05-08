@@ -138,10 +138,13 @@ def perform_sampling(config, model, sampler):
     reporter = Reporter(config=config, idata=idata)
 
     if not results_exist:
-        reporter.write_results()
+        reporter.write_netcdf()
         logger.info(
             f"Results written to <green>{config.output_path}/results.nc</green>."
         )
+
+    reporter.write_summary()
+    logger.info(f"Summary written to <green>{config.output_path}/summary.csv</green>.")
 
     logger.info("Displaying sampler results:\n" + reporter.summary.to_markdown())
 
