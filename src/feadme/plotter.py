@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from .core.evaluators import evaluate_model
-from .posterior_utils import extract_draw_values, select_representative_draw
 
 
 class Plotter:
@@ -14,42 +13,6 @@ class Plotter:
         self._config = config
         self._idata = idata
         self._summary = summary
-
-    def _representative_param_mods(self) -> tuple[dict, float] | tuple[None, None]:
-        """
-        Return the posterior draw whose model flux is closest to the posterior
-        predictive median flux (L2 distance in flux space).  This gives a
-        coherent parameter vector that is representative of the posterior bulk
-        rather than a sharp local extreme.
-        """
-        if "posterior" not in self._idata:
-            return None, None
-
-        posterior = self._idata["posterior"].dataset
-
-        posterior_predictive = (
-            self._idata["posterior_predictive"].dataset
-            if "posterior_predictive" in self._idata
-            else None
-        )
-        chain_idx, draw_idx = select_representative_draw(
-            posterior,
-            posterior_predictive,
-            flux_name="total_flux",
-        )
-
-        param_mods = extract_draw_values(posterior, chain_idx, draw_idx)
-
-        full_param_mods = {}
-        redshift = param_mods.pop("redshift", None)
-        for param_ref in self._config.template.iter_all:
-            if param_ref.name == "log_frac_noise":
-                continue
-            if param_ref.name in param_mods:
-                full_param_mods[param_ref.name] = param_mods[param_ref.name]
-            elif param_ref.param.fixed:
-                full_param_mods[param_ref.name] = float(param_ref.param.value)
-        return full_param_mods, redshift
 
     def _summary_param_mods(self) -> tuple[dict, float]:
         summary_param_mods = {}
@@ -74,22 +37,15 @@ class Plotter:
         """
         Plot the model fit using the posterior predictive distribution.
 
-        The shaded band and median curve come from posterior predictive samples,
-        so they faithfully represent the posterior bulk.  The dashed component
-        curves (disk / line) are evaluated on a high-resolution wavelength grid
-        using the draw whose total flux is closest to the posterior predictive
-        median — a coherent parameter vector representative of the bulk rather
-        than a marginal-median Frankenstein vector or a max-log-likelihood
-        extreme.
+        The shaded band and median curve come from posterior predictive samples.
+        The component curves (disk / line) are evaluated on a high-resolution
+        wavelength grid using the posterior-summary reconstruction.
         """
         summary_param_mods, summary_redshift = self._summary_param_mods()
-        rep_param_mods, rep_redshift = self._representative_param_mods()
-        if rep_param_mods is None or rep_redshift is None:
-            return
 
         rest_wave = self._config.data.masked_wave / (1 + summary_redshift)
 
-        # Error bars: use the representative draw to set the noise floor
+        # Error bars: use the summary reconstruction to set the noise floor
         summary_total_flux, _, _ = evaluate_model(
             self._config.template,
             self._config.data.masked_wave,
@@ -137,16 +93,10 @@ class Plotter:
         sum_tot, sum_disk, sum_line = evaluate_model(
             self._config.template, new_obs_wave, summary_param_mods, summary_redshift
         )
-        rep_tot, rep_disk, rep_line = evaluate_model(
-            self._config.template, new_obs_wave, rep_param_mods, rep_redshift
-        )
 
         ax.plot(new_rest_wave, sum_tot, label="Summary Total", color="C3", lw=1.6)
         ax.plot(new_rest_wave, sum_disk, label="Summary Disk", color="C1", lw=1.4)
         ax.plot(new_rest_wave, sum_line, label="Summary Lines", color="C2", lw=1.4)
-        ax.plot(new_rest_wave, rep_tot, label="Representative Total", linestyle="--", color="C3")
-        ax.plot(new_rest_wave, rep_disk, label="Representative Disk", linestyle="--", color="C1")
-        ax.plot(new_rest_wave, rep_line, label="Representative Lines", linestyle="--", color="C2")
 
         ax.set_ylabel("Flux [mJy]")
         ax.set_xlabel("Wavelength [AA]")
