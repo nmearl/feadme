@@ -107,6 +107,7 @@ def perform_sampling(config, model, sampler):
     output_path = Path(config.output_path)
 
     logger.info(f"Starting sampling for <cyan>{config.template.name}</cyan>")
+    start_time = Time.now()
 
     if not output_path.exists():
         output_path.mkdir(parents=True, exist_ok=True)
@@ -125,14 +126,7 @@ def perform_sampling(config, model, sampler):
         )
         logger.info(f"Results loaded for <cyan>{config.template.name}</cyan>.")
     else:
-        start_time = Time.now()
         idata = sampler(config, model)
-        delta_time = (Time.now() - start_time).to_datetime()
-
-        logger.info(
-            f"Finished processing <cyan>{config.template.name}</cyan> in "
-            f"<green>{delta_time}</green>."
-        )
 
     # Report results and write to disk
     reporter = Reporter(config=config, idata=idata)
@@ -156,10 +150,16 @@ def perform_sampling(config, model, sampler):
 
     if sampler.compute_prior_predictive:
         plotter.plot_prior_corner()
-
-    plotter.plot_trace()
+        plotter.plot_trace()
 
     logger.info(f"Plots saved to <green>{config.output_path}</green>.")
+
+    delta_time = (Time.now() - start_time).to_datetime()
+
+    logger.info(
+        f"Finished processing <cyan>{config.template.name}</cyan> in "
+        f"<green>{delta_time}</green>."
+    )
 
 
 # Shared options decorator
