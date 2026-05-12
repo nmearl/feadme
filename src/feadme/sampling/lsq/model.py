@@ -12,7 +12,7 @@ from ...core.evaluators import (
     _compute_line_flux_vectorized,
     _compute_disk_flux_vectorized,
 )
-from ...core.integrators import quad_jax_integrate
+from ...core.integrators import get_scalar_normalization_integrator, quad_jax_integrate
 from ...core.parser import Template, Shape
 
 FLOAT_EPSILON = 1e-6
@@ -53,10 +53,12 @@ class DiskProfileModel(Fittable1DModel):
         if not np.all(np.isfinite(list(pars.values()))):
             raise ValueError(f"Invalid parameters for {self.name}: {pars}")
 
+        normalization_integrator = get_scalar_normalization_integrator(self._integrator)
         res = _compute_disk_flux_vectorized(
             x,
             **pars,
             integrator=self._integrator,
+            normalization_integrator=normalization_integrator,
         )
 
         if not np.all(np.isfinite(res)):
