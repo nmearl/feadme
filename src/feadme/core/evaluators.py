@@ -8,7 +8,10 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
-from .integrators import quad_jax_integrate
+from .integrators import (
+    get_scalar_normalization_integrator,
+    quad_jax_integrate,
+)
 from .parser import Template, Shape
 
 ERR = float(np.finfo(np.float32).tiny)
@@ -82,6 +85,7 @@ def evaluate_model(
     integrator: Callable = quad_jax_integrate,
 ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
     disk_arrays, line_arrays = compose_param_arrays(template, param_mods, redshift)
+    normalization_integrator = get_scalar_normalization_integrator(integrator)
 
     # Build arrays for ALL disk profiles at once (not in a loop)
     if disk_arrays:
@@ -89,6 +93,7 @@ def evaluate_model(
             wave,
             **disk_arrays,
             integrator=integrator,
+            normalization_integrator=normalization_integrator,
         )
     else:
         total_disk_flux = jnp.zeros_like(wave)
@@ -171,7 +176,45 @@ def _compute_line_flux_vectorized(
     return jnp.sum(line_fluxes, axis=1)
 
 
-@partial(jax.jit, static_argnames=["integrator"])
+@jax.jit
+def _compute_line_flux_profiles_vectorized(
+    wave,
+    center,
+    offset,
+    vel_width,
+    shape,
+):
+    """
+    Return unit-area line profile basis functions for each line profile.
+
+    Output shape is (n_lines, n_wave).
+    """
+    if len(center) == 0:
+        return jnp.zeros((0, wave.shape[0]), dtype=wave.dtype)
+
+    wave_bc = wave[:, None]
+    centers_bc = center[None, :]
+    offsets_bc = offset[None, :]
+    vel_widths_bc = vel_width[None, :]
+    shapes_bc = shape[None, :]
+
+    centers_bc = centers_bc * (1.0 + offsets_bc / c_kms)
+    delta_lamb = wave_bc - centers_bc
+    sigma_lambda = vel_widths_bc / c_kms * centers_bc
+
+    amp_g = 1.0 / (jnp.sqrt(2.0 * jnp.pi) * sigma_lambda)
+    gau = amp_g * jnp.exp(-0.5 * (delta_lamb / sigma_lambda) ** 2)
+
+    fwhm_lambda = 2.35482 * sigma_lambda
+    gamma = 0.5 * fwhm_lambda
+    amp_l = 1.0 / jnp.pi
+    lor = amp_l * gamma / (delta_lamb**2 + gamma**2)
+
+    line_fluxes = jnp.where(shapes_bc, gau, lor)
+    return jnp.swapaxes(line_fluxes, 0, 1)
+
+
+@partial(jax.jit, static_argnames=["integrator", "normalization_integrator"])
 def _compute_disk_flux_vectorized(
     wave,
     center,
@@ -186,6 +229,7 @@ def _compute_disk_flux_vectorized(
     offset,
     baseline,
     integrator: Callable,
+    normalization_integrator: Callable,
 ):
     """
     Compute disk flux for multiple disk profiles by evaluating the integrator
@@ -208,11 +252,55 @@ def _compute_disk_flux_vectorized(
         Additive continuum baseline (n_disks,)
     integrator : Callable
         Signature: (rin, rout, phi_min, phi_max, X, inc, sigma, q, ecc, apo) -> res_X
+    normalization_integrator : Callable
+        Scalar X-integrated normalization kernel matching ``integrator``'s
+        quadrature family.
 
     Returns
     -------
     ArrayLike
         Summed disk flux density evaluated on the observed wavelength grid (n_wave,)
+    """
+    prof_disk_basis = _compute_disk_flux_profiles_vectorized(
+        wave,
+        center,
+        inner_radius,
+        outer_radius,
+        sigma,
+        inclination,
+        q,
+        eccentricity,
+        apocenter,
+        offset,
+        integrator=integrator,
+        normalization_integrator=normalization_integrator,
+    )
+    prof_disk_flux = prof_disk_basis * area[:, None] + baseline[:, None]
+    return jnp.sum(prof_disk_flux, axis=0)
+
+
+@partial(
+    jax.jit,
+    static_argnames=["integrator", "normalization_integrator"],
+)
+def _compute_disk_flux_profiles_vectorized(
+    wave,
+    center,
+    inner_radius,
+    outer_radius,
+    sigma,
+    inclination,
+    q,
+    eccentricity,
+    apocenter,
+    offset,
+    integrator: Callable,
+    normalization_integrator: Callable,
+):
+    """
+    Return unit-area disk profile basis functions for each disk profile.
+
+    Output shape is (n_disks, n_wave).
     """
 
     def _compute_single(
@@ -225,12 +313,11 @@ def _compute_disk_flux_vectorized(
         q_i,
         ecc_i,
         apo_i,
-        area_i,
-        baseline_i,
     ):
         center_i = center_i * (1.0 + offset_i / c_kms)
         # Convert observed wavelengths to X = (center - lambda) / center.
-        # wave is ascending so x_wave is descending; flip to ascending for trapezoid.
+        # wave is ascending so x_wave is descending; flip to ascending for
+        # integrator evaluation.
         x_wave_asc = jnp.flip((center_i - wave) / center_i)
 
         res_X = integrator(
@@ -246,16 +333,26 @@ def _compute_disk_flux_vectorized(
             apo_i,
         )
 
-        norm = center_i * jnp.trapezoid(res_X, x_wave_asc)
+        norm = center_i * normalization_integrator(
+            inner_i,
+            outer_i,
+            0.0,
+            2.0 * jnp.pi,
+            inc_i,
+            sigma_i,
+            q_i,
+            ecc_i,
+            apo_i,
+        )
         norm = jnp.maximum(norm, ERR)
         profile_X = res_X / norm
 
         # Flip back to match ascending-wavelength order.
-        return jnp.flip(profile_X) * area_i + baseline_i
+        return jnp.flip(profile_X)
 
-    prof_disk_flux = jax.vmap(
+    return jax.vmap(
         _compute_single,
-        in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+        in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0),
     )(
         center,
         offset,
@@ -266,8 +363,4 @@ def _compute_disk_flux_vectorized(
         q,
         eccentricity,
         apocenter,
-        area,
-        baseline,
     )
-
-    return jnp.sum(prof_disk_flux, axis=0)
