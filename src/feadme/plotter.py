@@ -27,8 +27,16 @@ class Plotter:
                 if param_ref.name == "redshift":
                     redshift = value
                 summary_param_mods[param_ref.name] = value
+            elif getattr(param_ref.param, "shared", None):
+                target_name = getattr(param_ref, "target_name", None)
+                if target_name in summary_param_mods:
+                    summary_param_mods[param_ref.name] = float(
+                        summary_param_mods[target_name]
+                    )
             elif param_ref.param.fixed:
                 summary_param_mods[param_ref.name] = float(param_ref.param.value)
+            elif getattr(param_ref.param, "loc", None) is not None:
+                summary_param_mods[param_ref.name] = float(param_ref.param.loc)
         if redshift is None:
             redshift = float(getattr(self._config.template.redshift, "value", 0.0))
         return summary_param_mods, redshift

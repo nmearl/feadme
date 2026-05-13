@@ -457,7 +457,7 @@ class LSQInitializer(BaseInitializer):
         else:
             broad_line_model = fit_mod["redshift"] | fit_mod["base"]
 
-        n_sf = max(1, len(config.template.disk_profiles))
+        n_sf = max(1, len(config.template.mask))
 
         fig, axes = plt.subplots(
             1,
@@ -473,16 +473,15 @@ class LSQInitializer(BaseInitializer):
 
         for i in range(n_sf):
             ax = axes.flat[i] if hasattr(axes, "flat") else axes
-
-            mask_arr = []
-
-            for j in range(len(config.template.mask)):
-                mask_arr.append(
-                    (config.data.masked_wave > config.template.mask[j].lower_limit)
-                    & (config.data.masked_wave < config.template.mask[j].upper_limit)
+            mask_spec = None
+            if i < len(config.template.mask):
+                mask_spec = config.template.mask[i]
+                mask = (
+                    (config.data.masked_wave > mask_spec.lower_limit)
+                    & (config.data.masked_wave < mask_spec.upper_limit)
                 )
-
-            mask = np.logical_or.reduce(mask_arr)
+            else:
+                mask = np.ones_like(config.data.masked_wave, dtype=bool)
 
             wave = config.data.masked_wave[mask]
             flux = config.data.masked_flux[mask]
@@ -524,6 +523,11 @@ class LSQInitializer(BaseInitializer):
                 color="C6",
                 linestyle="--",
             )
+            if mask_spec is not None:
+                ax.set_title(
+                    f"{mask_spec.lower_limit / (1 + init_params['redshift']):.0f}"
+                    f"–{mask_spec.upper_limit / (1 + init_params['redshift']):.0f} Å"
+                )
 
         # Print the initial parameter estimates on the figure
         # param_text = "\n".join(
@@ -709,7 +713,7 @@ class SVIInitializer(BaseInitializer):
         )
         fig.savefig(f"{config.output_path}/guide_corner_plot.png")
 
-        n_sf = max(1, len(config.template.disk_profiles))
+        n_sf = max(1, len(config.template.mask))
 
         fig, axes = plt.subplots(
             1,
@@ -720,16 +724,15 @@ class SVIInitializer(BaseInitializer):
 
         for i in range(n_sf):
             ax = axes.flat[i] if hasattr(axes, "flat") else axes
-
-            mask_arr = []
-
-            for j in range(len(config.template.mask)):
-                mask_arr.append(
-                    (config.data.masked_wave > config.template.mask[j].lower_limit)
-                    & (config.data.masked_wave < config.template.mask[j].upper_limit)
+            mask_spec = None
+            if i < len(config.template.mask):
+                mask_spec = config.template.mask[i]
+                mask = (
+                    (config.data.masked_wave > mask_spec.lower_limit)
+                    & (config.data.masked_wave < mask_spec.upper_limit)
                 )
-
-            mask = np.logical_or.reduce(mask_arr)
+            else:
+                mask = np.ones_like(config.data.masked_wave, dtype=bool)
 
             wave = config.data.masked_wave[mask]
             flux = config.data.masked_flux[mask]
@@ -768,6 +771,11 @@ class SVIInitializer(BaseInitializer):
                 color="C5",
                 linestyle="--",
             )
+            if mask_spec is not None:
+                ax.set_title(
+                    f"{mask_spec.lower_limit / (1 + redshift):.0f}"
+                    f"–{mask_spec.upper_limit / (1 + redshift):.0f} Å"
+                )
             ax.legend()
 
         fig.savefig(f"{config.output_path}/svi_fit.png")
