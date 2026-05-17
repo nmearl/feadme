@@ -19,6 +19,8 @@ ERR = float(np.finfo(np.float32).tiny)
 EPS = 1e-6
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
+DISK_LOG10_RADIUS_RATIO_LOC = 1.2
+DISK_LOG10_RADIUS_RATIO_SCALE = 0.4
 
 
 def ratio_factor(name, F_num, F_den, ratio, sigma_ln=0.05, eps=1e-30):
@@ -30,6 +32,24 @@ def ratio_factor(name, F_num, F_den, ratio, sigma_ln=0.05, eps=1e-30):
     """
     log_r = jnp.log((F_num + eps) / (F_den + eps))
     numpyro.factor(name, dist.Normal(jnp.log(ratio), sigma_ln).log_prob(log_r))
+
+
+def log10_radius_ratio_factor(
+    name,
+    outer_radius,
+    inner_radius,
+    loc=DISK_LOG10_RADIUS_RATIO_LOC,
+    scale=DISK_LOG10_RADIUS_RATIO_SCALE,
+    eps=1e-30,
+):
+    """
+    Softly regularize log10(r_out / r_in) toward a broad physically extended disk.
+
+    The default loc=1.2 corresponds to r_out / r_in ~= 16.
+    The default scale=0.4 is intentionally broad for first-pass testing.
+    """
+    log10_ratio = jnp.log10((outer_radius + eps) / (inner_radius + eps))
+    numpyro.factor(name, dist.Normal(loc, scale).log_prob(log10_ratio))
 
 
 def _find_ecc_apo_pairs(
@@ -246,6 +266,21 @@ class NumpyroModel(BaseModel):
                 param_ref.name, param_mods[param_ref.target_name]
             )
             param_mods[param_ref.name] = param_samp
+
+        # Softly discourage collapsed ring solutions by regularizing the radial
+        # extent of each disk in log-space.
+        for profile in self.config.template.disk_profiles:
+            inner_name = f"{profile.name}_inner_radius"
+            outer_name = f"{profile.name}_outer_radius"
+            inner_radius = param_mods.get(inner_name)
+            outer_radius = param_mods.get(outer_name)
+            if inner_radius is None or outer_radius is None:
+                continue
+            log10_radius_ratio_factor(
+                f"{profile.name}_log10_radius_ratio",
+                outer_radius,
+                inner_radius,
+            )
 
         # Soft constraint: [NII] 6583/6548 ratio should be close to the
         # atomic-physics expectation, while allowing modest decomposition error.
