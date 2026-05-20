@@ -133,6 +133,34 @@ def _distribution_from_param(
     raise ValueError(f"Unsupported distribution: {param.distribution}")
 
 
+def _inclination_distribution_from_param(
+    param: Parameter, lower_bound: float, upper_bound: float
+) -> dist.Distribution:
+    mu_min = jnp.cos(upper_bound)
+    mu_max = jnp.cos(lower_bound)
+
+    if param.distribution == Distribution.UNIFORM:
+        return dist.Uniform(mu_min, mu_max)
+
+    if param.distribution == Distribution.NORMAL:
+        # Interpret the template's loc/scale in angle space, but sample in
+        # mu = cos(i). Map the angular width into mu-space with a local
+        # linearization about the prior centre.
+        mu_loc = jnp.cos(param.loc)
+        mu_scale = jnp.maximum(jnp.abs(jnp.sin(param.loc)) * param.scale, 1e-3)
+        return dist.TruncatedNormal(
+            mu_loc,
+            mu_scale,
+            low=mu_min,
+            high=mu_max,
+        )
+
+    raise ValueError(
+        "Inclination only supports uniform or normal priors in the template, "
+        f"got {param.distribution}."
+    )
+
+
 def _sample_radius_joint(inner_ref, outer_ref) -> tuple[ArrayLike, ArrayLike]:
     """
     Sample the disk radial extent as an ordered (inner_radius, outer_radius) pair.
@@ -276,11 +304,11 @@ class NumpyroModel(BaseModel):
             outer_radius = param_mods.get(outer_name)
             if inner_radius is None or outer_radius is None:
                 continue
-            log10_radius_ratio_factor(
-                f"{profile.name}_log10_radius_ratio",
-                outer_radius,
-                inner_radius,
-            )
+            # log10_radius_ratio_factor(
+            #     f"{profile.name}_log10_radius_ratio",
+            #     outer_radius,
+            #     inner_radius,
+            # )
 
         # Soft constraint: [NII] 6583/6548 ratio should be close to the
         # atomic-physics expectation, while allowing modest decomposition error.
@@ -335,9 +363,12 @@ class NumpyroModel(BaseModel):
             )
 
         if "inclination" in samp_name:
-            mu_min = jnp.cos(upper_bound)  # cos(i_max)
-            mu_max = jnp.cos(lower_bound)  # cos(i_min)
-            mu = numpyro.sample(f"{samp_name}_base", dist.Uniform(mu_min, mu_max))
+            mu = numpyro.sample(
+                f"{samp_name}_base",
+                _inclination_distribution_from_param(
+                    param, lower_bound, upper_bound
+                ),
+            )
             return numpyro.deterministic(samp_name, jnp.arccos(mu))
 
         return numpyro.sample(
