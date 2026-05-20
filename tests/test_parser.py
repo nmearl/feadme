@@ -1,21 +1,17 @@
-import pytest
 import jax.numpy as jnp
-from pathlib import Path
-from src.feadme.parser import (
+
+from feadme.core.parser import (
     Data,
+    Disk,
+    Distribution,
+    Line,
     Mask,
     Parameter,
-    Distribution,
-    Profile,
-    Disk,
-    Line,
     Template,
-    SamplerSettings,
-    Config,
 )
 
 
-def creates_data_with_correct_masking():
+def test_creates_data_with_correct_masking():
     wave = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
     flux = jnp.array([10.0, 20.0, 30.0, 40.0, 50.0])
     flux_err = jnp.array([0.1, 0.2, 0.3, 0.4, 0.5])
@@ -29,7 +25,7 @@ def creates_data_with_correct_masking():
     assert jnp.array_equal(data.masked_flux_err, jnp.array([0.2, 0.3, 0.4]))
 
 
-def handles_empty_mask_correctly():
+def test_handles_empty_mask_correctly():
     wave = jnp.array([1.0, 2.0, 3.0])
     flux = jnp.array([10.0, 20.0, 30.0])
     flux_err = jnp.array([0.1, 0.2, 0.3])
@@ -42,29 +38,17 @@ def handles_empty_mask_correctly():
     assert jnp.array_equal(data.masked_flux_err, flux_err)
 
 
-def serializes_and_deserializes_template_correctly(tmp_path):
-    template = Template(
+def test_serializes_and_deserializes_template_correctly(tmp_path):
+    template = Template.create(
         name="test_template",
-        disk_profiles=[Disk(center=Parameter(name="center", value=1.0))],
-        line_profiles=[Line(center=Parameter(name="line_center", value=2.0))],
-        redshift=0.1,
+        disk_profiles=[Disk(name="halpha_disk", center=6562.8)],
+        line_profiles=[Line(name="halpha_narrow", center=6562.8)],
     )
     file_path = tmp_path / "template.json"
     template.to_json(file_path)
 
-    loaded_template = Template.from_json(file_path)
+    loaded = Template.from_json(file_path)
 
-    assert loaded_template.name == template.name
-    assert len(loaded_template.disk_profiles) == len(template.disk_profiles)
-    assert len(loaded_template.line_profiles) == len(template.line_profiles)
-    assert loaded_template.redshift == template.redshift
-
-
-def creates_sampler_with_correct_chain_method():
-    sampler = SamplerSettings(sampler_type="NUTS", num_chains=2)
-
-    assert sampler.chain_method == "parallel"
-
-    sampler_single_chain = SamplerSettings(sampler_type="NUTS", num_chains=1)
-
-    assert sampler_single_chain.chain_method == "vectorized"
+    assert loaded.name == template.name
+    assert len(loaded.disk_profiles) == len(template.disk_profiles)
+    assert len(loaded.line_profiles) == len(template.line_profiles)

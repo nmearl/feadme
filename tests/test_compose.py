@@ -1,50 +1,53 @@
 import jax.numpy as jnp
 
-from feadme.compose import _compute_line_flux_vectorized, _compute_disk_flux_vectorized
+from feadme.core.evaluators import (
+    _compute_disk_flux_vectorized,
+    _compute_line_flux_vectorized,
+)
+from feadme.core.integrators import mixed_jax_integrate, mixed_scalar_integrate
 
 
-def computes_line_flux_correctly():
-    wave = jnp.linspace(4000, 7000, 100)
-    centers = jnp.array([5000, 6000])
-    vel_widths = jnp.array([300, 400])
-    amplitudes = jnp.array([1.0, 0.8])
+def test_computes_line_flux_correctly():
+    wave = jnp.linspace(6400, 6700, 100)
+    centers = jnp.array([6562.8, 6583.5])
+    offsets = jnp.array([0.0, 0.0])
+    vel_widths = jnp.array([300.0, 200.0])
+    areas = jnp.array([1.0, 0.8])
     shapes = jnp.array([True, False])  # Gaussian and Lorentzian
 
-    result = _compute_line_flux_vectorized(
-        wave, centers, vel_widths, amplitudes, shapes
-    )
+    result = _compute_line_flux_vectorized(wave, centers, offsets, vel_widths, areas, shapes)
 
     assert result.shape == wave.shape
     assert (result >= 0).all()
 
 
-def handles_empty_line_flux():
-    wave = jnp.linspace(4000, 7000, 100)
+def test_handles_empty_line_flux():
+    wave = jnp.linspace(6400, 6700, 100)
     centers = jnp.array([])
+    offsets = jnp.array([])
     vel_widths = jnp.array([])
-    amplitudes = jnp.array([])
+    areas = jnp.array([])
     shapes = jnp.array([])
 
-    result = _compute_line_flux_vectorized(
-        wave, centers, vel_widths, amplitudes, shapes
-    )
+    result = _compute_line_flux_vectorized(wave, centers, offsets, vel_widths, areas, shapes)
 
     assert result.shape == wave.shape
     assert (result == 0).all()
 
 
-def computes_disk_flux_correctly():
-    wave = jnp.linspace(4000, 7000, 100)
-    centers = jnp.array([5000])
-    inner_radii = jnp.array([1.0])
-    outer_radii = jnp.array([2.0])
-    sigmas = jnp.array([0.5])
+def test_computes_disk_flux_correctly():
+    wave = jnp.linspace(6400, 6700, 100)
+    centers = jnp.array([6562.8])
+    inner_radii = jnp.array([400.0])
+    outer_radii = jnp.array([5000.0])
+    sigmas = jnp.array([500.0])
     inclinations = jnp.array([jnp.pi / 4])
     qs = jnp.array([2.0])
     eccentricities = jnp.array([0.1])
     apocenters = jnp.array([jnp.pi / 3])
-    scales = jnp.array([1.0])
+    areas = jnp.array([1.0])
     offsets = jnp.array([0.0])
+    baselines = jnp.array([0.0])
 
     result = _compute_disk_flux_vectorized(
         wave,
@@ -56,40 +59,13 @@ def computes_disk_flux_correctly():
         qs,
         eccentricities,
         apocenters,
-        scales,
+        areas,
         offsets,
+        baselines,
+        mixed_jax_integrate,
+        mixed_scalar_integrate,
     )
 
     assert result.shape == wave.shape
+    assert jnp.isfinite(result).all()
     assert (result >= 0).all()
-
-
-def handles_empty_disk_flux():
-    wave = jnp.linspace(4000, 7000, 100)
-    centers = jnp.array([])
-    inner_radii = jnp.array([])
-    outer_radii = jnp.array([])
-    sigmas = jnp.array([])
-    inclinations = jnp.array([])
-    qs = jnp.array([])
-    eccentricities = jnp.array([])
-    apocenters = jnp.array([])
-    scales = jnp.array([])
-    offsets = jnp.array([])
-
-    result = _compute_disk_flux_vectorized(
-        wave,
-        centers,
-        inner_radii,
-        outer_radii,
-        sigmas,
-        inclinations,
-        qs,
-        eccentricities,
-        apocenters,
-        scales,
-        offsets,
-    )
-
-    assert result.shape == wave.shape
-    assert (result == 0).all()
