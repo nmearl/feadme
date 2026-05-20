@@ -1,0 +1,21 @@
+[project]
+site_name = "FEADME"
+site_description = "Fast Elliptical Accretion Disk Modeling Engine"
+site_author = "Nicholas Earl"
+docs_dir = "docs"
+copyright = "&copy; 2026 Nicholas Earl"
+nav = [
+    { "Introduction" = "index.md" },
+    { "Usage" = "usage.md" },
+]
+
+[project.theme]
+variant = "modern"
+
+[project.plugins.mkdocstrings.handlers.python]
+paths = ["src"]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "numpy"
+show_source = false
+show_root_heading = true

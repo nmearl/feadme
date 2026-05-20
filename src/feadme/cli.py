@@ -208,6 +208,12 @@ def common_options(f):
         default=None,
         help="Rebin the spectrum to a specified velocity resolution (in km/s).",
     )
+    @click.option(
+        "--debug-plot/--no-debug-plot",
+        is_flag=True,
+        default=False,
+        help="Save diagnostic plots from the initializer (LSQ/SVI fit and corner).",
+    )
     @wraps(f)
     def wrapper(*args, **kwargs):
         return f(*args, **kwargs)
@@ -221,8 +227,15 @@ def cli():
     pass
 
 
-@cli.command("nuts")
+@cli.command("run")
 @common_options
+@click.option(
+    "--sampler",
+    type=click.Choice(["nuts", "neutra"], case_sensitive=False),
+    default="nuts",
+    show_default=True,
+    help="Sampler to use.",
+)
 @click.option(
     "--num-warmup",
     type=int,
@@ -275,11 +288,12 @@ def cli():
         "initialization. Use 1 to recover the old single-start behavior."
     ),
 )
-def nuts_cmd(
+def run_cmd(
     template_path: str,
     data_path: str,
     output_path: str,
     skip_existing: bool,
+    sampler: str,
     num_warmup: int,
     num_samples: int,
     num_chains: int,
@@ -291,9 +305,10 @@ def nuts_cmd(
     compute_prior_predictive: bool,
     progress_bar: bool,
     rebin: float | None,
+    debug_plot: bool,
 ):
     """
-    Fit to spectral data using the NUTS sampler.
+    Fit spectral data using the specified sampler (default: nuts).
     """
     template = Template.from_json(Path(template_path))
 
@@ -319,14 +334,14 @@ def nuts_cmd(
     ).setup()
     # initializer = LSQInitializer()
     initializer = SVIInitializer(
-        debug_plot=False,
+        debug_plot=debug_plot,
         lsq_candidates=max(1, int(lsq_init_candidates)),
     )
 
     # model = LSQModel(config).setup()
     # sampler = LSQSampler(estimate_uncertainties=False)
 
-    sampler = NUTSSampler(
+    sampler_kwargs = dict(
         num_warmup=num_warmup,
         num_samples=num_samples,
         num_chains=num_chains,
@@ -337,6 +352,10 @@ def nuts_cmd(
         progress_bar=progress_bar,
         initializer=initializer,
     )
+    if sampler.lower() == "neutra":
+        sampler_obj = NeuTraSampler(**sampler_kwargs)
+    else:
+        sampler_obj = NUTSSampler(**sampler_kwargs)
 
     # Perform the sampling with the given configuration
-    perform_sampling(config, model, sampler)
+    perform_sampling(config, model, sampler_obj)

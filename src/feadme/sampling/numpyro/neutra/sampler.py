@@ -12,12 +12,12 @@ import numpy as np
 import optax
 from jax.typing import ArrayLike
 from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO
-from numpyro.infer.autoguide import AutoMultivariateNormal
+from numpyro.infer.autoguide import AutoBNAFNormal
 from numpyro.infer.reparam import NeuTraReparam
 
 from ....core.parser import Config
 from ...base_sampler import BaseSampler
-from ...initializers import LSQInitializer
+from ...initializers import BaseInitializer, DefaultInitializer
 from ..model import BaseModel
 
 logger = loguru.logger.opt(colors=True)
@@ -38,6 +38,10 @@ class NeuTraSampler(BaseSampler):
     target_accept_prob: float = 0.85
     max_tree_depth: int = 10
     dense_mass: bool = False
+    compute_prior_predictive: bool = False
+    initializer: BaseInitializer = DefaultInitializer()
+    num_flows: int = 1
+    hidden_factors: tuple[int, ...] = (8, 8)
 
     @property
     def chain_method(self) -> str:
@@ -53,12 +57,16 @@ class NeuTraSampler(BaseSampler):
             flux_err=config.data.masked_flux_err,
         )
 
-        # LSQ warm-start
-        lsq_initializer = LSQInitializer()
-        _, init_strategy = lsq_initializer(config, model)
+        # Initialize the transport guide from the configured initializer path.
+        _, init_strategy = self.initializer(config, model)
 
         # Train the SVI guide
-        guide = AutoMultivariateNormal(model, init_loc_fn=init_strategy)
+        guide = AutoBNAFNormal(
+            model,
+            init_loc_fn=init_strategy,
+            num_flows=self.num_flows,
+            hidden_factors=list(self.hidden_factors),
+        )
 
         schedule = optax.exponential_decay(
             self.svi_learning_rate, self.svi_decay_steps, self.svi_decay_rate
@@ -148,7 +156,10 @@ class NeuTraSampler(BaseSampler):
         }
 
         predictive_post, predictive_prior, log_lik = self._inference_data(
-            config, model, flat_samples
+            config,
+            model,
+            flat_samples,
+            compute_prior_predictive=self.compute_prior_predictive,
         )
 
         idata = az.from_numpyro(
