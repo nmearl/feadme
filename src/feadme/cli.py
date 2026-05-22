@@ -288,6 +288,41 @@ def cli():
         "initialization. Use 1 to recover the old single-start behavior."
     ),
 )
+@click.option(
+    "--svi-init-candidates",
+    type=int,
+    default=1,
+    show_default=True,
+    help="Number of distinct LSQ basins to refine independently with SVI before NUTS.",
+)
+@click.option(
+    "--init-candidate-distance-threshold",
+    type=float,
+    default=0.25,
+    show_default=True,
+    help="Transformed-parameter distance below which initialization basins are treated as duplicates.",
+)
+@click.option(
+    "--svi-init-steps",
+    type=int,
+    default=2000,
+    show_default=True,
+    help="Number of SVI optimization steps for each initialization candidate.",
+)
+@click.option(
+    "--svi-init-samples",
+    type=int,
+    default=1000,
+    show_default=True,
+    help="Number of guide samples used to score each SVI initialization candidate.",
+)
+@click.option(
+    "--svi-init-max-loss-relative-std",
+    type=float,
+    default=0.10,
+    show_default=True,
+    help="Maximum recent-loss relative std for an SVI candidate to be eligible for selection.",
+)
 def run_cmd(
     template_path: str,
     data_path: str,
@@ -302,6 +337,11 @@ def run_cmd(
     dense_mass: bool,
     integrator: str | None,
     lsq_init_candidates: int,
+    svi_init_candidates: int,
+    init_candidate_distance_threshold: float,
+    svi_init_steps: int,
+    svi_init_samples: int,
+    svi_init_max_loss_relative_std: float,
     compute_prior_predictive: bool,
     progress_bar: bool,
     rebin: float | None,
@@ -336,6 +376,11 @@ def run_cmd(
     initializer = SVIInitializer(
         debug_plot=debug_plot,
         lsq_candidates=max(1, int(lsq_init_candidates)),
+        svi_candidates=max(1, int(svi_init_candidates)),
+        candidate_distance_threshold=init_candidate_distance_threshold,
+        max_candidate_loss_relative_std=svi_init_max_loss_relative_std,
+        num_steps=max(1, int(svi_init_steps)),
+        num_samples=max(1, int(svi_init_samples)),
     )
 
     # model = LSQModel(config).setup()

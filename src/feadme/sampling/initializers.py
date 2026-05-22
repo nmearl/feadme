@@ -1,4 +1,6 @@
 import time
+import csv
+from pathlib import Path
 
 import flax.struct
 import jax.numpy as jnp
@@ -35,7 +37,9 @@ logger = loguru.logger.opt(colors=True)
 c_kms = const.c.to(u.km / u.s).value
 
 
-def _resolve_bounds(config: Config, full_name: str) -> tuple[float | None, float | None]:
+def _resolve_bounds(
+    config: Config, full_name: str
+) -> tuple[float | None, float | None]:
     param_ref = next((p for p in config.template.iter_all if p.name == full_name), None)
     if param_ref is None:
         return None, None
@@ -259,6 +263,131 @@ def _strip_flux_outputs(sample_dict: dict) -> dict:
     return {k: v for k, v in sample_dict.items() if not k.endswith("_flux")}
 
 
+def _feature_param_view(params: dict) -> dict:
+    view = dict(params)
+
+    for name, value in list(params.items()):
+        if name.endswith("_inclination_base"):
+            prefix = name.removesuffix("_inclination_base")
+            if f"{prefix}_inclination" not in view:
+                view[f"{prefix}_inclination"] = jnp.arccos(value)
+
+        if name.endswith("_apocenter_h_raw"):
+            prefix = name.removesuffix("_apocenter_h_raw")
+            z_h = params.get(name)
+            z_k = params.get(f"{prefix}_apocenter_k_raw")
+            if z_h is None or z_k is None:
+                continue
+            radius = jnp.sqrt(z_h**2 + z_k**2) + 1e-12
+            scale = jnp.tanh(radius) / radius
+            h = z_h * scale
+            k = z_k * scale
+            view.setdefault(f"{prefix}_eccentricity", jnp.sqrt(h**2 + k**2))
+            view.setdefault(
+                f"{prefix}_apocenter", jnp.mod(jnp.arctan2(h, k), 2 * jnp.pi)
+            )
+
+        if name.endswith("_apocenter_x_base"):
+            prefix = name.removesuffix("_apocenter_x_base")
+            x = params.get(name)
+            y = params.get(f"{prefix}_apocenter_y_base")
+            if x is None or y is None:
+                continue
+            view.setdefault(
+                f"{prefix}_apocenter", jnp.mod(jnp.arctan2(y, x), 2 * jnp.pi)
+            )
+
+    return view
+
+
+def _basin_feature_vector(params: dict) -> np.ndarray:
+    params = _feature_param_view(params)
+
+    def val(name: str, default=np.nan):
+        raw = params.get(name, default)
+        try:
+            return float(jax.device_get(raw))
+        except Exception:
+            return float(raw)
+
+    features = []
+    disk_prefixes = sorted(
+        {
+            name.removesuffix("_inner_radius")
+            for name in params
+            if name.endswith("_inner_radius")
+        }
+    )
+    broad_prefixes = sorted(
+        {
+            name.removesuffix("_vel_width")
+            for name in params
+            if name.endswith("_vel_width") and "broad" in name
+        }
+    )
+
+    for prefix in disk_prefixes:
+        inner = max(val(f"{prefix}_inner_radius"), 1e-30)
+        outer = max(val(f"{prefix}_outer_radius"), 1e-30)
+        sigma = max(val(f"{prefix}_sigma"), 1e-30)
+        inclination = val(f"{prefix}_inclination")
+        eccentricity = val(f"{prefix}_eccentricity")
+        apocenter = val(f"{prefix}_apocenter")
+        features.extend(
+            [
+                np.log10(inner),
+                np.log10(outer),
+                np.cos(inclination),
+                eccentricity * np.cos(apocenter),
+                eccentricity * np.sin(apocenter),
+                np.log10(sigma),
+                val(f"{prefix}_q"),
+            ]
+        )
+
+    for prefix in broad_prefixes:
+        features.extend(
+            [
+                np.log10(max(val(f"{prefix}_vel_width"), 1e-30)),
+                val(f"{prefix}_offset") / 1000.0,
+                np.log10(max(val(f"{prefix}_area"), 1e-30)),
+            ]
+        )
+
+    return np.asarray(features, dtype=float)
+
+
+def _basin_distance(left: dict, right: dict) -> float:
+    left_features = _basin_feature_vector(left)
+    right_features = _basin_feature_vector(right)
+    n = min(left_features.size, right_features.size)
+    if n == 0:
+        return 0.0
+    diff = left_features[:n] - right_features[:n]
+    finite = np.isfinite(diff)
+    if not np.any(finite):
+        return 0.0
+    return float(np.linalg.norm(diff[finite]))
+
+
+def _dedupe_basin_candidates(
+    candidates: list[dict],
+    *,
+    distance_threshold: float,
+    params_key: str,
+) -> list[dict]:
+    selected: list[dict] = []
+    for candidate in candidates:
+        params = candidate[params_key]
+        if any(
+            _basin_distance(params, kept[params_key]) < distance_threshold
+            for kept in selected
+        ):
+            continue
+        selected.append(candidate)
+    return selected
+
+
 def _model_sample_site_names(model: BaseModel, config: Config) -> set[str]:
     model_trace = trace(seed(model, random.PRNGKey(0))).get_trace(
         wave=config.data.masked_wave,
@@ -328,14 +457,13 @@ class LSQInitializer(BaseInitializer):
     max_candidates: int = 8
     use_dogbox: bool = False
 
-    def __call__(self, config: Config = None, model: BaseModel = None):
+    def fit_candidates(self, config: Config = None, model: BaseModel = None):
         wave = config.data.masked_wave
         flux = config.data.masked_flux
         flux_err = config.data.masked_flux_err
         safe_weights = np.where(
             np.isfinite(flux_err) & (flux_err > 0), 1.0 / flux_err, 0.0
         )
-        fit_mod = None
 
         if not self.use_multistart:
             lsq_model = _compose_model(
@@ -351,59 +479,88 @@ class LSQInitializer(BaseInitializer):
                 maxiter=10_000,
                 filter_non_finite=True,
             )
-        else:
-            candidates = _structured_lsq_candidates(config)[: self.max_candidates]
-            fitters = [("trf", TRFLSQFitter())]
-            if self.use_dogbox:
-                fitters.append(("dogbox", DogBoxLSQFitter()))
-            best_obj = float("inf")
-            best_meta = None
-            failures = 0
+            obj = _weighted_objective(fit_mod, wave, flux, flux_err)
+            init_params = format_posterior_samples(fit_mod, wave, flux, flux_err)
+            return [
+                {
+                    "fit_model": fit_mod,
+                    "objective": obj,
+                    "fitter": "trf",
+                    "start_candidate": {},
+                    "init_params": init_params,
+                    "failed": False,
+                }
+            ]
 
-            for candidate in candidates:
-                for fitter_name, fitter in fitters:
-                    lsq_model = _compose_model(
-                        config.template,
-                        integrator=model.integrator,
-                        redshift=config.template.redshift.value,
-                    )
-                    _set_model_start_values(lsq_model, candidate)
+        candidates = _structured_lsq_candidates(config)[: self.max_candidates]
+        fitters = [("trf", TRFLSQFitter())]
+        if self.use_dogbox:
+            fitters.append(("dogbox", DogBoxLSQFitter()))
 
-                    try:
-                        trial_fit = fitter(
-                            lsq_model,
-                            wave,
-                            flux,
-                            weights=safe_weights,
-                            maxiter=10_000,
-                            filter_non_finite=True,
-                        )
-                        obj = _weighted_objective(trial_fit, wave, flux, flux_err)
-                        if np.isfinite(obj) and obj < best_obj:
-                            best_obj = obj
-                            fit_mod = trial_fit
-                            best_meta = (
-                                fitter_name,
-                                candidate,
-                                obj,
-                            )
-                    except Exception:
-                        failures += 1
-
-            if fit_mod is None:
-                raise RuntimeError(
-                    "All multi-start LSQ attempts failed "
-                    f"({len(candidates)} candidates, {len(fitters)} fitters)."
+        fit_candidates = []
+        failures = 0
+        for candidate in candidates:
+            for fitter_name, fitter in fitters:
+                lsq_model = _compose_model(
+                    config.template,
+                    integrator=model.integrator,
+                    redshift=config.template.redshift.value,
                 )
+                _set_model_start_values(lsq_model, candidate)
 
-            logger.info(
-                "Multi-start LSQ selected "
-                f"{best_meta[0]} basin with objective={best_meta[2]:.4g} "
-                f"from {len(candidates) * len(fitters)} attempts "
-                f"({failures} failed)."
+                try:
+                    trial_fit = fitter(
+                        lsq_model,
+                        wave,
+                        flux,
+                        weights=safe_weights,
+                        maxiter=10_000,
+                        filter_non_finite=True,
+                    )
+                    obj = _weighted_objective(trial_fit, wave, flux, flux_err)
+                    if np.isfinite(obj):
+                        init_params = format_posterior_samples(
+                            trial_fit, wave, flux, flux_err
+                        )
+                        fit_candidates.append(
+                            {
+                                "fit_model": trial_fit,
+                                "objective": obj,
+                                "fitter": fitter_name,
+                                "start_candidate": candidate,
+                                "init_params": init_params,
+                                "failed": False,
+                            }
+                        )
+                except Exception:
+                    failures += 1
+
+        if not fit_candidates:
+            raise RuntimeError(
+                "All multi-start LSQ attempts failed "
+                f"({len(candidates)} candidates, {len(fitters)} fitters)."
             )
 
-        init_params = format_posterior_samples(fit_mod, wave, flux, flux_err)
+        fit_candidates = sorted(fit_candidates, key=lambda item: item["objective"])
+        logger.info(
+            "Multi-start LSQ retained "
+            f"{len(fit_candidates)} finite basins from "
+            f"{len(candidates) * len(fitters)} attempts ({failures} failed). "
+            f"Best objective={fit_candidates[0]['objective']:.4g}."
+        )
+        return fit_candidates
+
+    def __call__(self, config: Config = None, model: BaseModel = None):
+        fit_candidates = self.fit_candidates(config, model)
+        fit_mod = fit_candidates[0]["fit_model"]
+        init_params = fit_candidates[0].get("init_params")
+        if init_params is None:
+            init_params = format_posterior_samples(
+                fit_mod,
+                config.data.masked_wave,
+                config.data.masked_flux,
+                config.data.masked_flux_err,
+            )
 
         init_strategy = init_to_value(values=init_params)
 
@@ -476,9 +633,8 @@ class LSQInitializer(BaseInitializer):
             mask_spec = None
             if i < len(config.template.mask):
                 mask_spec = config.template.mask[i]
-                mask = (
-                    (config.data.masked_wave > mask_spec.lower_limit)
-                    & (config.data.masked_wave < mask_spec.upper_limit)
+                mask = (config.data.masked_wave > mask_spec.lower_limit) & (
+                    config.data.masked_wave < mask_spec.upper_limit
                 )
             else:
                 mask = np.ones_like(config.data.masked_wave, dtype=bool)
@@ -559,6 +715,9 @@ class LSQInitializer(BaseInitializer):
 @flax.struct.dataclass
 class SVIInitializer(BaseInitializer):
     lsq_candidates: int = 1
+    svi_candidates: int = 1
+    candidate_distance_threshold: float = 0.25
+    max_candidate_loss_relative_std: float = 0.10
     num_steps: int = 2_000
     learning_rate: float = 5e-3
     decay_rate: float = 0.1
@@ -568,16 +727,149 @@ class SVIInitializer(BaseInitializer):
 
     def __call__(self, config: Config, model: BaseModel):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
-        rng_key, svi_key, sample_key = random.split(rng_key, 3)
 
         lsq_initializer = LSQInitializer(
             debug_plot=self.debug_plot,
             use_multistart=self.lsq_candidates > 1,
             max_candidates=max(1, int(self.lsq_candidates)),
         )
-        init_params, init_strategy = lsq_initializer(config, model)
+        lsq_candidates = lsq_initializer.fit_candidates(config, model)
+        distinct_lsq_candidates = _dedupe_basin_candidates(
+            lsq_candidates,
+            distance_threshold=self.candidate_distance_threshold,
+            params_key="init_params",
+        )
+        svi_candidate_count = max(
+            1, min(int(self.svi_candidates), len(distinct_lsq_candidates))
+        )
+        candidates_to_run = distinct_lsq_candidates[:svi_candidate_count]
 
+        logger.info(
+            "Running SVI initialization from "
+            f"{len(candidates_to_run)} distinct LSQ basin(s) "
+            f"({len(lsq_candidates)} finite LSQ fit(s))."
+        )
+
+        results = []
+        for candidate_idx, lsq_candidate in enumerate(candidates_to_run):
+            rng_key, svi_key, sample_key = random.split(rng_key, 3)
+            try:
+                result = self._run_svi_candidate(
+                    candidate_idx,
+                    lsq_candidate,
+                    svi_key,
+                    sample_key,
+                    config,
+                    model,
+                )
+                results.append(result)
+            except Exception as exc:
+                logger.warning(
+                    f"SVI candidate {candidate_idx} failed; falling back is still possible: {exc}"
+                )
+
+        if not results:
+            logger.warning("All SVI candidates failed; falling back to best LSQ basin.")
+            init_params = lsq_candidates[0]["init_params"]
+            diagnose_init_params(model, init_params, config)
+            return init_params, init_to_value(values=init_params)
+
+        ranked_results = self._rank_candidates(results)
+        distinct_results = _dedupe_basin_candidates(
+            ranked_results,
+            distance_threshold=self.candidate_distance_threshold,
+            params_key="init_params",
+        )
+        selected = distinct_results[0]
+        init_params = selected["init_params"]
+        init_strategy = init_to_value(values=init_params)
+
+        self._write_candidate_summary(config, ranked_results, selected)
         diagnose_init_params(model, init_params, config)
+
+        logger.info(
+            "Selected SVI candidate "
+            f"{selected['candidate_id']} with log_density={selected['score']:.4g}, "
+            f"selection_score={selected['selection_score']:.4g}, "
+            f"final_loss={selected['final_loss']:.4g}, "
+            f"loss_relative_std={selected['loss_relative_std']:.4g}, "
+            f"lsq_objective={selected['lsq_objective']:.4g}."
+        )
+
+        if self.debug_plot:
+            self.quick_plot(
+                selected["svi_result"],
+                selected["guide"],
+                model,
+                init_params,
+                config,
+                ignored={
+                    k: True
+                    for k, v in init_params.items()
+                    if k in [p.name for p in config.template.iter_shared]
+                },
+            )
+
+        return init_params, init_strategy
+
+    def _rank_candidates(self, results: list[dict]) -> list[dict]:
+        ranked = []
+        for result in results:
+            loss_relative_std = result["loss_relative_std"]
+            score = result["score"]
+            eligible = (
+                np.isfinite(score)
+                and np.isfinite(loss_relative_std)
+                and loss_relative_std <= self.max_candidate_loss_relative_std
+            )
+            result = dict(result)
+            result["selection_eligible"] = bool(eligible)
+            result["selection_rejection_reason"] = (
+                ""
+                if eligible
+                else (
+                    "loss_relative_std"
+                    if np.isfinite(score)
+                    else "nonfinite_log_density"
+                )
+            )
+            result["selection_score"] = float(score if eligible else -np.inf)
+            ranked.append(result)
+
+        if not any(result["selection_eligible"] for result in ranked):
+            logger.warning(
+                "No SVI candidates passed the loss stability threshold "
+                f"({self.max_candidate_loss_relative_std:.4g}); selecting by "
+                "log density anyway."
+            )
+            for result in ranked:
+                result["selection_score"] = result["score"]
+                result["selection_rejection_reason"] = "fallback_no_eligible_candidates"
+
+        ranked = sorted(
+            ranked,
+            key=lambda item: (
+                item["selection_score"],
+                -item["loss_relative_std"],
+                -item["lsq_objective"],
+            ),
+            reverse=True,
+        )
+        for rank, result in enumerate(ranked):
+            result["selection_rank"] = rank
+        return ranked
+
+    def _run_svi_candidate(
+        self,
+        candidate_idx: int,
+        lsq_candidate: dict,
+        svi_key,
+        sample_key,
+        config: Config,
+        model: BaseModel,
+    ) -> dict:
+        lsq_params = lsq_candidate["init_params"]
+        init_strategy = init_to_value(values=lsq_params)
 
         guide = AutoMultivariateNormal(
             model,
@@ -608,56 +900,89 @@ class SVIInitializer(BaseInitializer):
 
         if relative_std > 0.01:
             logger.warning(
-                f"SVI may not have converged! Relative std: {relative_std:.4f}"
+                f"SVI candidate {candidate_idx} may not have converged! "
+                f"Relative std: {relative_std:.4f}"
             )
         else:
-            logger.info(f"SVI converged. Final loss: {svi_result.losses[-1]:.4f}")
+            logger.info(
+                f"SVI candidate {candidate_idx} converged. "
+                f"Final loss: {svi_result.losses[-1]:.4f}"
+            )
 
-        # Draw samples from the fitted guide and take the median as the single
-        # init point. Use the single best coherent guide sample under the
-        # actual model log density rather than componentwise medians, which
-        # can land in a low-density region when parameters are correlated.
+        # Use the best coherent guide sample under the actual model log density;
+        # componentwise guide medians can land in low-density regions when
+        # parameters are correlated.
         guide_samples = guide.sample_posterior(
             sample_key,
             svi_result.params,
             sample_shape=(self.num_samples,),
         )
 
-        lsq_params = init_params
         try:
-            sample_site_names = _model_sample_site_names(model, config)
-            init_params = {
-                name: jnp.median(value, axis=0)
-                for name, value in guide_samples.items()
-                if name in sample_site_names
-            }
-            if not init_params:
-                raise ValueError("No guide sample parameters matched model sample sites.")
-            logger.info("Using SVI guide median for initialization")
+            init_params, score, best_idx = _best_guide_sample_by_log_density(
+                model,
+                guide_samples,
+                config,
+            )
+            logger.info(
+                f"SVI candidate {candidate_idx}: using guide sample {best_idx} "
+                f"with model log density {score:.4g}."
+            )
         except Exception as exc:
             logger.warning(
-                "Falling back to LSQ initialization because SVI guide median "
-                f"construction failed: {exc}"
+                f"SVI candidate {candidate_idx}: falling back to LSQ initialization "
+                f"because guide sample scoring failed: {exc}"
             )
             init_params = lsq_params
+            score = float("-inf")
 
-        init_strategy = init_to_value(values=init_params)
+        return {
+            "candidate_id": candidate_idx,
+            "init_params": init_params,
+            "score": float(score),
+            "final_loss": float(jax.device_get(svi_result.losses[-1])),
+            "loss_relative_std": float(jax.device_get(relative_std)),
+            "lsq_objective": float(lsq_candidate["objective"]),
+            "lsq_fitter": lsq_candidate["fitter"],
+            "guide": guide,
+            "svi_result": svi_result,
+        }
 
-        if self.debug_plot:
-            self.quick_plot(
-                svi_result,
-                guide,
-                model,
-                init_params,
-                config,
-                ignored={
-                    k: True
-                    for k, v in init_params.items()
-                    if k in [p.name for p in config.template.iter_shared]
-                },
-            )
+    def _write_candidate_summary(
+        self,
+        config: Config,
+        results: list[dict],
+        selected: dict,
+    ) -> None:
+        output_path = Path(config.output_path)
+        output_path.mkdir(parents=True, exist_ok=True)
+        path = output_path / "initialization_candidates.csv"
+        rows = []
+        for result in results:
+            row = {
+                "candidate_id": result["candidate_id"],
+                "selected": result["candidate_id"] == selected["candidate_id"],
+                "selection_rank": result.get("selection_rank", ""),
+                "selection_eligible": result.get("selection_eligible", ""),
+                "selection_score": result.get("selection_score", ""),
+                "selection_rejection_reason": result.get(
+                    "selection_rejection_reason", ""
+                ),
+                "log_density": result["score"],
+                "final_loss": result["final_loss"],
+                "loss_relative_std": result["loss_relative_std"],
+                "lsq_objective": result["lsq_objective"],
+                "lsq_fitter": result["lsq_fitter"],
+                "distance_to_selected": _basin_distance(
+                    result["init_params"], selected["init_params"]
+                ),
+            }
+            rows.append(row)
 
-        return init_params, init_strategy
+        with path.open("w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
 
     def quick_plot(self, svi_result, guide, model, init_params, config, ignored={}):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
@@ -727,9 +1052,8 @@ class SVIInitializer(BaseInitializer):
             mask_spec = None
             if i < len(config.template.mask):
                 mask_spec = config.template.mask[i]
-                mask = (
-                    (config.data.masked_wave > mask_spec.lower_limit)
-                    & (config.data.masked_wave < mask_spec.upper_limit)
+                mask = (config.data.masked_wave > mask_spec.lower_limit) & (
+                    config.data.masked_wave < mask_spec.upper_limit
                 )
             else:
                 mask = np.ones_like(config.data.masked_wave, dtype=bool)
