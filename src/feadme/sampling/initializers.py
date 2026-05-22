@@ -79,7 +79,94 @@ def _apply_structured_start(
         candidate[full_name] = value
 
 
-def _structured_lsq_candidates(config: Config) -> list[dict[str, float]]:
+def _candidate_key(candidate: dict[str, float]) -> tuple[tuple[str, float], ...]:
+    return tuple(sorted((k, round(float(v), 10)) for k, v in candidate.items()))
+
+
+def _dedupe_start_candidates(
+    candidates: list[dict[str, float]],
+) -> list[dict[str, float]]:
+    unique: list[dict[str, float]] = []
+    seen: set[tuple[tuple[str, float], ...]] = set()
+    for candidate in candidates:
+        key = _candidate_key(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
+def _van_der_corput(index: int, base: int) -> float:
+    value = 0.0
+    denom = 1.0
+    while index:
+        index, remainder = divmod(index, base)
+        denom *= base
+        value += remainder / denom
+    return value
+
+
+def _expanded_lsq_candidate(config: Config, index: int) -> dict[str, float]:
+    disk_profiles = list(config.template.disk_profiles)
+    line_profiles = list(config.template.line_profiles)
+    broad_profiles = [prof for prof in line_profiles if "broad" in (prof.name or "")]
+    candidate: dict[str, float] = {}
+
+    disk_fields = [
+        ("inner_radius", 2, True),
+        ("outer_radius", 3, True),
+        ("inclination", 5, False),
+        ("sigma", 7, True),
+        ("q", 11, False),
+        ("eccentricity", 13, False),
+        ("apocenter", 17, False),
+    ]
+    for prof in disk_profiles:
+        fractions = {
+            field_name: 0.08 + 0.84 * _van_der_corput(index + offset, base)
+            for field_name, base, _ in disk_fields
+            for offset in [base]
+        }
+        # Bias expanded starts toward valid extended disks instead of wasting
+        # LSQ attempts on nearly collapsed radius orderings.
+        fractions["outer_radius"] = max(
+            fractions["outer_radius"],
+            min(0.94, fractions["inner_radius"] + 0.18),
+        )
+        for field_name, _, log_space in disk_fields:
+            _apply_structured_start(
+                candidate,
+                config,
+                profile_name=prof.name,
+                field_name=field_name,
+                frac=fractions[field_name],
+                log_space=log_space,
+            )
+
+    broad_fields = [
+        ("vel_width", 19, True),
+        ("offset", 23, False),
+        ("area", 29, True),
+    ]
+    for prof in broad_profiles:
+        for field_name, base, log_space in broad_fields:
+            frac = 0.08 + 0.84 * _van_der_corput(index + base, base)
+            _apply_structured_start(
+                candidate,
+                config,
+                profile_name=prof.name,
+                field_name=field_name,
+                frac=frac,
+                log_space=log_space,
+            )
+
+    return candidate
+
+
+def _structured_lsq_candidates(
+    config: Config, target_count: int | None = None
+) -> list[dict[str, float]]:
     candidates: list[dict[str, float]] = [{}]
 
     disk_profiles = list(config.template.disk_profiles)
@@ -207,16 +294,24 @@ def _structured_lsq_candidates(config: Config) -> list[dict[str, float]]:
             for b in broad_candidates:
                 combined.append({**d, **b})
 
-    all_candidates = candidates + combined
-    unique: list[dict[str, float]] = []
-    seen: set[tuple[tuple[str, float], ...]] = set()
-    for candidate in all_candidates:
-        key = tuple(sorted((k, round(float(v), 10)) for k, v in candidate.items()))
+    unique = _dedupe_start_candidates(candidates + combined)
+    if target_count is None or len(unique) >= target_count:
+        return unique
+
+    expanded = list(unique)
+    index = 1
+    seen = {_candidate_key(candidate) for candidate in expanded}
+    while len(expanded) < target_count:
+        candidate = _expanded_lsq_candidate(config, index)
+        index += 1
+        if not candidate:
+            break
+        key = _candidate_key(candidate)
         if key in seen:
             continue
         seen.add(key)
-        unique.append(candidate)
-    return unique
+        expanded.append(candidate)
+    return expanded
 
 
 def _set_model_start_values(model, candidate: dict[str, float]) -> None:
@@ -492,7 +587,9 @@ class LSQInitializer(BaseInitializer):
                 }
             ]
 
-        candidates = _structured_lsq_candidates(config)[: self.max_candidates]
+        candidates = _structured_lsq_candidates(
+            config, target_count=max(1, int(self.max_candidates))
+        )[: self.max_candidates]
         fitters = [("trf", TRFLSQFitter())]
         if self.use_dogbox:
             fitters.append(("dogbox", DogBoxLSQFitter()))
@@ -544,7 +641,7 @@ class LSQInitializer(BaseInitializer):
         fit_candidates = sorted(fit_candidates, key=lambda item: item["objective"])
         logger.info(
             "Multi-start LSQ retained "
-            f"{len(fit_candidates)} finite basins from "
+            f"{len(fit_candidates)} finite start(s) from "
             f"{len(candidates) * len(fitters)} attempts ({failures} failed). "
             f"Best objective={fit_candidates[0]['objective']:.4g}."
         )
