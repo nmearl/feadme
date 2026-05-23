@@ -130,6 +130,11 @@ def _distribution_from_param(
             ExpTransform(),
         )
 
+    if param.distribution == Distribution.BETA:
+        if param.alpha is None or param.beta is None:
+            raise ValueError("Beta parameters require alpha and beta values.")
+        return dist.Beta(param.alpha, param.beta)
+
     raise ValueError(f"Unsupported distribution: {param.distribution}")
 
 

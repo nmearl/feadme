@@ -75,6 +75,7 @@ class Distribution(str, Enum):
     LOG_UNIFORM = "log_uniform"
     NORMAL = "normal"
     LOG_NORMAL = "log_normal"
+    BETA = "beta"
 
 
 DIST_MAP = {
@@ -82,6 +83,7 @@ DIST_MAP = {
     Distribution.LOG_UNIFORM: 1,
     Distribution.NORMAL: 2,
     Distribution.LOG_NORMAL: 3,
+    Distribution.BETA: 4,
 }
 
 
@@ -100,6 +102,8 @@ class Parameter:
     high: Optional[float] = None
     loc: Optional[float] = None
     scale: Optional[float] = None
+    alpha: Optional[float] = None
+    beta: Optional[float] = None
     circular: bool = False
 
 
