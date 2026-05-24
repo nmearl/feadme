@@ -10,6 +10,7 @@ requires-python = ">=3.13"
 dependencies = [
     "arviz[h5netcdf,matplotlib]>=1.0.0",
     "astropy>=7.2.0",
+    "blackjax>=1.5.0",
     "black>=26.1.0",
     "corner>=2.2.3",
     "dacite>=1.9.2",

@@ -13,6 +13,7 @@ import astropy.constants as const
 from .core.parser import Template, Config, Data, Mask
 from .sampling.initializers import (
     DefaultInitializer,
+    PathfinderInitializer,
     SVIInitializer,
     LSQInitializer,
 )
@@ -237,6 +238,13 @@ def cli():
     help="Sampler to use.",
 )
 @click.option(
+    "--init-method",
+    type=click.Choice(["svi", "pathfinder"], case_sensitive=False),
+    default="svi",
+    show_default=True,
+    help="Initializer basin-refinement method to use before NUTS.",
+)
+@click.option(
     "--num-warmup",
     type=int,
     default=1000,
@@ -323,12 +331,41 @@ def cli():
     show_default=True,
     help="Maximum recent-loss relative std for an SVI candidate to be eligible for selection.",
 )
+@click.option(
+    "--pathfinder-init-candidates",
+    type=int,
+    default=8,
+    show_default=True,
+    help="Number of distinct LSQ basins to refine with multipathfinder before NUTS.",
+)
+@click.option(
+    "--pathfinder-init-samples",
+    type=int,
+    default=32,
+    show_default=True,
+    help="Number of approximate posterior samples drawn per Pathfinder path.",
+)
+@click.option(
+    "--pathfinder-score-batch-size",
+    type=int,
+    default=8,
+    show_default=True,
+    help="Number of Pathfinder samples scored at once to bound initializer memory use.",
+)
+@click.option(
+    "--pathfinder-init-maxiter",
+    type=int,
+    default=30,
+    show_default=True,
+    help="Maximum L-BFGS iterations per Pathfinder path.",
+)
 def run_cmd(
     template_path: str,
     data_path: str,
     output_path: str,
     skip_existing: bool,
     sampler: str,
+    init_method: str,
     num_warmup: int,
     num_samples: int,
     num_chains: int,
@@ -342,6 +379,10 @@ def run_cmd(
     svi_init_steps: int,
     svi_init_samples: int,
     svi_init_max_loss_relative_std: float,
+    pathfinder_init_candidates: int,
+    pathfinder_init_samples: int,
+    pathfinder_score_batch_size: int,
+    pathfinder_init_maxiter: int,
     compute_prior_predictive: bool,
     progress_bar: bool,
     rebin: float | None,
@@ -373,15 +414,26 @@ def run_cmd(
         integrator=integrator_fn,
     ).setup()
     # initializer = LSQInitializer()
-    initializer = SVIInitializer(
-        debug_plot=debug_plot,
-        lsq_candidates=max(1, int(lsq_init_candidates)),
-        svi_candidates=max(1, int(svi_init_candidates)),
-        candidate_distance_threshold=init_candidate_distance_threshold,
-        max_candidate_loss_relative_std=svi_init_max_loss_relative_std,
-        num_steps=max(1, int(svi_init_steps)),
-        num_samples=max(1, int(svi_init_samples)),
-    )
+    if init_method.lower() == "pathfinder":
+        initializer = PathfinderInitializer(
+            debug_plot=debug_plot,
+            lsq_candidates=max(1, int(lsq_init_candidates)),
+            pathfinder_candidates=max(1, int(pathfinder_init_candidates)),
+            candidate_distance_threshold=init_candidate_distance_threshold,
+            num_samples=max(1, int(pathfinder_init_samples)),
+            score_batch_size=max(1, int(pathfinder_score_batch_size)),
+            maxiter=max(1, int(pathfinder_init_maxiter)),
+        )
+    else:
+        initializer = SVIInitializer(
+            debug_plot=debug_plot,
+            lsq_candidates=max(1, int(lsq_init_candidates)),
+            svi_candidates=max(1, int(svi_init_candidates)),
+            candidate_distance_threshold=init_candidate_distance_threshold,
+            max_candidate_loss_relative_std=svi_init_max_loss_relative_std,
+            num_steps=max(1, int(svi_init_steps)),
+            num_samples=max(1, int(svi_init_samples)),
+        )
 
     # model = LSQModel(config).setup()
     # sampler = LSQSampler(estimate_uncertainties=False)

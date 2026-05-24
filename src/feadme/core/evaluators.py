@@ -41,7 +41,13 @@ def compose_param_arrays(
         ]:
             disk_arrays[param_name] = jnp.stack(
                 [
-                    param_mods[f"{prof.name}_{param_name}"]
+                    (
+                        param_mods[f"{prof.name}_inner_radius"]
+                        * param_mods[f"{prof.name}_radius_ratio"]
+                        if param_name == "outer_radius"
+                        and f"{prof.name}_{param_name}" not in param_mods
+                        else param_mods[f"{prof.name}_{param_name}"]
+                    )
                     for prof in template.disk_profiles
                 ]
             )
@@ -174,44 +180,6 @@ def _compute_line_flux_vectorized(
 
     line_fluxes = jnp.where(shapes_bc, gau, lor)
     return jnp.sum(line_fluxes, axis=1)
-
-
-@jax.jit
-def _compute_line_flux_profiles_vectorized(
-    wave,
-    center,
-    offset,
-    vel_width,
-    shape,
-):
-    """
-    Return unit-area line profile basis functions for each line profile.
-
-    Output shape is (n_lines, n_wave).
-    """
-    if len(center) == 0:
-        return jnp.zeros((0, wave.shape[0]), dtype=wave.dtype)
-
-    wave_bc = wave[:, None]
-    centers_bc = center[None, :]
-    offsets_bc = offset[None, :]
-    vel_widths_bc = vel_width[None, :]
-    shapes_bc = shape[None, :]
-
-    centers_bc = centers_bc * (1.0 + offsets_bc / c_kms)
-    delta_lamb = wave_bc - centers_bc
-    sigma_lambda = vel_widths_bc / c_kms * centers_bc
-
-    amp_g = 1.0 / (jnp.sqrt(2.0 * jnp.pi) * sigma_lambda)
-    gau = amp_g * jnp.exp(-0.5 * (delta_lamb / sigma_lambda) ** 2)
-
-    fwhm_lambda = 2.35482 * sigma_lambda
-    gamma = 0.5 * fwhm_lambda
-    amp_l = 1.0 / jnp.pi
-    lor = amp_l * gamma / (delta_lamb**2 + gamma**2)
-
-    line_fluxes = jnp.where(shapes_bc, gau, lor)
-    return jnp.swapaxes(line_fluxes, 0, 1)
 
 
 @partial(jax.jit, static_argnames=["integrator", "normalization_integrator"])

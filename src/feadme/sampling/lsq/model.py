@@ -13,7 +13,7 @@ from ...core.evaluators import (
     _compute_disk_flux_vectorized,
 )
 from ...core.integrators import get_scalar_normalization_integrator, quad_jax_integrate
-from ...core.parser import Template, Shape
+from ...core.parser import Distribution, Template, Shape
 
 FLOAT_EPSILON = 1e-6
 c_kms = const.c.to(u.km / u.s).value
@@ -107,7 +107,17 @@ def _compose_model(
         in_par_fixed = {}
         in_par_tied = {}
 
+        profile_params = [
+            (param_name, param)
+            for param_name, param in (
+                prof.iter_independent + prof.iter_shared + prof.iter_fixed
+            )
+            if param_name != "radius_ratio"
+        ]
+
         for param_name, param in prof.iter_independent:
+            if param_name == "radius_ratio":
+                continue
             param_low = param.low
             param_high = param.high
 
@@ -123,10 +133,14 @@ def _compose_model(
             in_par_values[param_name] = (param_high + param_low) / 2
 
         for param_name, param in prof.iter_fixed:
+            if param_name == "radius_ratio":
+                continue
             in_par_values[param_name] = param.value
             in_par_fixed[param_name] = True
 
         for param_name, param in prof.iter_shared:
+            if param_name == "radius_ratio":
+                continue
             param_low = param.low
             param_high = param.high
 
@@ -139,6 +153,25 @@ def _compose_model(
                 m[mn], pn
             )
 
+        ratio = prof.radius_ratio
+        inner = prof.inner_radius
+        outer_low = inner.low * ratio.low
+        outer_high = inner.high * ratio.high
+        in_par_values["outer_radius"] = np.log10(inner.loc * ratio.loc)
+        if inner.shared is not None or ratio.shared is not None:
+            shared_profile = ratio.shared or inner.shared
+            in_par_tied["outer_radius"] = lambda m, mn=shared_profile: getattr(
+                m[mn], "outer_radius"
+            )
+        else:
+            in_par_bounds["outer_radius"] = (
+                np.log10(outer_low),
+                np.log10(outer_high),
+            )
+        profile_params.append(
+            ("outer_radius", ratio.replace(distribution=Distribution.LOG_UNIFORM))
+        )
+
         disk_mod = DiskProfileModel(
             center=prof.center,
             **in_par_values,
@@ -150,9 +183,7 @@ def _compose_model(
             meta={
                 "distributions": {
                     param_name: param.distribution.value
-                    for param_name, param in prof.iter_independent
-                    + prof.iter_shared
-                    + prof.iter_fixed
+                    for param_name, param in profile_params
                 },
             },
         )
@@ -257,7 +288,11 @@ class LSQModel(BaseModel):
     model: Callable = lambda *args, **kwargs: None
 
     def setup(self, *args, **kwargs):
-        model = _compose_model(self.config.template, integrator=self.integrator, redshift=self.config.template.redshift.value)
+        model = _compose_model(
+            self.config.template,
+            integrator=self.integrator,
+            redshift=self.config.template.redshift.value,
+        )
         return self.replace(config=self.config, integrator=self.integrator, model=model)
 
     def __call__(self, wave, param_mods, *args, **kwargs):

@@ -34,7 +34,9 @@ class Writable:
         raw = {
             k: v
             for k, v in raw.items()
-            if k not in self._EXCLUDE_FROM_SERIALIZATION and not k.startswith("_")
+            if k not in self._EXCLUDE_FROM_SERIALIZATION
+            and not k.startswith("_")
+            and v is not None
         }
         return tree_map(_to_serializable, raw)
 
@@ -187,7 +189,7 @@ class Disk(Profile, Writable):
     center: Optional[float] = None
     offset: Optional[Parameter] = None
     inner_radius: Optional[Parameter] = None
-    outer_radius: Optional[Parameter] = None
+    radius_ratio: Optional[Parameter] = None
     inclination: Optional[Parameter] = None
     sigma: Optional[Parameter] = None
     q: Optional[Parameter] = None
@@ -316,7 +318,6 @@ def _migrate_disk_profile_raw(raw_profile: dict[str, Any]) -> dict[str, Any]:
         )
 
     return profile
-
 
 
 @flax.struct.dataclass

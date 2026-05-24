@@ -21,7 +21,7 @@ from numpyro.infer.autoguide import (
     AutoBNAFNormal,
     AutoMultivariateNormal,
 )
-from numpyro.infer.util import log_density
+from numpyro.infer.util import initialize_model, log_density
 import numpy as np
 import astropy.constants as const
 import astropy.units as u
@@ -30,6 +30,10 @@ from .lsq.utils import format_posterior_samples
 from ..core.parser import Config
 from .base_model import BaseModel
 from .lsq.model import _compose_model
+from .numpyro.model import (
+    DISK_RADIUS_RATIO_HIGH,
+    DISK_RADIUS_RATIO_LOW,
+)
 from .utils import diagnose_init_params
 
 logger = loguru.logger.opt(colors=True)
@@ -41,9 +45,30 @@ def _resolve_bounds(
     config: Config, full_name: str
 ) -> tuple[float | None, float | None]:
     param_ref = next((p for p in config.template.iter_all if p.name == full_name), None)
-    if param_ref is None:
+    if param_ref is not None:
+        return param_ref.param.low, param_ref.param.high
+
+    if full_name.endswith("_outer_radius"):
+        profile_name = full_name.removesuffix("_outer_radius")
+        disk = next(
+            (
+                profile
+                for profile in config.template.disk_profiles
+                if profile.name == profile_name
+            ),
+            None,
+        )
+        if (
+            disk is not None
+            and disk.inner_radius is not None
+            and disk.radius_ratio is not None
+        ):
+            return (
+                disk.inner_radius.low * disk.radius_ratio.low,
+                disk.inner_radius.high * disk.radius_ratio.high,
+            )
         return None, None
-    return param_ref.param.low, param_ref.param.high
+    return None, None
 
 
 def _interp_within_bounds(
@@ -358,8 +383,37 @@ def _strip_flux_outputs(sample_dict: dict) -> dict:
     return {k: v for k, v in sample_dict.items() if not k.endswith("_flux")}
 
 
+def _add_radius_ratio_init_values(config: Config, params: dict) -> dict:
+    params = dict(params)
+    for profile in config.template.disk_profiles:
+        inner_name = f"{profile.name}_inner_radius"
+        outer_name = f"{profile.name}_outer_radius"
+        ratio_name = f"{profile.name}_radius_ratio"
+        if ratio_name in params or inner_name not in params or outer_name not in params:
+            continue
+
+        inner = max(float(params[inner_name]), 1e-30)
+        outer = max(float(params[outer_name]), inner * DISK_RADIUS_RATIO_LOW)
+        ratio = outer / inner
+        params[ratio_name] = float(
+            np.clip(
+                ratio,
+                DISK_RADIUS_RATIO_LOW + 1e-6,
+                DISK_RADIUS_RATIO_HIGH - 1e-6,
+            )
+        )
+    return params
+
+
 def _feature_param_view(params: dict) -> dict:
     view = dict(params)
+
+    for name, value in list(params.items()):
+        if name.endswith("_radius_ratio"):
+            prefix = name.removesuffix("_radius_ratio")
+            inner = params.get(f"{prefix}_inner_radius")
+            if inner is not None and f"{prefix}_outer_radius" not in view:
+                view[f"{prefix}_outer_radius"] = inner * value
 
     for name, value in list(params.items()):
         if name.endswith("_inclination_base"):
@@ -571,11 +625,13 @@ class LSQInitializer(BaseInitializer):
                 wave,
                 flux,
                 weights=safe_weights,
-                maxiter=10_000,
+                maxiter=2_000,
                 filter_non_finite=True,
             )
             obj = _weighted_objective(fit_mod, wave, flux, flux_err)
-            init_params = format_posterior_samples(fit_mod, wave, flux, flux_err)
+            init_params = _add_radius_ratio_init_values(
+                config, format_posterior_samples(fit_mod, wave, flux, flux_err)
+            )
             return [
                 {
                     "fit_model": fit_mod,
@@ -616,8 +672,9 @@ class LSQInitializer(BaseInitializer):
                     )
                     obj = _weighted_objective(trial_fit, wave, flux, flux_err)
                     if np.isfinite(obj):
-                        init_params = format_posterior_samples(
-                            trial_fit, wave, flux, flux_err
+                        init_params = _add_radius_ratio_init_values(
+                            config,
+                            format_posterior_samples(trial_fit, wave, flux, flux_err),
                         )
                         fit_candidates.append(
                             {
@@ -652,11 +709,14 @@ class LSQInitializer(BaseInitializer):
         fit_mod = fit_candidates[0]["fit_model"]
         init_params = fit_candidates[0].get("init_params")
         if init_params is None:
-            init_params = format_posterior_samples(
-                fit_mod,
-                config.data.masked_wave,
-                config.data.masked_flux,
-                config.data.masked_flux_err,
+            init_params = _add_radius_ratio_init_values(
+                config,
+                format_posterior_samples(
+                    fit_mod,
+                    config.data.masked_wave,
+                    config.data.masked_flux,
+                    config.data.masked_flux_err,
+                ),
             )
 
         init_strategy = init_to_value(values=init_params)
@@ -1201,3 +1261,280 @@ class SVIInitializer(BaseInitializer):
 
         fig.savefig(f"{config.output_path}/svi_fit.png")
         plt.close(fig)
+
+
+@flax.struct.dataclass
+class PathfinderInitializer(BaseInitializer):
+    lsq_candidates: int = 8
+    pathfinder_candidates: int = 8
+    candidate_distance_threshold: float = 0.25
+    num_samples: int = 32
+    score_batch_size: int = 8
+    maxiter: int = 30
+    maxcor: int = 10
+    maxls: int = 1000
+    gtol: float = 1e-8
+    ftol: float = 1e-5
+
+    def __call__(self, config: Config, model: BaseModel):
+        try:
+            from blackjax.vi import pathfinder
+        except ImportError as exc:
+            raise RuntimeError(
+                "Pathfinder initialization requires BlackJAX. Install BlackJAX "
+                "before using --init-method=pathfinder."
+            ) from exc
+
+        rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
+        rng_key, model_key, pathfinder_key = random.split(rng_key, 3)
+
+        lsq_initializer = LSQInitializer(
+            debug_plot=self.debug_plot,
+            use_multistart=self.lsq_candidates > 1,
+            max_candidates=max(1, int(self.lsq_candidates)),
+        )
+        lsq_candidates = lsq_initializer.fit_candidates(config, model)
+        distinct_lsq_candidates = _dedupe_basin_candidates(
+            lsq_candidates,
+            distance_threshold=self.candidate_distance_threshold,
+            params_key="init_params",
+        )
+        candidates_to_run = distinct_lsq_candidates[
+            : max(1, min(int(self.pathfinder_candidates), len(distinct_lsq_candidates)))
+        ]
+
+        logger.info(
+            "Running multipathfinder initialization from "
+            f"{len(candidates_to_run)} distinct LSQ basin(s) "
+            f"({len(lsq_candidates)} finite LSQ fit(s))."
+        )
+
+        model_kwargs = {
+            "wave": config.data.masked_wave,
+            "flux": config.data.masked_flux,
+            "flux_err": config.data.masked_flux_err,
+        }
+        initial_positions, usable_candidates, potential_fn, postprocess_fn = (
+            self._make_initial_positions(
+                model_key, candidates_to_run, model, model_kwargs
+            )
+        )
+
+        def logdensity_fn(z):
+            return -potential_fn(z)
+
+        path_keys = random.split(pathfinder_key, len(initial_positions))
+        results = []
+        for candidate_idx, (key, initial_position, candidate) in enumerate(
+            zip(path_keys, initial_positions, usable_candidates)
+        ):
+            try:
+                result = self._run_pathfinder_candidate(
+                    candidate_idx,
+                    key,
+                    initial_position,
+                    candidate,
+                    pathfinder,
+                    logdensity_fn,
+                    postprocess_fn,
+                )
+                results.append(result)
+            except Exception as exc:
+                logger.warning(f"Pathfinder candidate {candidate_idx} failed: {exc}")
+
+        if not results:
+            raise RuntimeError("All Pathfinder candidates failed.")
+
+        ranked_results = self._rank_candidates(results)
+        distinct_results = _dedupe_basin_candidates(
+            ranked_results,
+            distance_threshold=self.candidate_distance_threshold,
+            params_key="init_params",
+        )
+        selected = distinct_results[0]
+        init_params = selected["init_params"]
+
+        self._write_candidate_summary(config, ranked_results, selected)
+        diagnose_init_params(model, init_params, config)
+
+        logger.info(
+            "Selected Pathfinder candidate "
+            f"{selected['candidate_id']} with log_density={selected['score']:.4g}, "
+            f"path_max_log_density={selected['path_max_log_density']:.4g}, "
+            f"path_mean_log_density={selected['path_mean_log_density']:.4g}, "
+            f"lsq_objective={selected['lsq_objective']:.4g}."
+        )
+
+        return init_params, init_to_value(values=init_params)
+
+    def _make_initial_positions(
+        self,
+        rng_key,
+        candidates: list[dict],
+        model: BaseModel,
+        model_kwargs: dict,
+    ):
+        positions = []
+        usable_candidates = []
+        potential_fn = None
+        postprocess_fn = None
+        keys = random.split(rng_key, len(candidates))
+
+        for key, candidate in zip(keys, candidates):
+            try:
+                param_info, this_potential_fn, this_postprocess_fn, _ = (
+                    initialize_model(
+                        key,
+                        model,
+                        model_kwargs=model_kwargs,
+                        init_strategy=init_to_value(values=candidate["init_params"]),
+                    )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Skipping LSQ candidate during Pathfinder initialization "
+                    f"because unconstrained initialization failed: {exc}"
+                )
+                continue
+
+            positions.append(param_info.z)
+            usable_candidates.append(candidate)
+            potential_fn = this_potential_fn
+            postprocess_fn = this_postprocess_fn
+
+        if not positions:
+            raise RuntimeError("No LSQ candidate could initialize Pathfinder.")
+
+        return positions, usable_candidates, potential_fn, postprocess_fn
+
+    def _run_pathfinder_candidate(
+        self,
+        candidate_idx: int,
+        rng_key,
+        initial_position,
+        candidate: dict,
+        pathfinder,
+        logdensity_fn,
+        postprocess_fn,
+    ) -> dict:
+        approx_key, sample_key = random.split(rng_key)
+        state, _ = pathfinder.approximate(
+            approx_key,
+            logdensity_fn,
+            initial_position,
+            num_samples=max(1, int(self.num_samples)),
+            maxiter=max(1, int(self.maxiter)),
+            maxcor=max(1, int(self.maxcor)),
+            maxls=max(1, int(self.maxls)),
+            gtol=float(self.gtol),
+            ftol=float(self.ftol),
+        )
+        samples, _ = pathfinder.sample(
+            sample_key,
+            state,
+            num_samples=max(1, int(self.num_samples)),
+        )
+        logp = self._score_samples(logdensity_fn, samples)
+        finite = np.isfinite(logp)
+        if not np.any(finite):
+            raise RuntimeError("no finite Pathfinder sample log densities")
+
+        best_sample_idx = int(np.argmax(np.where(finite, logp, -np.inf)))
+        init_params = jax.tree.map(lambda x: x[best_sample_idx], samples)
+        init_params = postprocess_fn(init_params)
+
+        logger.info(
+            f"Pathfinder candidate {candidate_idx}: best log_density="
+            f"{logp[best_sample_idx]:.4g}, mean log_density={np.nanmean(logp[finite]):.4g}."
+        )
+
+        return {
+            "candidate_id": candidate_idx,
+            "init_params": _strip_flux_outputs(init_params),
+            "score": float(logp[best_sample_idx]),
+            "path_max_log_density": float(np.nanmax(logp)),
+            "path_mean_log_density": float(np.nanmean(logp[finite])),
+            "path_median_log_density": float(np.nanmedian(logp[finite])),
+            "path_finite_fraction": float(np.mean(finite)),
+            "best_sample_idx": best_sample_idx,
+            "lsq_objective": float(candidate["objective"]),
+            "lsq_fitter": candidate["fitter"],
+        }
+
+    def _score_samples(self, logdensity_fn, samples) -> np.ndarray:
+        sample_count = int(jax.tree.leaves(samples)[0].shape[0])
+        batch_size = max(1, int(self.score_batch_size))
+        values = []
+        for start in range(0, sample_count, batch_size):
+            stop = min(sample_count, start + batch_size)
+            batch = jax.tree.map(lambda x: x[start:stop], samples)
+            values.append(jax.device_get(jax.vmap(logdensity_fn)(batch)))
+        return np.asarray(np.concatenate(values), dtype=float)
+
+    def _rank_candidates(self, results: list[dict]) -> list[dict]:
+        ranked = []
+        for result in results:
+            result = dict(result)
+            finite = np.isfinite(result["score"])
+            result["selection_eligible"] = bool(
+                finite and result["path_finite_fraction"] > 0.0
+            )
+            result["selection_rejection_reason"] = (
+                "" if result["selection_eligible"] else "nonfinite_log_density"
+            )
+            result["selection_score"] = (
+                float(result["score"]) if result["selection_eligible"] else -np.inf
+            )
+            ranked.append(result)
+
+        ranked = sorted(
+            ranked,
+            key=lambda item: (
+                item["selection_score"],
+                item["path_mean_log_density"],
+                -item["lsq_objective"],
+            ),
+            reverse=True,
+        )
+        for rank, result in enumerate(ranked):
+            result["selection_rank"] = rank
+        return ranked
+
+    def _write_candidate_summary(
+        self,
+        config: Config,
+        results: list[dict],
+        selected: dict,
+    ) -> None:
+        output_path = Path(config.output_path)
+        output_path.mkdir(parents=True, exist_ok=True)
+        path = output_path / "initialization_candidates.csv"
+        rows = []
+        for result in results:
+            row = {
+                "candidate_id": result["candidate_id"],
+                "selected": result["candidate_id"] == selected["candidate_id"],
+                "selection_rank": result.get("selection_rank", ""),
+                "selection_eligible": result.get("selection_eligible", ""),
+                "selection_score": result.get("selection_score", ""),
+                "selection_rejection_reason": result.get(
+                    "selection_rejection_reason", ""
+                ),
+                "log_density": result["score"],
+                "path_max_log_density": result["path_max_log_density"],
+                "path_mean_log_density": result["path_mean_log_density"],
+                "path_median_log_density": result["path_median_log_density"],
+                "path_finite_fraction": result["path_finite_fraction"],
+                "best_sample_idx": result["best_sample_idx"],
+                "lsq_objective": result["lsq_objective"],
+                "lsq_fitter": result["lsq_fitter"],
+                "distance_to_selected": _basin_distance(
+                    result["init_params"], selected["init_params"]
+                ),
+            }
+            rows.append(row)
+
+        with path.open("w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)

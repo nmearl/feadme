@@ -96,16 +96,16 @@
         "value": 1000.0,
         "shared": null
       },
-      "outer_radius": {
-        "_comment": "Outer disk radius in gravitational radii R_g. log_uniform keeps the support broad while enforcing r_out > r_in through the sampler transform. Hard cap at 2e4 R_g.",
+      "radius_ratio": {
+        "_comment": "Disk radial extent r_out/r_in. outer_radius is derived deterministically as inner_radius * radius_ratio.",
         "circular": false,
-        "distribution": "log_uniform",
+        "distribution": "log_normal",
         "fixed": false,
-        "loc": 5000.0,
-        "scale": 10.0,
-        "low": 200.0,
-        "high": 20000.0,
-        "value": 5000.0,
+        "loc": 10.0,
+        "scale": 6.0,
+        "low": 2.0,
+        "high": 22.0,
+        "value": 10.0,
         "shared": null
       },
       "q": {

@@ -1,7 +1,11 @@
 import numpy as np
 
 from feadme.core.parser import Disk, Distribution, Line, Parameter, Template
-from feadme.sampling.initializers import SVIInitializer, _structured_lsq_candidates
+from feadme.sampling.initializers import (
+    SVIInitializer,
+    _add_radius_ratio_init_values,
+    _structured_lsq_candidates,
+)
 
 
 class _Config:
@@ -28,9 +32,13 @@ def _test_template():
             Disk(
                 name="halpha_disk",
                 center=6564.61,
-                offset=_param(Distribution.NORMAL, -1.0e4, 1.0e4, 0.0, 600.0, fixed=True),
-                inner_radius=_param(Distribution.LOG_UNIFORM, 100.0, 1500.0, 300.0, 50.0),
-                outer_radius=_param(Distribution.LOG_UNIFORM, 1000.0, 2.0e4, 5000.0, 1000.0),
+                offset=_param(
+                    Distribution.NORMAL, -1.0e4, 1.0e4, 0.0, 600.0, fixed=True
+                ),
+                inner_radius=_param(
+                    Distribution.LOG_UNIFORM, 100.0, 1500.0, 300.0, 50.0
+                ),
+                radius_ratio=_param(Distribution.LOG_NORMAL, 2.0, 22.0, 10.0, 6.0),
                 inclination=_param(Distribution.UNIFORM, 0.0, np.pi / 2, 0.5, 0.2),
                 sigma=_param(Distribution.LOG_UNIFORM, 100.0, 3000.0, 1000.0, 300.0),
                 q=_param(Distribution.UNIFORM, 1.0, 4.0, 2.0, 0.5),
@@ -53,7 +61,9 @@ def _test_template():
                 center=6564.61,
                 offset=_param(Distribution.NORMAL, -2.0e3, 2.0e3, 0.0, 300.0),
                 area=_param(Distribution.LOG_UNIFORM, 1.0, 50.0, 10.0, 2.0),
-                vel_width=_param(Distribution.LOG_UNIFORM, 500.0, 5000.0, 1500.0, 300.0),
+                vel_width=_param(
+                    Distribution.LOG_UNIFORM, 500.0, 5000.0, 1500.0, 300.0
+                ),
             )
         ],
         redshift=_param(Distribution.UNIFORM, 0.0, 0.2, 0.05, 0.01),
@@ -80,6 +90,18 @@ def test_structured_lsq_candidates_expand_to_requested_count():
         )
         == 48
     )
+
+
+def test_radius_ratio_init_values_are_added_from_lsq_radii():
+    template = _test_template()
+    params = {
+        "halpha_disk_inner_radius": 500.0,
+        "halpha_disk_outer_radius": 5000.0,
+    }
+
+    params = _add_radius_ratio_init_values(_Config(template), params)
+
+    assert np.isclose(params["halpha_disk_radius_ratio"], 10.0)
 
 
 def test_svi_candidate_ranking_rejects_unstable_high_density_candidate():

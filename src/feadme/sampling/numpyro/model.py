@@ -19,8 +19,10 @@ ERR = float(np.finfo(np.float32).tiny)
 EPS = 1e-6
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
-DISK_LOG10_RADIUS_RATIO_LOC = 1.2
-DISK_LOG10_RADIUS_RATIO_SCALE = 0.4
+DISK_RADIUS_RATIO_LOC = 10.0
+DISK_RADIUS_RATIO_SCALE = 6.0
+DISK_RADIUS_RATIO_LOW = 2.0
+DISK_RADIUS_RATIO_HIGH = 22.0
 
 
 def ratio_factor(name, F_num, F_den, ratio, sigma_ln=0.05, eps=1e-30):
@@ -32,24 +34,6 @@ def ratio_factor(name, F_num, F_den, ratio, sigma_ln=0.05, eps=1e-30):
     """
     log_r = jnp.log((F_num + eps) / (F_den + eps))
     numpyro.factor(name, dist.Normal(jnp.log(ratio), sigma_ln).log_prob(log_r))
-
-
-def log10_radius_ratio_factor(
-    name,
-    outer_radius,
-    inner_radius,
-    loc=DISK_LOG10_RADIUS_RATIO_LOC,
-    scale=DISK_LOG10_RADIUS_RATIO_SCALE,
-    eps=1e-30,
-):
-    """
-    Softly regularize log10(r_out / r_in) toward a broad physically extended disk.
-
-    The default loc=1.2 corresponds to r_out / r_in ~= 16.
-    The default scale=0.4 is intentionally broad for first-pass testing.
-    """
-    log10_ratio = jnp.log10((outer_radius + eps) / (inner_radius + eps))
-    numpyro.factor(name, dist.Normal(loc, scale).log_prob(log10_ratio))
 
 
 def _find_ecc_apo_pairs(
@@ -77,29 +61,6 @@ def _find_ecc_apo_pairs(
         profile_name: (ecc_by_profile[profile_name], apo_by_profile[profile_name])
         for profile_name in ecc_by_profile
         if profile_name in apo_by_profile
-    }
-
-
-def _find_radius_pairs(
-    iter_independent,
-) -> dict[str, tuple]:
-    """
-    Identify (inner_radius, outer_radius) pairs that can be handled jointly
-    with an ordering-preserving transform.
-    """
-    inner_by_profile = {}
-    outer_by_profile = {}
-
-    for param_ref in iter_independent:
-        if param_ref.field_name == "inner_radius":
-            inner_by_profile[param_ref.profile_name] = param_ref
-        elif param_ref.field_name == "outer_radius":
-            outer_by_profile[param_ref.profile_name] = param_ref
-
-    return {
-        profile_name: (inner_by_profile[profile_name], outer_by_profile[profile_name])
-        for profile_name in inner_by_profile
-        if profile_name in outer_by_profile
     }
 
 
@@ -166,28 +127,6 @@ def _inclination_distribution_from_param(
     )
 
 
-def _sample_radius_joint(inner_ref, outer_ref) -> tuple[ArrayLike, ArrayLike]:
-    """
-    Sample the disk radial extent as an ordered (inner_radius, outer_radius) pair.
-
-    inner_radius is sampled from its configured prior directly. outer_radius is
-    sampled from its configured prior truncated below at the sampled inner_radius,
-    guaranteeing outer > inner with no correction factor needed.
-    """
-    inner_prior = _distribution_from_param(
-        inner_ref.param, inner_ref.param.low, inner_ref.param.high
-    )
-    inner_radius = numpyro.sample(inner_ref.name, inner_prior)
-
-    outer_low = jnp.maximum(outer_ref.param.low, inner_radius)
-    outer_prior = _distribution_from_param(
-        outer_ref.param, outer_low, outer_ref.param.high
-    )
-    outer_radius = numpyro.sample(outer_ref.name, outer_prior)
-
-    return inner_radius, outer_radius
-
-
 def _sample_ecc_apo_joint(ecc_ref, apo_ref) -> tuple[ArrayLike, ArrayLike]:
     """
     Sample eccentricity and apocenter jointly via a Cartesian (h, k)
@@ -252,16 +191,10 @@ class NumpyroModel(BaseModel):
         # free and independent. These are sampled jointly via (h, k); all other
         # parameters use the standard per-parameter path.
         joint_pairs = _find_ecc_apo_pairs(self.config.template.iter_independent)
-        radius_pairs = _find_radius_pairs(self.config.template.iter_independent)
         jointly_handled = {
             ref.name
             for ecc_ref, apo_ref in joint_pairs.values()
             for ref in (ecc_ref, apo_ref)
-        }
-        jointly_handled |= {
-            ref.name
-            for inner_ref, ratio_ref in radius_pairs.values()
-            for ref in (inner_ref, ratio_ref)
         }
 
         # Sample jointly-handled (eccentricity, apocenter) pairs first.
@@ -269,11 +202,6 @@ class NumpyroModel(BaseModel):
             e, phi0 = _sample_ecc_apo_joint(ecc_ref, apo_ref)
             param_mods[ecc_ref.name] = e
             param_mods[apo_ref.name] = phi0
-
-        for inner_ref, ratio_ref in radius_pairs.values():
-            inner_radius, outer_radius = _sample_radius_joint(inner_ref, ratio_ref)
-            param_mods[inner_ref.name] = inner_radius
-            param_mods[ratio_ref.name] = outer_radius
 
         # Sample all remaining independent parameters via the standard path.
         for param_ref in self.config.template.iter_independent:
@@ -300,20 +228,16 @@ class NumpyroModel(BaseModel):
             )
             param_mods[param_ref.name] = param_samp
 
-        # Softly discourage collapsed ring solutions by regularizing the radial
-        # extent of each disk in log-space.
         for profile in self.config.template.disk_profiles:
             inner_name = f"{profile.name}_inner_radius"
+            ratio_name = f"{profile.name}_radius_ratio"
             outer_name = f"{profile.name}_outer_radius"
             inner_radius = param_mods.get(inner_name)
-            outer_radius = param_mods.get(outer_name)
-            if inner_radius is None or outer_radius is None:
-                continue
-            # log10_radius_ratio_factor(
-            #     f"{profile.name}_log10_radius_ratio",
-            #     outer_radius,
-            #     inner_radius,
-            # )
+            radius_ratio = param_mods.get(ratio_name)
+            if inner_radius is not None and radius_ratio is not None:
+                param_mods[outer_name] = numpyro.deterministic(
+                    outer_name, inner_radius * radius_ratio
+                )
 
         # Soft constraint: [NII] 6583/6548 ratio should be close to the
         # atomic-physics expectation, while allowing modest decomposition error.
@@ -370,9 +294,7 @@ class NumpyroModel(BaseModel):
         if "inclination" in samp_name:
             mu = numpyro.sample(
                 f"{samp_name}_base",
-                _inclination_distribution_from_param(
-                    param, lower_bound, upper_bound
-                ),
+                _inclination_distribution_from_param(param, lower_bound, upper_bound),
             )
             return numpyro.deterministic(samp_name, jnp.arccos(mu))
 
