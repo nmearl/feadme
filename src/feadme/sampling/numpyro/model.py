@@ -7,7 +7,7 @@ import numpy as np
 import numpyro
 import numpyro.distributions as dist
 from jax.typing import ArrayLike
-from numpyro.distributions.transforms import ExpTransform
+from numpyro.distributions.transforms import AffineTransform, ExpTransform
 
 from ..base_model import BaseModel
 from ...core.evaluators import (
@@ -121,8 +121,16 @@ def _inclination_distribution_from_param(
             high=mu_max,
         )
 
+    if param.distribution == Distribution.BETA:
+        if param.alpha is None or param.beta is None:
+            raise ValueError("Beta inclination priors require alpha and beta values.")
+        return dist.TransformedDistribution(
+            dist.Beta(param.alpha, param.beta),
+            AffineTransform(mu_min, mu_max - mu_min),
+        )
+
     raise ValueError(
-        "Inclination only supports uniform or normal priors in the template, "
+        "Inclination only supports uniform, normal, or beta priors in the template, "
         f"got {param.distribution}."
     )
 
