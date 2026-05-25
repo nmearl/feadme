@@ -39,6 +39,7 @@ from .utils import diagnose_init_params
 logger = loguru.logger.opt(colors=True)
 
 c_kms = const.c.to(u.km / u.s).value
+INIT_BOUNDARY_MARGIN_FRAC = 1e-2
 
 
 def _resolve_bounds(
@@ -402,6 +403,32 @@ def _add_radius_ratio_init_values(config: Config, params: dict) -> dict:
                 DISK_RADIUS_RATIO_HIGH - 1e-6,
             )
         )
+    return params
+
+
+def _move_init_params_inside_bounds(
+    config: Config,
+    params: dict,
+    *,
+    margin_frac: float = INIT_BOUNDARY_MARGIN_FRAC,
+) -> dict:
+    params = dict(params)
+    for name, value in list(params.items()):
+        low, high = _resolve_bounds(config, name)
+        if low is None or high is None:
+            continue
+        if not np.isfinite(low) or not np.isfinite(high) or not high > low:
+            continue
+        margin = margin_frac * (high - low)
+        params[name] = float(np.clip(float(value), low + margin, high - margin))
+
+    for profile in config.template.disk_profiles:
+        inner_name = f"{profile.name}_inner_radius"
+        ratio_name = f"{profile.name}_radius_ratio"
+        outer_name = f"{profile.name}_outer_radius"
+        if inner_name in params and ratio_name in params:
+            params[outer_name] = float(params[inner_name] * params[ratio_name])
+
     return params
 
 
@@ -1093,6 +1120,8 @@ class SVIInitializer(BaseInitializer):
             init_params = lsq_params
             score = float("-inf")
 
+        init_params = _move_init_params_inside_bounds(config, init_params)
+
         return {
             "candidate_id": candidate_idx,
             "init_params": init_params,
@@ -1337,6 +1366,7 @@ class PathfinderInitializer(BaseInitializer):
                     pathfinder,
                     logdensity_fn,
                     postprocess_fn,
+                    config,
                 )
                 results.append(result)
             except Exception as exc:
@@ -1416,6 +1446,7 @@ class PathfinderInitializer(BaseInitializer):
         pathfinder,
         logdensity_fn,
         postprocess_fn,
+        config: Config,
     ) -> dict:
         approx_key, sample_key = random.split(rng_key)
         state, _ = pathfinder.approximate(
@@ -1442,6 +1473,7 @@ class PathfinderInitializer(BaseInitializer):
         best_sample_idx = int(np.argmax(np.where(finite, logp, -np.inf)))
         init_params = jax.tree.map(lambda x: x[best_sample_idx], samples)
         init_params = postprocess_fn(init_params)
+        init_params = _move_init_params_inside_bounds(config, init_params)
 
         logger.info(
             f"Pathfinder candidate {candidate_idx}: best log_density="
