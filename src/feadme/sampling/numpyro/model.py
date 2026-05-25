@@ -127,6 +127,26 @@ def _inclination_distribution_from_param(
     )
 
 
+def _eccentricity_apocenter_from_raw(
+    z_h: ArrayLike,
+    z_k: ArrayLike,
+    eccentricity_low: float,
+    eccentricity_high: float,
+) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
+    raw_r = jnp.sqrt(z_h**2 + z_k**2)
+    safe_r = raw_r + 1e-12
+    unit_e = jnp.tanh(raw_r)
+    eccentricity_span = eccentricity_high - eccentricity_low
+    eccentricity = eccentricity_low + eccentricity_span * unit_e
+    apocenter = jnp.mod(jnp.arctan2(z_h, z_k), 2 * jnp.pi)
+    log_abs_det = (
+        jnp.log(eccentricity_span)
+        + jnp.log1p(-(unit_e**2))
+        - jnp.log(safe_r)
+    )
+    return eccentricity, apocenter, log_abs_det
+
+
 def _sample_ecc_apo_joint(ecc_ref, apo_ref) -> tuple[ArrayLike, ArrayLike]:
     """
     Sample eccentricity and apocenter jointly via a Cartesian (h, k)
@@ -137,15 +157,15 @@ def _sample_ecc_apo_joint(ecc_ref, apo_ref) -> tuple[ArrayLike, ArrayLike]:
 
     The geometric map is:
 
-        s    = tanh(r) / r,   where r = sqrt(z_h^2 + z_k^2)
-        h    = z_h * s
-        k    = z_k * s
-        e    = sqrt(h^2 + k^2)        -- guaranteed < 1
-        phi0 = arctan2(h, k) mod 2pi  -- uniform by symmetry
+        u    = tanh(r), where r = sqrt(z_h^2 + z_k^2)
+        e    = e_low + (e_high - e_low) * u
+        phi0 = arctan2(z_h, z_k) mod 2pi
 
     We keep the Cartesian geometry for sampling, but restore the intended
     target density by applying the configured priors on e and phi0 together
-    with the log-abs-det Jacobian of the transform.
+    with the log-abs-det Jacobian of the transform. The transform maps directly
+    into the configured eccentricity interval, so template support is enforced
+    as hard support rather than only through the prior correction factor.
     """
     base = apo_ref.name
 
@@ -153,15 +173,14 @@ def _sample_ecc_apo_joint(ecc_ref, apo_ref) -> tuple[ArrayLike, ArrayLike]:
     z_h = numpyro.sample(f"{base}_h_raw", base_dist)
     z_k = numpyro.sample(f"{base}_k_raw", base_dist)
 
-    # Squash from R^2 into the open unit disk, preserving direction.
-    r = jnp.sqrt(z_h**2 + z_k**2) + 1e-12
-    s = jnp.tanh(r) / r
-
-    h = z_h * s
-    k = z_k * s
-
-    e = numpyro.deterministic(ecc_ref.name, jnp.sqrt(h**2 + k**2))
-    phi0 = numpyro.deterministic(apo_ref.name, jnp.mod(jnp.arctan2(h, k), 2 * jnp.pi))
+    e, phi0, log_abs_det = _eccentricity_apocenter_from_raw(
+        z_h,
+        z_k,
+        ecc_ref.param.low,
+        ecc_ref.param.high,
+    )
+    e = numpyro.deterministic(ecc_ref.name, e)
+    phi0 = numpyro.deterministic(apo_ref.name, phi0)
 
     ecc_prior = _distribution_from_param(
         ecc_ref.param, ecc_ref.param.low, ecc_ref.param.high
@@ -173,9 +192,6 @@ def _sample_ecc_apo_joint(ecc_ref, apo_ref) -> tuple[ArrayLike, ArrayLike]:
     log_target = ecc_prior.log_prob(e) + apo_prior.log_prob(phi0)
     log_base = base_dist.log_prob(z_h) + base_dist.log_prob(z_k)
 
-    # In polar form z_h = r sin(phi0), z_k = r cos(phi0), and e = tanh(r).
-    # Therefore |d(e, phi0) / d(z_h, z_k)| = (1 - e^2) / r.
-    log_abs_det = jnp.log1p(-(e**2)) - jnp.log(r)
     numpyro.factor(f"{base}_prior_correction", log_target + log_abs_det - log_base)
 
     return e, phi0
