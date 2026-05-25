@@ -7,9 +7,10 @@ import numpy as np
 import numpyro
 import numpyro.distributions as dist
 from jax.typing import ArrayLike
-from numpyro.distributions.transforms import AffineTransform, ExpTransform
+from numpyro.distributions.transforms import AffineTransform
 
 from ..base_model import BaseModel
+from ...core.distributions import BoundedLogNormal
 from ...core.evaluators import (
     evaluate_model,
 )
@@ -81,15 +82,7 @@ def _distribution_from_param(
     if param.distribution == Distribution.LOG_NORMAL:
         sigma_log = jnp.log1p(param.scale / param.loc)
         mu_log = jnp.log(param.loc)
-        return dist.TransformedDistribution(
-            dist.TruncatedNormal(
-                loc=mu_log,
-                scale=sigma_log,
-                low=jnp.log(lower_bound),
-                high=jnp.log(upper_bound),
-            ),
-            ExpTransform(),
-        )
+        return BoundedLogNormal(mu_log, sigma_log, lower_bound, upper_bound)
 
     if param.distribution == Distribution.BETA:
         if param.alpha is None or param.beta is None:
