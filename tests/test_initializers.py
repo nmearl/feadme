@@ -4,8 +4,10 @@ from feadme.core.parser import Disk, Distribution, Line, Parameter, Template
 from feadme.sampling.initializers import (
     SVIInitializer,
     _add_radius_ratio_init_values,
+    _set_model_start_values,
     _structured_lsq_candidates,
 )
+from feadme.sampling.lsq.model import _compose_model
 
 
 class _Config:
@@ -22,6 +24,7 @@ def _param(distribution, low, high, loc, scale, *, fixed=False, circular=False):
         loc=loc,
         scale=scale,
         circular=circular,
+        value=loc if fixed else None,
     )
 
 
@@ -102,6 +105,24 @@ def test_radius_ratio_init_values_are_added_from_lsq_radii():
     params = _add_radius_ratio_init_values(_Config(template), params)
 
     assert np.isclose(params["halpha_disk_radius_ratio"], 10.0)
+
+
+def test_structured_start_sets_multi_word_lsq_parameters():
+    template = _test_template()
+    model = _compose_model(template, redshift=template.redshift.value)
+
+    _set_model_start_values(
+        model,
+        {
+            "halpha_disk_inner_radius": 500.0,
+            "halpha_disk_outer_radius": 5000.0,
+            "halpha_broad_vel_width": 2500.0,
+        },
+    )
+
+    assert np.isclose(model["halpha_disk"].inner_radius, np.log10(500.0))
+    assert np.isclose(model["halpha_disk"].outer_radius, np.log10(5000.0))
+    assert np.isclose(model["halpha_broad"].vel_width, np.log10(2500.0))
 
 
 def test_svi_candidate_ranking_rejects_unstable_high_density_candidate():

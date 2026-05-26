@@ -4,12 +4,13 @@ import numpy as np
 import numpyro
 from numpyro.infer import MCMC, NUTS
 
-from feadme.core.parser import Distribution, Parameter
+from feadme.core.parser import Disk, Distribution, Parameter, Template
 from feadme.sampling.numpyro.model import (
     _distribution_from_param,
     _eccentricity_apocenter_from_raw,
     _inclination_distribution_from_param,
 )
+from feadme.sampling.initializers import _basin_feature_vector
 
 
 def test_eccentricity_apocenter_transform_respects_template_bounds():
@@ -77,3 +78,47 @@ def test_log_normal_prior_enforces_declared_bounds_under_nuts():
 
     assert np.all(samples >= param.low)
     assert np.all(samples <= param.high)
+
+
+def test_basin_feature_vector_respects_eccentricity_span():
+    eccentricity = 0.7
+    apocenter = 1.2
+    low = 0.2
+    high = 0.9
+    template = Template.create(
+        name="test",
+        disk_profiles=[
+            Disk(
+                name="halpha_disk",
+                eccentricity=Parameter(
+                    distribution=Distribution.UNIFORM,
+                    low=low,
+                    high=high,
+                    loc=0.4,
+                    scale=0.1,
+                )
+            )
+        ],
+        redshift=Parameter(distribution=Distribution.UNIFORM, low=0.0, high=0.1),
+    )
+
+    class _Config:
+        def __init__(self, template):
+            self.template = template
+
+    unit_e = (eccentricity - low) / (high - low)
+    raw_r = np.arctanh(unit_e)
+    params = {
+        "halpha_disk_inner_radius": 100.0,
+        "halpha_disk_outer_radius": 1000.0,
+        "halpha_disk_inclination": 0.5,
+        "halpha_disk_apocenter_h_raw": raw_r * np.sin(apocenter),
+        "halpha_disk_apocenter_k_raw": raw_r * np.cos(apocenter),
+        "halpha_disk_sigma": 500.0,
+        "halpha_disk_q": 2.0,
+    }
+
+    features = _basin_feature_vector(params, _Config(template))
+
+    assert np.isclose(features[3], eccentricity * np.cos(apocenter))
+    assert np.isclose(features[4], eccentricity * np.sin(apocenter))
