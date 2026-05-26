@@ -5,6 +5,30 @@ from astropy.modeling.fitting import (
 )
 import numpy as np
 
+
+def _eccentricity_bounds_from_model(
+    fitted_model: CompoundModel,
+    pn: str,
+) -> tuple[float, float]:
+    prefix = pn.removesuffix("_apocenter")
+    try:
+        submodel = fitted_model[prefix]
+        bounds = submodel.bounds.get("eccentricity")
+        distribution = submodel.meta.get("distributions", {}).get("eccentricity", "")
+    except Exception:
+        return 0.0, 1.0
+
+    if bounds is None:
+        return 0.0, 1.0
+    low, high = bounds
+    if "log" in distribution:
+        low = 10**low
+        high = 10**high
+    if not np.isfinite(low) or not np.isfinite(high) or not high > low:
+        return 0.0, 1.0
+    return float(low), float(high)
+
+
 def format_posterior_samples(
     fitted_model: CompoundModel,
     wave: np.ndarray,
@@ -73,7 +97,9 @@ def format_posterior_samples(
             # so r = arctanh(e), z_h = r*sin(phi0), z_k = r*cos(phi0).
             e = init_params.get(pn.replace("apocenter", "eccentricity"))
             if e is not None:
-                r = np.arctanh(np.clip(float(e), 0.0, 0.9999))
+                e_low, e_high = _eccentricity_bounds_from_model(fitted_model, pn)
+                e_unit = (float(e) - e_low) / (e_high - e_low)
+                r = np.arctanh(np.clip(e_unit, 0.0, 0.9999))
                 init_params[f"{pn}_h_raw"] = r * np.sin(apocenter)
                 init_params[f"{pn}_k_raw"] = r * np.cos(apocenter)
 

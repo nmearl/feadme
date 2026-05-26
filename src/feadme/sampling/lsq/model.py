@@ -271,7 +271,7 @@ def _compose_model(
         and "niil_narrow" in full_model.submodel_names
     ):
         niil_sm = full_model["niil_narrow"]
-        niil_sm.area.tied = lambda m: m["niir_narrow"].area / 3.0
+        niil_sm.area.tied = lambda m: m["niir_narrow"].area / 3.05
 
     # Add distribution metadata from sub models
     full_model.meta["distributions"] = {

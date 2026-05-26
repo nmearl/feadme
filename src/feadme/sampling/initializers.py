@@ -341,24 +341,33 @@ def _structured_lsq_candidates(
 
 
 def _set_model_start_values(model, candidate: dict[str, float]) -> None:
+    submodels = {
+        getattr(submodel, "name", None): submodel
+        for submodel in model
+        if getattr(submodel, "name", None) is not None
+    }
     for full_name, value in candidate.items():
-        parts = full_name.split("_")
-        if len(parts) < 2:
-            continue
-        profile_name = "_".join(parts[:-1])
-        field_name = parts[-1]
-
-        if profile_name == "redshift":
+        if full_name == "redshift":
             try:
                 model["redshift"].z = 1.0 / (1.0 + float(value)) - 1.0
             except Exception:
                 pass
             continue
 
-        try:
-            submodel = model[profile_name]
-        except Exception:
+        match = next(
+            (
+                (profile_name, field_name, submodels[profile_name])
+                for profile_name in submodels
+                for field_name in submodels[profile_name].meta.get(
+                    "distributions", {}
+                )
+                if full_name == f"{profile_name}_{field_name}"
+            ),
+            None,
+        )
+        if match is None:
             continue
+        _, field_name, submodel = match
 
         distributions = submodel.meta.get("distributions", {})
         param_value = float(value)
@@ -432,7 +441,7 @@ def _move_init_params_inside_bounds(
     return params
 
 
-def _feature_param_view(params: dict) -> dict:
+def _feature_param_view(params: dict, config: Config | None = None) -> dict:
     view = dict(params)
 
     for name, value in list(params.items()):
@@ -458,7 +467,17 @@ def _feature_param_view(params: dict) -> dict:
             scale = jnp.tanh(radius) / radius
             h = z_h * scale
             k = z_k * scale
-            view.setdefault(f"{prefix}_eccentricity", jnp.sqrt(h**2 + k**2))
+            e_unit = jnp.sqrt(h**2 + k**2)
+            low, high = (
+                _resolve_bounds(config, f"{prefix}_eccentricity")
+                if config is not None
+                else (None, None)
+            )
+            if low is not None and high is not None:
+                eccentricity = low + (high - low) * e_unit
+            else:
+                eccentricity = e_unit
+            view.setdefault(f"{prefix}_eccentricity", eccentricity)
             view.setdefault(
                 f"{prefix}_apocenter", jnp.mod(jnp.arctan2(h, k), 2 * jnp.pi)
             )
@@ -476,8 +495,11 @@ def _feature_param_view(params: dict) -> dict:
     return view
 
 
-def _basin_feature_vector(params: dict) -> np.ndarray:
-    params = _feature_param_view(params)
+def _basin_feature_vector(
+    params: dict,
+    config: Config | None = None,
+) -> np.ndarray:
+    params = _feature_param_view(params, config)
 
     def val(name: str, default=np.nan):
         raw = params.get(name, default)
@@ -533,9 +555,13 @@ def _basin_feature_vector(params: dict) -> np.ndarray:
     return np.asarray(features, dtype=float)
 
 
-def _basin_distance(left: dict, right: dict) -> float:
-    left_features = _basin_feature_vector(left)
-    right_features = _basin_feature_vector(right)
+def _basin_distance(
+    left: dict,
+    right: dict,
+    config: Config | None = None,
+) -> float:
+    left_features = _basin_feature_vector(left, config)
+    right_features = _basin_feature_vector(right, config)
     n = min(left_features.size, right_features.size)
     if n == 0:
         return 0.0
@@ -551,12 +577,13 @@ def _dedupe_basin_candidates(
     *,
     distance_threshold: float,
     params_key: str,
+    config: Config | None = None,
 ) -> list[dict]:
     selected: list[dict] = []
     for candidate in candidates:
         params = candidate[params_key]
         if any(
-            _basin_distance(params, kept[params_key]) < distance_threshold
+            _basin_distance(params, kept[params_key], config) < distance_threshold
             for kept in selected
         ):
             continue
@@ -922,6 +949,7 @@ class SVIInitializer(BaseInitializer):
             lsq_candidates,
             distance_threshold=self.candidate_distance_threshold,
             params_key="init_params",
+            config=config,
         )
         svi_candidate_count = max(
             1, min(int(self.svi_candidates), len(distinct_lsq_candidates))
@@ -963,6 +991,7 @@ class SVIInitializer(BaseInitializer):
             ranked_results,
             distance_threshold=self.candidate_distance_threshold,
             params_key="init_params",
+            config=config,
         )
         selected = distinct_results[0]
         init_params = selected["init_params"]
@@ -1160,7 +1189,7 @@ class SVIInitializer(BaseInitializer):
                 "lsq_objective": result["lsq_objective"],
                 "lsq_fitter": result["lsq_fitter"],
                 "distance_to_selected": _basin_distance(
-                    result["init_params"], selected["init_params"]
+                    result["init_params"], selected["init_params"], config
                 ),
             }
             rows.append(row)
@@ -1327,6 +1356,7 @@ class PathfinderInitializer(BaseInitializer):
             lsq_candidates,
             distance_threshold=self.candidate_distance_threshold,
             params_key="init_params",
+            config=config,
         )
         candidates_to_run = distinct_lsq_candidates[
             : max(1, min(int(self.pathfinder_candidates), len(distinct_lsq_candidates)))
@@ -1380,6 +1410,7 @@ class PathfinderInitializer(BaseInitializer):
             ranked_results,
             distance_threshold=self.candidate_distance_threshold,
             params_key="init_params",
+            config=config,
         )
         selected = distinct_results[0]
         init_params = selected["init_params"]
@@ -1561,7 +1592,7 @@ class PathfinderInitializer(BaseInitializer):
                 "lsq_objective": result["lsq_objective"],
                 "lsq_fitter": result["lsq_fitter"],
                 "distance_to_selected": _basin_distance(
-                    result["init_params"], selected["init_params"]
+                    result["init_params"], selected["init_params"], config
                 ),
             }
             rows.append(row)
