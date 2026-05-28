@@ -20,10 +20,6 @@ ERR = float(np.finfo(np.float32).tiny)
 EPS = 1e-6
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
-DISK_RADIUS_RATIO_LOC = 10.0
-DISK_RADIUS_RATIO_SCALE = 6.0
-DISK_RADIUS_RATIO_LOW = 2.0
-DISK_RADIUS_RATIO_HIGH = 22.0
 
 
 def ratio_factor(name, F_num, F_den, ratio, sigma_ln=0.05, eps=1e-30):
@@ -35,34 +31,6 @@ def ratio_factor(name, F_num, F_den, ratio, sigma_ln=0.05, eps=1e-30):
     """
     log_r = jnp.log((F_num + eps) / (F_den + eps))
     numpyro.factor(name, dist.Normal(jnp.log(ratio), sigma_ln).log_prob(log_r))
-
-
-def _find_ecc_apo_pairs(
-    iter_independent,
-) -> dict[str, tuple]:
-    """
-    Pre-pass over independent parameters to identify (eccentricity, apocenter)
-    pairs that should be sampled jointly via the (h, k) reparameterization.
-
-    Returns a dict keyed by profile_name mapping to (ecc_ref, apo_ref) tuples.
-    Only profiles where *both* eccentricity and apocenter are free and independent
-    are included. Profiles where either is fixed or shared are excluded, and those
-    parameters fall through to standard sampling.
-    """
-    ecc_by_profile = {}
-    apo_by_profile = {}
-
-    for param_ref in iter_independent:
-        if param_ref.field_name == "eccentricity":
-            ecc_by_profile[param_ref.profile_name] = param_ref
-        elif param_ref.field_name == "apocenter":
-            apo_by_profile[param_ref.profile_name] = param_ref
-
-    return {
-        profile_name: (ecc_by_profile[profile_name], apo_by_profile[profile_name])
-        for profile_name in ecc_by_profile
-        if profile_name in apo_by_profile
-    }
 
 
 def _distribution_from_param(
@@ -128,103 +96,13 @@ def _inclination_distribution_from_param(
     )
 
 
-def _eccentricity_apocenter_from_raw(
-    z_h: ArrayLike,
-    z_k: ArrayLike,
-    eccentricity_low: float,
-    eccentricity_high: float,
-) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
-    raw_r = jnp.sqrt(z_h**2 + z_k**2)
-    safe_r = raw_r + 1e-12
-    unit_e = jnp.tanh(raw_r)
-    eccentricity_span = eccentricity_high - eccentricity_low
-    eccentricity = eccentricity_low + eccentricity_span * unit_e
-    apocenter = jnp.mod(jnp.arctan2(z_h, z_k), 2 * jnp.pi)
-    log_abs_det = (
-        jnp.log(eccentricity_span)
-        + jnp.log1p(-(unit_e**2))
-        - jnp.log(safe_r)
-    )
-    return eccentricity, apocenter, log_abs_det
-
-
-def _sample_ecc_apo_joint(ecc_ref, apo_ref) -> tuple[ArrayLike, ArrayLike]:
-    """
-    Sample eccentricity and apocenter jointly via a Cartesian (h, k)
-    reparameterization.
-
-    Sample base raws in Cartesian coordinates, then correct back to the
-    template priors on (eccentricity, apocenter) with an explicit factor.
-
-    The geometric map is:
-
-        u    = tanh(r), where r = sqrt(z_h^2 + z_k^2)
-        e    = e_low + (e_high - e_low) * u
-        phi0 = arctan2(z_h, z_k) mod 2pi
-
-    We keep the Cartesian geometry for sampling, but restore the intended
-    target density by applying the configured priors on e and phi0 together
-    with the log-abs-det Jacobian of the transform. The transform maps directly
-    into the configured eccentricity interval, so template support is enforced
-    as hard support rather than only through the prior correction factor.
-    """
-    base = apo_ref.name
-
-    base_dist = dist.Normal(0.0, 1.0)
-    z_h = numpyro.sample(f"{base}_h_raw", base_dist)
-    z_k = numpyro.sample(f"{base}_k_raw", base_dist)
-
-    e, phi0, log_abs_det = _eccentricity_apocenter_from_raw(
-        z_h,
-        z_k,
-        ecc_ref.param.low,
-        ecc_ref.param.high,
-    )
-    e = numpyro.deterministic(ecc_ref.name, e)
-    phi0 = numpyro.deterministic(apo_ref.name, phi0)
-
-    ecc_prior = _distribution_from_param(
-        ecc_ref.param, ecc_ref.param.low, ecc_ref.param.high
-    )
-    apo_prior = _distribution_from_param(
-        apo_ref.param, apo_ref.param.low, apo_ref.param.high
-    )
-
-    log_target = ecc_prior.log_prob(e) + apo_prior.log_prob(phi0)
-    log_base = base_dist.log_prob(z_h) + base_dist.log_prob(z_k)
-
-    numpyro.factor(f"{base}_prior_correction", log_target + log_abs_det - log_base)
-
-    return e, phi0
-
-
 @flax.struct.dataclass
 class NumpyroModel(BaseModel):
     def __call__(self, wave, flux_err, flux=None):
         # Dictionary to store all sampled parameters
         param_mods = {}
 
-        # Pre-pass: identify profiles where both eccentricity and apocenter are
-        # free and independent. These are sampled jointly via (h, k); all other
-        # parameters use the standard per-parameter path.
-        joint_pairs = _find_ecc_apo_pairs(self.config.template.iter_independent)
-        jointly_handled = {
-            ref.name
-            for ecc_ref, apo_ref in joint_pairs.values()
-            for ref in (ecc_ref, apo_ref)
-        }
-
-        # Sample jointly-handled (eccentricity, apocenter) pairs first.
-        for ecc_ref, apo_ref in joint_pairs.values():
-            e, phi0 = _sample_ecc_apo_joint(ecc_ref, apo_ref)
-            param_mods[ecc_ref.name] = e
-            param_mods[apo_ref.name] = phi0
-
-        # Sample all remaining independent parameters via the standard path.
         for param_ref in self.config.template.iter_independent:
-            if param_ref.name in jointly_handled:
-                continue
-
             param_samp = self.sample_param(
                 param_ref.name,
                 param_ref.param,

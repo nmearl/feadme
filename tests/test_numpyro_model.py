@@ -7,27 +7,9 @@ from numpyro.infer import MCMC, NUTS
 from feadme.core.parser import Disk, Distribution, Parameter, Template
 from feadme.sampling.numpyro.model import (
     _distribution_from_param,
-    _eccentricity_apocenter_from_raw,
     _inclination_distribution_from_param,
 )
 from feadme.sampling.initializers import _basin_feature_vector
-
-
-def test_eccentricity_apocenter_transform_respects_template_bounds():
-    z_h = jnp.array([0.0, 1.0, 10.0, -2.0])
-    z_k = jnp.array([0.0, 1.0, 0.0, 3.0])
-    low = 0.1
-    high = 0.95
-
-    eccentricity, apocenter, log_abs_det = _eccentricity_apocenter_from_raw(
-        z_h, z_k, low, high
-    )
-
-    assert np.all(np.asarray(eccentricity) >= low)
-    assert np.all(np.asarray(eccentricity) < high)
-    assert np.all(np.asarray(apocenter) >= 0.0)
-    assert np.all(np.asarray(apocenter) < 2.0 * np.pi)
-    assert np.all(np.isfinite(np.asarray(log_abs_det)))
 
 
 def test_beta_inclination_prior_is_mapped_to_cosine_interval():
@@ -106,14 +88,12 @@ def test_basin_feature_vector_respects_eccentricity_span():
         def __init__(self, template):
             self.template = template
 
-    unit_e = (eccentricity - low) / (high - low)
-    raw_r = np.arctanh(unit_e)
     params = {
         "halpha_disk_inner_radius": 100.0,
         "halpha_disk_outer_radius": 1000.0,
         "halpha_disk_inclination": 0.5,
-        "halpha_disk_apocenter_h_raw": raw_r * np.sin(apocenter),
-        "halpha_disk_apocenter_k_raw": raw_r * np.cos(apocenter),
+        "halpha_disk_eccentricity": eccentricity,
+        "halpha_disk_apocenter": apocenter,
         "halpha_disk_sigma": 500.0,
         "halpha_disk_q": 2.0,
     }

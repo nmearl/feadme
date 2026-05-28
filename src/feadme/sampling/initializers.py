@@ -30,16 +30,14 @@ from .lsq.utils import format_posterior_samples
 from ..core.parser import Config
 from .base_model import BaseModel
 from .lsq.model import _compose_model
-from .numpyro.model import (
-    DISK_RADIUS_RATIO_HIGH,
-    DISK_RADIUS_RATIO_LOW,
-)
 from .utils import diagnose_init_params
 
 logger = loguru.logger.opt(colors=True)
 
 c_kms = const.c.to(u.km / u.s).value
 INIT_BOUNDARY_MARGIN_FRAC = 1e-2
+DISK_RADIUS_RATIO_LOW = 2.0
+DISK_RADIUS_RATIO_HIGH = 22.0
 
 
 def _resolve_bounds(
@@ -456,31 +454,6 @@ def _feature_param_view(params: dict, config: Config | None = None) -> dict:
             prefix = name.removesuffix("_inclination_base")
             if f"{prefix}_inclination" not in view:
                 view[f"{prefix}_inclination"] = jnp.arccos(value)
-
-        if name.endswith("_apocenter_h_raw"):
-            prefix = name.removesuffix("_apocenter_h_raw")
-            z_h = params.get(name)
-            z_k = params.get(f"{prefix}_apocenter_k_raw")
-            if z_h is None or z_k is None:
-                continue
-            radius = jnp.sqrt(z_h**2 + z_k**2) + 1e-12
-            scale = jnp.tanh(radius) / radius
-            h = z_h * scale
-            k = z_k * scale
-            e_unit = jnp.sqrt(h**2 + k**2)
-            low, high = (
-                _resolve_bounds(config, f"{prefix}_eccentricity")
-                if config is not None
-                else (None, None)
-            )
-            if low is not None and high is not None:
-                eccentricity = low + (high - low) * e_unit
-            else:
-                eccentricity = e_unit
-            view.setdefault(f"{prefix}_eccentricity", eccentricity)
-            view.setdefault(
-                f"{prefix}_apocenter", jnp.mod(jnp.arctan2(h, k), 2 * jnp.pi)
-            )
 
         if name.endswith("_apocenter_x_base"):
             prefix = name.removesuffix("_apocenter_x_base")
@@ -1597,7 +1570,12 @@ class PathfinderInitializer(BaseInitializer):
             }
             rows.append(row)
 
-        with path.open("w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=list(rows[0]))
-            writer.writeheader()
-            writer.writerows(rows)
+        try:
+            with path.open("w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+                writer.writeheader()
+                writer.writerows(rows)
+        except OSError as exc:
+            logger.warning(
+                f"Could not write initialization candidate summary to {path}: {exc}"
+            )
