@@ -400,14 +400,23 @@ def _add_radius_ratio_init_values(config: Config, params: dict) -> dict:
         if ratio_name in params or inner_name not in params or outer_name not in params:
             continue
 
+        ratio_low, ratio_high = _resolve_bounds(config, ratio_name)
+        if ratio_low is None or ratio_high is None:
+            ratio_low = DISK_RADIUS_RATIO_LOW
+            ratio_high = DISK_RADIUS_RATIO_HIGH
+        if not np.isfinite(ratio_low) or not np.isfinite(ratio_high) or ratio_high <= ratio_low:
+            ratio_low = DISK_RADIUS_RATIO_LOW
+            ratio_high = DISK_RADIUS_RATIO_HIGH
+
         inner = max(float(params[inner_name]), 1e-30)
-        outer = max(float(params[outer_name]), inner * DISK_RADIUS_RATIO_LOW)
+        outer = max(float(params[outer_name]), inner * ratio_low)
         ratio = outer / inner
+        margin = INIT_BOUNDARY_MARGIN_FRAC * (ratio_high - ratio_low)
         params[ratio_name] = float(
             np.clip(
                 ratio,
-                DISK_RADIUS_RATIO_LOW + 1e-6,
-                DISK_RADIUS_RATIO_HIGH - 1e-6,
+                ratio_low + margin,
+                ratio_high - margin,
             )
         )
     return params

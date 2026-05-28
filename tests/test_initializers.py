@@ -28,7 +28,7 @@ def _param(distribution, low, high, loc, scale, *, fixed=False, circular=False):
     )
 
 
-def _test_template():
+def _test_template(radius_ratio_high=22.0):
     return Template.create(
         name="test_template",
         disk_profiles=[
@@ -41,7 +41,13 @@ def _test_template():
                 inner_radius=_param(
                     Distribution.LOG_UNIFORM, 100.0, 1500.0, 300.0, 50.0
                 ),
-                radius_ratio=_param(Distribution.LOG_NORMAL, 2.0, 22.0, 10.0, 6.0),
+                radius_ratio=_param(
+                    Distribution.LOG_NORMAL,
+                    2.0,
+                    radius_ratio_high,
+                    10.0,
+                    6.0,
+                ),
                 inclination=_param(Distribution.UNIFORM, 0.0, np.pi / 2, 0.5, 0.2),
                 sigma=_param(Distribution.LOG_UNIFORM, 100.0, 3000.0, 1000.0, 300.0),
                 q=_param(Distribution.UNIFORM, 1.0, 4.0, 2.0, 0.5),
@@ -105,6 +111,19 @@ def test_radius_ratio_init_values_are_added_from_lsq_radii():
     params = _add_radius_ratio_init_values(_Config(template), params)
 
     assert np.isclose(params["halpha_disk_radius_ratio"], 10.0)
+
+
+def test_radius_ratio_init_values_respect_template_bounds():
+    template = _test_template(radius_ratio_high=12.0)
+    params = {
+        "halpha_disk_inner_radius": 500.0,
+        "halpha_disk_outer_radius": 20000.0,
+    }
+
+    params = _add_radius_ratio_init_values(_Config(template), params)
+
+    assert params["halpha_disk_radius_ratio"] < 12.0
+    assert params["halpha_disk_radius_ratio"] > template.disk_profiles[0].radius_ratio.low
 
 
 def test_structured_start_sets_multi_word_lsq_parameters():
