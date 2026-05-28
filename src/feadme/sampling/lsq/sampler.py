@@ -24,7 +24,7 @@ def _bootstrap_worker(
     wave: np.ndarray,
     best_fit_flux: np.ndarray,
     residuals: np.ndarray,
-    flux_err: np.ndarray,
+    weights: np.ndarray,
     maxiter: int,
     seed: int,
 ) -> tuple[int, np.ndarray]:
@@ -43,8 +43,8 @@ def _bootstrap_worker(
         Best-fit flux values
     residuals : np.ndarray
         Residuals from best fit
-    flux_err : np.ndarray
-        Flux errors
+    weights : np.ndarray
+        Per-pixel fit weights
     maxiter : int
         Maximum iterations for fitter
     seed : int
@@ -59,10 +59,13 @@ def _bootstrap_worker(
     np.random.seed(seed)
 
     n_data = len(wave)
+    valid_indices = np.flatnonzero(np.asarray(weights) > 0.0)
+    if valid_indices.size == 0:
+        return i, None
 
     try:
         # Residual bootstrap: resample residuals, add to fitted values
-        boot_indices = np.random.choice(n_data, size=n_data, replace=True)
+        boot_indices = np.random.choice(valid_indices, size=n_data, replace=True)
         boot_flux = best_fit_flux + residuals[boot_indices]
 
         # Refit the model to bootstrap sample
@@ -72,7 +75,7 @@ def _bootstrap_worker(
             wave,
             boot_flux,
             maxiter=maxiter,
-            weights=1 / flux_err,
+            weights=weights,
             filter_non_finite=True,
         )
 
@@ -96,6 +99,11 @@ class LSQSampler(BaseSampler):
         wave = config.data.masked_wave
         flux = config.data.masked_flux
         flux_err = config.data.masked_flux_err
+        weights = np.where(
+            np.isfinite(flux_err) & (flux_err > 0),
+            1 / flux_err,
+            0.0,
+        )
 
         # First, fit the model to get the best-fit parameters
         fitter = TRFLSQFitter(calc_uncertainties=False)
@@ -105,7 +113,7 @@ class LSQSampler(BaseSampler):
             wave,
             flux,
             maxiter=self.maxiter,
-            weights=1 / flux_err,
+            weights=weights,
             filter_non_finite=True,
         )
 
@@ -114,7 +122,7 @@ class LSQSampler(BaseSampler):
                 f"Running bootstrap with {self.n_bootstrap} samples using {self._get_n_workers()} workers..."
             )
             posterior_samples_array = self._bootstrap_sampling(
-                model, wave, flux, flux_err, fit_mod
+                model, wave, flux, weights, fit_mod
             )
         else:
             # Just use the point estimate
@@ -127,7 +135,7 @@ class LSQSampler(BaseSampler):
 
         # Construct posterior predictive samples
         posterior_predictive_samples = self._construct_posterior_predictive(
-            config, fit_mod, wave, posterior_samples_array
+            config, fit_mod, config.data.masked_wave, posterior_samples_array
         )
 
         return self._compose_inference_data(
@@ -147,7 +155,7 @@ class LSQSampler(BaseSampler):
         model: LSQModel,
         wave: np.ndarray,
         flux: np.ndarray,
-        flux_err: np.ndarray,
+        weights: np.ndarray,
         fit_mod,
     ) -> np.ndarray:
         """
@@ -179,7 +187,7 @@ class LSQSampler(BaseSampler):
                     wave,
                     best_fit_flux,
                     residuals,
-                    flux_err,
+                    weights,
                     self.maxiter,
                     base_seed + i,
                 ): i
