@@ -22,6 +22,46 @@ c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
 
+def _find_ecc_apo_pairs(iter_independent):
+    """Return {profile_name: (ecc_ref, apo_ref)} for profiles with both parameters."""
+    ecc_by_profile = {}
+    apo_by_profile = {}
+    for param_ref in iter_independent:
+        if param_ref.field_name == "eccentricity":
+            ecc_by_profile[param_ref.profile_name] = param_ref
+        elif param_ref.field_name == "apocenter":
+            apo_by_profile[param_ref.profile_name] = param_ref
+    return {
+        pname: (ecc_by_profile[pname], apo_by_profile[pname])
+        for pname in ecc_by_profile
+        if pname in apo_by_profile
+    }
+
+
+def _sample_ecc_apo_hk(ecc_ref, apo_ref):
+    """
+    Non-Jacobian (h, k) reparameterization for eccentricity + apocenter.
+
+    h, k ~ Normal(0, σ) with no factor correction.  The prior on (e, φ₀) is
+    induced implicitly: e follows a Rayleigh-derived distribution bounded by
+    [e_low, e_high] via tanh; φ₀ is uniform on [0, 2π].  σ is chosen so the
+    Rayleigh mode lands at the template's eccentricity loc.
+    """
+    e_low = ecc_ref.param.low
+    e_high = ecc_ref.param.high
+    e_span = e_high - e_low
+    e_loc = ecc_ref.param.loc if ecc_ref.param.loc is not None else e_low + 0.5 * e_span
+    sigma_hk = float(np.arctanh(np.clip((e_loc - e_low) / e_span, 0.01, 0.99)))
+
+    h = numpyro.sample(f"{apo_ref.name}_h", dist.Normal(0.0, sigma_hk))
+    k = numpyro.sample(f"{apo_ref.name}_k", dist.Normal(0.0, sigma_hk))
+
+    r = jnp.sqrt(h ** 2 + k ** 2)
+    e = numpyro.deterministic(ecc_ref.name, e_low + e_span * jnp.tanh(r))
+    phi0 = numpyro.deterministic(apo_ref.name, jnp.mod(jnp.arctan2(k, h), 2 * jnp.pi))
+    return e, phi0
+
+
 def ratio_factor(name, F_num, F_den, ratio, sigma_ln=0.05, eps=1e-30):
     """
     Softly constrain F_num / F_den ~= ratio via a Normal penalty in log-space.
@@ -102,7 +142,19 @@ class NumpyroModel(BaseModel):
         # Dictionary to store all sampled parameters
         param_mods = {}
 
+        # Sample eccentricity/apocenter pairs jointly via the (h, k) reparameterization
+        ecc_apo_pairs = _find_ecc_apo_pairs(self.config.template.iter_independent)
+        jointly_handled = set()
+        for profile_name, (ecc_ref, apo_ref) in ecc_apo_pairs.items():
+            e, phi0 = _sample_ecc_apo_hk(ecc_ref, apo_ref)
+            param_mods[ecc_ref.name] = e
+            param_mods[apo_ref.name] = phi0
+            jointly_handled.add(ecc_ref.name)
+            jointly_handled.add(apo_ref.name)
+
         for param_ref in self.config.template.iter_independent:
+            if param_ref.name in jointly_handled:
+                continue
             param_samp = self.sample_param(
                 param_ref.name,
                 param_ref.param,

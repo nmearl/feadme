@@ -66,9 +66,19 @@ def format_posterior_samples(
             init_params[f"{pn}_base"] = np.cos(inclination)
 
         elif "apocenter" in pn:
-            apocenter = init_params[pn]
-            init_params[f"{pn}_x_base"] = np.cos(apocenter)
-            init_params[f"{pn}_y_base"] = np.sin(apocenter)
+            apocenter = float(init_params[pn])
+            ecc_name = pn.replace("apocenter", "eccentricity")
+            e = init_params.get(ecc_name)
+            lo_hi = mod_bounds.get(ecc_name, (None, None))
+            lo, hi = lo_hi if lo_hi else (None, None)
+            if e is not None and lo is not None and hi is not None:
+                e_span = hi - lo
+                r = float(np.arctanh(np.clip((float(e) - lo) / e_span, 0.0, 0.9999)))
+                init_params[f"{pn}_h"] = r * np.cos(apocenter)
+                init_params[f"{pn}_k"] = r * np.sin(apocenter)
+            else:
+                init_params[f"{pn}_h"] = np.cos(apocenter)
+                init_params[f"{pn}_k"] = np.sin(apocenter)
 
     init_params = {k: v.item() if hasattr(v, "item") else v for k, v in init_params.items()}
 

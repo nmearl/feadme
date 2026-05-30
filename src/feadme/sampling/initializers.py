@@ -474,6 +474,26 @@ def _feature_param_view(params: dict, config: Config | None = None) -> dict:
                 f"{prefix}_apocenter", jnp.mod(jnp.arctan2(y, x), 2 * jnp.pi)
             )
 
+        if name.endswith("_apocenter_h"):
+            prefix = name.removesuffix("_apocenter_h")
+            h = params.get(name)
+            k = params.get(f"{prefix}_apocenter_k")
+            if h is None or k is None:
+                continue
+            r = jnp.sqrt(h ** 2 + k ** 2)
+            view.setdefault(f"{prefix}_apocenter", jnp.mod(jnp.arctan2(k, h), 2 * jnp.pi))
+            if f"{prefix}_eccentricity" not in view:
+                e_low, e_high = None, None
+                if config is not None:
+                    for param_ref in config.template.iter_independent:
+                        if param_ref.name == f"{prefix}_eccentricity":
+                            e_low, e_high = param_ref.param.low, param_ref.param.high
+                            break
+                if e_low is not None and e_high is not None:
+                    view[f"{prefix}_eccentricity"] = e_low + (e_high - e_low) * jnp.tanh(r)
+                else:
+                    view[f"{prefix}_eccentricity"] = jnp.tanh(r)
+
     return view
 
 
