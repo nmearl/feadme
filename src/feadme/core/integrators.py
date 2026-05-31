@@ -15,8 +15,8 @@ ERR = 1e-5
 c_cgs = const.c.cgs.value
 c_kms = const.c.to(u.km / u.s).value
 
-CC_RES_XI = 16
-CC_RES_PHI = 192
+CC_RES_XI = 32
+CC_RES_PHI = 128
 GK_RES = 61
 
 fixed_quad_xi = ClenshawCurtisRule(order=CC_RES_XI).integrate
@@ -24,7 +24,7 @@ fixed_quad_phi = ClenshawCurtisRule(order=CC_RES_PHI).integrate
 # fixed_quad_xi = GaussKronrodRule(order=GK_RES).integrate
 # fixed_quad_phi = GaussKronrodRule(order=GK_RES).integrate
 
-N_xi, N_phi = 32, 128
+N_xi, N_phi = 32, 256
 
 LN10 = jnp.log(10.0)
 

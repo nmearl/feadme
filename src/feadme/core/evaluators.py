@@ -10,7 +10,7 @@ from jax.typing import ArrayLike
 
 from .integrators import (
     get_scalar_normalization_integrator,
-    quad_jax_integrate,
+    mixed_jax_integrate,
 )
 from .parser import Template, Shape
 
@@ -88,7 +88,7 @@ def evaluate_model(
     wave: ArrayLike,
     param_mods: Dict[str, float],
     redshift: float,
-    integrator: Callable = quad_jax_integrate,
+    integrator: Callable = mixed_jax_integrate,
 ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
     disk_arrays, line_arrays = compose_param_arrays(template, param_mods, redshift)
     normalization_integrator = get_scalar_normalization_integrator(integrator)
