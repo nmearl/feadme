@@ -422,6 +422,79 @@ def _add_radius_ratio_init_values(config: Config, params: dict) -> dict:
     return params
 
 
+def _default_param_value(param) -> float:
+    if param.value is not None:
+        return float(param.value)
+    if param.loc is not None:
+        return float(param.loc)
+    if param.low is not None and param.high is not None:
+        if (
+            param.low > 0
+            and param.high > 0
+            and "log" in param.distribution.value
+        ):
+            return float(np.sqrt(param.low * param.high))
+        return float(0.5 * (param.low + param.high))
+    return 0.0
+
+
+def _structured_start_to_init_params(config: Config, candidate: dict[str, float]) -> dict:
+    params = {
+        param_ref.name: _default_param_value(param_ref.param)
+        for param_ref in config.template.iter_independent
+    }
+    params["redshift"] = _default_param_value(config.template.redshift)
+    params.update({name: float(value) for name, value in candidate.items()})
+    params = _add_radius_ratio_init_values(config, params)
+    params = _move_init_params_inside_bounds(config, params)
+
+    for param_ref in config.template.iter_independent:
+        name = param_ref.name
+        if name not in params:
+            continue
+
+        if param_ref.field_name == "inclination":
+            params[f"{name}_base"] = float(np.cos(params[name]))
+
+        elif param_ref.field_name == "apocenter":
+            apo = float(params[name])
+            ecc_name = f"{param_ref.profile_name}_eccentricity"
+            ecc = params.get(ecc_name)
+            if ecc is None:
+                params[f"{name}_x_base"] = float(np.cos(apo))
+                params[f"{name}_y_base"] = float(np.sin(apo))
+                continue
+
+            low, high = _resolve_bounds(config, ecc_name)
+            if low is None or high is None or high <= low:
+                r = 1.0
+            else:
+                unit_e = np.clip((float(ecc) - low) / (high - low), 0.0, 0.9999)
+                r = float(np.arctanh(unit_e))
+            params[f"{name}_h"] = float(r * np.cos(apo))
+            params[f"{name}_k"] = float(r * np.sin(apo))
+
+    return _strip_flux_outputs(params)
+
+
+def _structured_pathfinder_candidates(config: Config, count: int) -> list[dict]:
+    starts = _structured_lsq_candidates(config, target_count=max(1, int(count)))[:count]
+    candidates = []
+    for start in starts:
+        init_params = _structured_start_to_init_params(config, start)
+        candidates.append(
+            {
+                "fit_model": None,
+                "objective": np.nan,
+                "fitter": "structured",
+                "start_candidate": start,
+                "init_params": init_params,
+                "failed": False,
+            }
+        )
+    return candidates
+
+
 def _move_init_params_inside_bounds(
     config: Config,
     params: dict,
@@ -1327,6 +1400,7 @@ class SVIInitializer(BaseInitializer):
 class PathfinderInitializer(BaseInitializer):
     lsq_candidates: int = 8
     pathfinder_candidates: int = 8
+    start_method: str = "lsq"
     candidate_distance_threshold: float = 0.25
     num_samples: int = 32
     score_batch_size: int = 8
@@ -1348,26 +1422,42 @@ class PathfinderInitializer(BaseInitializer):
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, model_key, pathfinder_key = random.split(rng_key, 3)
 
-        lsq_initializer = LSQInitializer(
-            debug_plot=self.debug_plot,
-            use_multistart=self.lsq_candidates > 1,
-            max_candidates=max(1, int(self.lsq_candidates)),
-        )
-        lsq_candidates = lsq_initializer.fit_candidates(config, model)
-        distinct_lsq_candidates = _dedupe_basin_candidates(
-            lsq_candidates,
+        start_method = self.start_method.lower()
+        if start_method == "structured":
+            start_candidates = _structured_pathfinder_candidates(
+                config, max(1, int(self.lsq_candidates))
+            )
+            start_label = "structured start"
+            source_label = "structured start(s)"
+        elif start_method == "lsq":
+            lsq_initializer = LSQInitializer(
+                debug_plot=self.debug_plot,
+                use_multistart=self.lsq_candidates > 1,
+                max_candidates=max(1, int(self.lsq_candidates)),
+            )
+            start_candidates = lsq_initializer.fit_candidates(config, model)
+            start_label = "LSQ basin"
+            source_label = "finite LSQ fit(s)"
+        else:
+            raise ValueError(
+                "Pathfinder start_method must be 'lsq' or 'structured', "
+                f"got {self.start_method!r}."
+            )
+
+        distinct_start_candidates = _dedupe_basin_candidates(
+            start_candidates,
             distance_threshold=self.candidate_distance_threshold,
             params_key="init_params",
             config=config,
         )
-        candidates_to_run = distinct_lsq_candidates[
-            : max(1, min(int(self.pathfinder_candidates), len(distinct_lsq_candidates)))
+        candidates_to_run = distinct_start_candidates[
+            : max(1, min(int(self.pathfinder_candidates), len(distinct_start_candidates)))
         ]
 
         logger.info(
             "Running multipathfinder initialization from "
-            f"{len(candidates_to_run)} distinct LSQ basin(s) "
-            f"({len(lsq_candidates)} finite LSQ fit(s))."
+            f"{len(candidates_to_run)} distinct {start_label}(s) "
+            f"({len(start_candidates)} {source_label})."
         )
 
         model_kwargs = {
@@ -1455,7 +1545,7 @@ class PathfinderInitializer(BaseInitializer):
                 )
             except Exception as exc:
                 logger.warning(
-                    "Skipping LSQ candidate during Pathfinder initialization "
+                    "Skipping Pathfinder start candidate "
                     f"because unconstrained initialization failed: {exc}"
                 )
                 continue
@@ -1466,7 +1556,7 @@ class PathfinderInitializer(BaseInitializer):
             postprocess_fn = this_postprocess_fn
 
         if not positions:
-            raise RuntimeError("No LSQ candidate could initialize Pathfinder.")
+            raise RuntimeError("No start candidate could initialize Pathfinder.")
 
         return positions, usable_candidates, potential_fn, postprocess_fn
 
@@ -1557,7 +1647,7 @@ class PathfinderInitializer(BaseInitializer):
             key=lambda item: (
                 item["selection_score"],
                 item["path_mean_log_density"],
-                -item["lsq_objective"],
+                -item["lsq_objective"] if np.isfinite(item["lsq_objective"]) else 0.0,
             ),
             reverse=True,
         )

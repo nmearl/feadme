@@ -336,7 +336,18 @@ def cli():
     type=int,
     default=8,
     show_default=True,
-    help="Number of distinct LSQ basins to refine with multipathfinder before NUTS.",
+    help="Number of distinct start basins to refine with multipathfinder before NUTS.",
+)
+@click.option(
+    "--pathfinder-start-method",
+    type=click.Choice(["lsq", "structured"], case_sensitive=False),
+    default="lsq",
+    show_default=True,
+    help=(
+        "How to generate Pathfinder starting basins. 'lsq' runs the structured "
+        "LSQ pre-fit; 'structured' bypasses LSQ and uses structured template "
+        "starts directly."
+    ),
 )
 @click.option(
     "--pathfinder-init-samples",
@@ -380,6 +391,7 @@ def run_cmd(
     svi_init_samples: int,
     svi_init_max_loss_relative_std: float,
     pathfinder_init_candidates: int,
+    pathfinder_start_method: str,
     pathfinder_init_samples: int,
     pathfinder_score_batch_size: int,
     pathfinder_init_maxiter: int,
@@ -419,6 +431,7 @@ def run_cmd(
             debug_plot=debug_plot,
             lsq_candidates=max(1, int(lsq_init_candidates)),
             pathfinder_candidates=max(1, int(pathfinder_init_candidates)),
+            start_method=pathfinder_start_method.lower(),
             candidate_distance_threshold=init_candidate_distance_threshold,
             num_samples=max(1, int(pathfinder_init_samples)),
             score_batch_size=max(1, int(pathfinder_score_batch_size)),
