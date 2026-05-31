@@ -297,6 +297,13 @@ def cli():
     ),
 )
 @click.option(
+    "--lsq-init-maxiter",
+    type=int,
+    default=2000,
+    show_default=True,
+    help="Maximum optimizer iterations for each LSQ initialization start.",
+)
+@click.option(
     "--svi-init-candidates",
     type=int,
     default=1,
@@ -385,6 +392,7 @@ def run_cmd(
     dense_mass: bool,
     integrator: str | None,
     lsq_init_candidates: int,
+    lsq_init_maxiter: int,
     svi_init_candidates: int,
     init_candidate_distance_threshold: float,
     svi_init_steps: int,
@@ -430,6 +438,7 @@ def run_cmd(
         initializer = PathfinderInitializer(
             debug_plot=debug_plot,
             lsq_candidates=max(1, int(lsq_init_candidates)),
+            lsq_maxiter=max(1, int(lsq_init_maxiter)),
             pathfinder_candidates=max(1, int(pathfinder_init_candidates)),
             start_method=pathfinder_start_method.lower(),
             candidate_distance_threshold=init_candidate_distance_threshold,
@@ -441,6 +450,7 @@ def run_cmd(
         initializer = SVIInitializer(
             debug_plot=debug_plot,
             lsq_candidates=max(1, int(lsq_init_candidates)),
+            lsq_maxiter=max(1, int(lsq_init_maxiter)),
             svi_candidates=max(1, int(svi_init_candidates)),
             candidate_distance_threshold=init_candidate_distance_threshold,
             max_candidate_loss_relative_std=svi_init_max_loss_relative_std,

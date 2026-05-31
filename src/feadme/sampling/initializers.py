@@ -356,9 +356,7 @@ def _set_model_start_values(model, candidate: dict[str, float]) -> None:
             (
                 (profile_name, field_name, submodels[profile_name])
                 for profile_name in submodels
-                for field_name in submodels[profile_name].meta.get(
-                    "distributions", {}
-                )
+                for field_name in submodels[profile_name].meta.get("distributions", {})
                 if full_name == f"{profile_name}_{field_name}"
             ),
             None,
@@ -404,7 +402,11 @@ def _add_radius_ratio_init_values(config: Config, params: dict) -> dict:
         if ratio_low is None or ratio_high is None:
             ratio_low = DISK_RADIUS_RATIO_LOW
             ratio_high = DISK_RADIUS_RATIO_HIGH
-        if not np.isfinite(ratio_low) or not np.isfinite(ratio_high) or ratio_high <= ratio_low:
+        if (
+            not np.isfinite(ratio_low)
+            or not np.isfinite(ratio_high)
+            or ratio_high <= ratio_low
+        ):
             ratio_low = DISK_RADIUS_RATIO_LOW
             ratio_high = DISK_RADIUS_RATIO_HIGH
 
@@ -428,17 +430,15 @@ def _default_param_value(param) -> float:
     if param.loc is not None:
         return float(param.loc)
     if param.low is not None and param.high is not None:
-        if (
-            param.low > 0
-            and param.high > 0
-            and "log" in param.distribution.value
-        ):
+        if param.low > 0 and param.high > 0 and "log" in param.distribution.value:
             return float(np.sqrt(param.low * param.high))
         return float(0.5 * (param.low + param.high))
     return 0.0
 
 
-def _structured_start_to_init_params(config: Config, candidate: dict[str, float]) -> dict:
+def _structured_start_to_init_params(
+    config: Config, candidate: dict[str, float]
+) -> dict:
     params = {
         param_ref.name: _default_param_value(param_ref.param)
         for param_ref in config.template.iter_independent
@@ -553,8 +553,10 @@ def _feature_param_view(params: dict, config: Config | None = None) -> dict:
             k = params.get(f"{prefix}_apocenter_k")
             if h is None or k is None:
                 continue
-            r = jnp.sqrt(h ** 2 + k ** 2)
-            view.setdefault(f"{prefix}_apocenter", jnp.mod(jnp.arctan2(k, h), 2 * jnp.pi))
+            r = jnp.sqrt(h**2 + k**2)
+            view.setdefault(
+                f"{prefix}_apocenter", jnp.mod(jnp.arctan2(k, h), 2 * jnp.pi)
+            )
             if f"{prefix}_eccentricity" not in view:
                 e_low, e_high = None, None
                 if config is not None:
@@ -563,7 +565,9 @@ def _feature_param_view(params: dict, config: Config | None = None) -> dict:
                             e_low, e_high = param_ref.param.low, param_ref.param.high
                             break
                 if e_low is not None and e_high is not None:
-                    view[f"{prefix}_eccentricity"] = e_low + (e_high - e_low) * jnp.tanh(r)
+                    view[f"{prefix}_eccentricity"] = e_low + (
+                        e_high - e_low
+                    ) * jnp.tanh(r)
                 else:
                     view[f"{prefix}_eccentricity"] = jnp.tanh(r)
 
@@ -733,6 +737,7 @@ class DefaultInitializer(BaseInitializer):
 class LSQInitializer(BaseInitializer):
     use_multistart: bool = True
     max_candidates: int = 8
+    maxiter: int = 2_000
     use_dogbox: bool = False
 
     def fit_candidates(self, config: Config = None, model: BaseModel = None):
@@ -754,7 +759,7 @@ class LSQInitializer(BaseInitializer):
                 wave,
                 flux,
                 weights=safe_weights,
-                maxiter=2_000,
+                maxiter=max(1, int(self.maxiter)),
                 filter_non_finite=True,
             )
             obj = _weighted_objective(fit_mod, wave, flux, flux_err)
@@ -796,7 +801,7 @@ class LSQInitializer(BaseInitializer):
                         wave,
                         flux,
                         weights=safe_weights,
-                        maxiter=10_000,
+                        maxiter=max(1, int(self.maxiter)),
                         filter_non_finite=True,
                     )
                     obj = _weighted_objective(trial_fit, wave, flux, flux_err)
@@ -1001,6 +1006,7 @@ class LSQInitializer(BaseInitializer):
 @flax.struct.dataclass
 class SVIInitializer(BaseInitializer):
     lsq_candidates: int = 1
+    lsq_maxiter: int = 2_000
     svi_candidates: int = 1
     candidate_distance_threshold: float = 0.25
     max_candidate_loss_relative_std: float = 0.10
@@ -1018,6 +1024,7 @@ class SVIInitializer(BaseInitializer):
             debug_plot=self.debug_plot,
             use_multistart=self.lsq_candidates > 1,
             max_candidates=max(1, int(self.lsq_candidates)),
+            maxiter=max(1, int(self.lsq_maxiter)),
         )
         lsq_candidates = lsq_initializer.fit_candidates(config, model)
         distinct_lsq_candidates = _dedupe_basin_candidates(
@@ -1399,6 +1406,7 @@ class SVIInitializer(BaseInitializer):
 @flax.struct.dataclass
 class PathfinderInitializer(BaseInitializer):
     lsq_candidates: int = 8
+    lsq_maxiter: int = 2_000
     pathfinder_candidates: int = 8
     start_method: str = "lsq"
     candidate_distance_threshold: float = 0.25
@@ -1434,6 +1442,7 @@ class PathfinderInitializer(BaseInitializer):
                 debug_plot=self.debug_plot,
                 use_multistart=self.lsq_candidates > 1,
                 max_candidates=max(1, int(self.lsq_candidates)),
+                maxiter=max(1, int(self.lsq_maxiter)),
             )
             start_candidates = lsq_initializer.fit_candidates(config, model)
             start_label = "LSQ basin"
@@ -1451,7 +1460,9 @@ class PathfinderInitializer(BaseInitializer):
             config=config,
         )
         candidates_to_run = distinct_start_candidates[
-            : max(1, min(int(self.pathfinder_candidates), len(distinct_start_candidates)))
+            : max(
+                1, min(int(self.pathfinder_candidates), len(distinct_start_candidates))
+            )
         ]
 
         logger.info(
