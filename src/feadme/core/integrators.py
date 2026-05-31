@@ -24,7 +24,7 @@ fixed_quad_phi = ClenshawCurtisRule(order=CC_RES_PHI).integrate
 # fixed_quad_xi = GaussKronrodRule(order=GK_RES).integrate
 # fixed_quad_phi = GaussKronrodRule(order=GK_RES).integrate
 
-N_xi, N_phi = 32, 128
+N_xi, N_phi = 32, 256
 
 LN10 = jnp.log(10.0)
 
