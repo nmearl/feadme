@@ -56,7 +56,7 @@ def _sample_ecc_apo_hk(ecc_ref, apo_ref):
     h = numpyro.sample(f"{apo_ref.name}_h", dist.Normal(0.0, sigma_hk))
     k = numpyro.sample(f"{apo_ref.name}_k", dist.Normal(0.0, sigma_hk))
 
-    r = jnp.sqrt(h ** 2 + k ** 2)
+    r = jnp.sqrt(h**2 + k**2)
     e = numpyro.deterministic(ecc_ref.name, e_low + e_span * jnp.tanh(r))
     phi0 = numpyro.deterministic(apo_ref.name, jnp.mod(jnp.arctan2(k, h), 2 * jnp.pi))
     return e, phi0
@@ -143,18 +143,18 @@ class NumpyroModel(BaseModel):
         param_mods = {}
 
         # Sample eccentricity/apocenter pairs jointly via the (h, k) reparameterization
-        ecc_apo_pairs = _find_ecc_apo_pairs(self.config.template.iter_independent)
-        jointly_handled = set()
-        for profile_name, (ecc_ref, apo_ref) in ecc_apo_pairs.items():
-            e, phi0 = _sample_ecc_apo_hk(ecc_ref, apo_ref)
-            param_mods[ecc_ref.name] = e
-            param_mods[apo_ref.name] = phi0
-            jointly_handled.add(ecc_ref.name)
-            jointly_handled.add(apo_ref.name)
+        # ecc_apo_pairs = _find_ecc_apo_pairs(self.config.template.iter_independent)
+        # jointly_handled = set()
+        # for profile_name, (ecc_ref, apo_ref) in ecc_apo_pairs.items():
+        #     e, phi0 = _sample_ecc_apo_hk(ecc_ref, apo_ref)
+        #     param_mods[ecc_ref.name] = e
+        #     param_mods[apo_ref.name] = phi0
+        #     jointly_handled.add(ecc_ref.name)
+        #     jointly_handled.add(apo_ref.name)
 
         for param_ref in self.config.template.iter_independent:
-            if param_ref.name in jointly_handled:
-                continue
+            # if param_ref.name in jointly_handled:
+            #     continue
             param_samp = self.sample_param(
                 param_ref.name,
                 param_ref.param,
