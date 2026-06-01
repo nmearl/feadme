@@ -13,6 +13,7 @@ import astropy.constants as const
 from .core.parser import Template, Config, Data, Mask
 from .sampling.initializers import (
     DefaultInitializer,
+    JAXLSQInitializer,
     PathfinderInitializer,
     MAPInitializer,
     SVIInitializer,
@@ -240,7 +241,7 @@ def cli():
 )
 @click.option(
     "--init-method",
-    type=click.Choice(["svi", "pathfinder", "map"], case_sensitive=False),
+    type=click.Choice(["svi", "pathfinder", "map", "jax-lsq"], case_sensitive=False),
     default="svi",
     show_default=True,
     help="Initializer basin-refinement method to use before NUTS.",
@@ -423,6 +424,41 @@ def cli():
     show_default=True,
     help="Global gradient-norm clipping threshold for batched MAP initialization.",
 )
+@click.option(
+    "--jax-lsq-init-candidates",
+    type=int,
+    default=64,
+    show_default=True,
+    help="Number of independent starts to optimize with batched JAX-LSQ initialization.",
+)
+@click.option(
+    "--jax-lsq-start-method",
+    type=click.Choice(["prior", "structured"], case_sensitive=False),
+    default="structured",
+    show_default=True,
+    help="How to generate batched JAX-LSQ starts before gradient optimization.",
+)
+@click.option(
+    "--jax-lsq-init-steps",
+    type=int,
+    default=500,
+    show_default=True,
+    help="Number of gradient optimization steps for each JAX-LSQ initialization start.",
+)
+@click.option(
+    "--jax-lsq-init-learning-rate",
+    type=float,
+    default=3e-3,
+    show_default=True,
+    help="Adam learning rate for batched JAX-LSQ initialization.",
+)
+@click.option(
+    "--jax-lsq-init-grad-clip",
+    type=float,
+    default=10.0,
+    show_default=True,
+    help="Global gradient-norm clipping threshold for batched JAX-LSQ initialization.",
+)
 def run_cmd(
     template_path: str,
     data_path: str,
@@ -455,6 +491,11 @@ def run_cmd(
     map_init_steps: int,
     map_init_learning_rate: float,
     map_init_grad_clip: float,
+    jax_lsq_init_candidates: int,
+    jax_lsq_start_method: str,
+    jax_lsq_init_steps: int,
+    jax_lsq_init_learning_rate: float,
+    jax_lsq_init_grad_clip: float,
     compute_prior_predictive: bool,
     progress_bar: bool,
     rebin: float | None,
@@ -508,6 +549,17 @@ def run_cmd(
             num_steps=max(1, int(map_init_steps)),
             learning_rate=float(map_init_learning_rate),
             grad_clip=float(map_init_grad_clip),
+        )
+    elif init_method.lower() == "jax-lsq":
+        initializer = JAXLSQInitializer(
+            debug_plot=debug_plot,
+            candidates=max(1, int(jax_lsq_init_candidates)),
+            start_method=jax_lsq_start_method.lower(),
+            selection_score="likelihood",
+            candidate_distance_threshold=init_candidate_distance_threshold,
+            num_steps=max(1, int(jax_lsq_init_steps)),
+            learning_rate=float(jax_lsq_init_learning_rate),
+            grad_clip=float(jax_lsq_init_grad_clip),
         )
     else:
         initializer = SVIInitializer(

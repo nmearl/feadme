@@ -28,6 +28,7 @@ import astropy.constants as const
 import astropy.units as u
 
 from .lsq.utils import format_posterior_samples
+from ..core.evaluators import evaluate_model
 from ..core.parser import Config
 from .base_model import BaseModel
 from .lsq.model import _compose_model
@@ -717,6 +718,64 @@ def _split_spectral_log_density(
     return (
         float(jax.device_get(log_prior)),
         float(jax.device_get(log_likelihood)),
+    )
+
+
+def _spectral_log_likelihood(
+    model: BaseModel,
+    config: Config,
+    params: dict,
+):
+    model_trace = trace(substitute(seed(model, random.PRNGKey(0)), data=params)).get_trace(
+        wave=config.data.masked_wave,
+        flux=config.data.masked_flux,
+        flux_err=config.data.masked_flux_err,
+    )
+    site = model_trace["total_flux"]
+    return _trace_site_log_prob(site)
+
+
+def _complete_param_mods(config: Config, params: dict) -> dict:
+    param_mods = dict(params)
+
+    for param_ref in config.template.iter_fixed:
+        param_mods[param_ref.name] = param_ref.param.value
+
+    for param_ref in config.template.iter_shared:
+        if param_ref.target_name in param_mods:
+            param_mods[param_ref.name] = param_mods[param_ref.target_name]
+
+    for profile in config.template.disk_profiles:
+        inner_name = f"{profile.name}_inner_radius"
+        ratio_name = f"{profile.name}_radius_ratio"
+        outer_name = f"{profile.name}_outer_radius"
+        if inner_name in param_mods and ratio_name in param_mods:
+            param_mods[outer_name] = param_mods[inner_name] * param_mods[ratio_name]
+
+    return param_mods
+
+
+def _direct_spectral_log_likelihood(
+    model: BaseModel,
+    config: Config,
+    params: dict,
+):
+    param_mods = _complete_param_mods(config, params)
+    total_flux, _, _ = evaluate_model(
+        template=config.template,
+        wave=config.data.masked_wave,
+        param_mods=param_mods,
+        redshift=param_mods["redshift"],
+        integrator=model.integrator,
+    )
+    log_frac_noise = param_mods.get("log_frac_noise", -jnp.inf)
+    total_error = jnp.sqrt(
+        jnp.square(config.data.masked_flux_err)
+        + jnp.square(total_flux) * jnp.exp(2.0 * log_frac_noise)
+    )
+    residual = (config.data.masked_flux - total_flux) / total_error
+    return -0.5 * jnp.sum(
+        jnp.square(residual) + jnp.log(2.0 * jnp.pi * jnp.square(total_error))
     )
 
 
@@ -1755,6 +1814,112 @@ class MAPInitializer(BaseInitializer):
             logger.warning(
                 f"Could not write initialization candidate summary to {path}: {exc}"
             )
+
+
+@flax.struct.dataclass
+class JAXLSQInitializer(MAPInitializer):
+    def __call__(self, config: Config, model: BaseModel):
+        rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
+        rng_key, model_key = random.split(rng_key)
+
+        model_kwargs = {
+            "wave": config.data.masked_wave,
+            "flux": config.data.masked_flux,
+            "flux_err": config.data.masked_flux_err,
+        }
+        initial_positions, start_candidates, potential_fn, postprocess_fn = (
+            self._make_initial_positions(model_key, config, model, model_kwargs)
+        )
+
+        def objective_fn(position):
+            params = postprocess_fn(position)
+            return -_direct_spectral_log_likelihood(model, config, params)
+
+        logger.info(
+            "Running batched JAX-LSQ initialization from "
+            f"{len(start_candidates)} {self.start_method.lower()} start(s) "
+            f"for {max(1, int(self.num_steps))} optimization step(s)."
+        )
+
+        final_positions, final_losses = self._optimize_positions(
+            objective_fn,
+            initial_positions,
+        )
+        constrained_batch = jax.vmap(postprocess_fn)(final_positions)
+
+        results = []
+        for candidate_idx, candidate in enumerate(start_candidates):
+            loss = float(jax.device_get(final_losses[candidate_idx]))
+            if not np.isfinite(loss):
+                continue
+            init_params = jax.tree.map(
+                lambda x, idx=candidate_idx: x[idx],
+                constrained_batch,
+            )
+            init_params = _strip_flux_outputs(init_params)
+            init_params = _move_init_params_inside_bounds(config, init_params)
+            try:
+                log_prior, log_likelihood = _split_spectral_log_density(
+                    model, config, init_params
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"JAX-LSQ candidate {candidate_idx}: scoring failed: {exc}"
+                )
+                log_prior = np.nan
+                log_likelihood = np.nan
+            try:
+                final_position = jax.tree.map(
+                    lambda x, idx=candidate_idx: x[idx],
+                    final_positions,
+                )
+                log_density = float(
+                    jax.device_get(-potential_fn(final_position))
+                )
+            except Exception:
+                log_density = np.nan
+            results.append(
+                {
+                    "candidate_id": candidate_idx,
+                    "init_params": init_params,
+                    "score": float(log_likelihood),
+                    "log_density": float(log_density),
+                    "log_prior": float(log_prior),
+                    "log_likelihood": float(log_likelihood),
+                    "selection_metric": "jax_lsq_likelihood",
+                    "selection_value": float(log_likelihood),
+                    "final_loss": loss,
+                    "start_method": candidate["fitter"],
+                    "start_objective": float(candidate["objective"]),
+                }
+            )
+
+        if not results:
+            raise RuntimeError("All JAX-LSQ initialization candidates failed.")
+
+        ranked_results = self._rank_candidates(results)
+        distinct_results = _dedupe_basin_candidates(
+            ranked_results,
+            distance_threshold=self.candidate_distance_threshold,
+            params_key="init_params",
+            config=config,
+        )
+        selected = distinct_results[0]
+        init_params = selected["init_params"]
+
+        self._write_candidate_summary(config, ranked_results, selected)
+        diagnose_init_params(model, init_params, config)
+
+        logger.info(
+            "Selected JAX-LSQ candidate "
+            f"{selected['candidate_id']} with "
+            f"log_likelihood={selected['log_likelihood']:.4g}, "
+            f"log_density={selected['log_density']:.4g}, "
+            f"final_loss={selected['final_loss']:.4g}, "
+            f"start_method={selected['start_method']}."
+        )
+
+        return init_params, init_to_value(values=init_params)
 
 
 @flax.struct.dataclass
