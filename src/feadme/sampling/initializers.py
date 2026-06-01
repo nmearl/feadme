@@ -14,7 +14,8 @@ from astropy.modeling.fitting import (
     DogBoxLSQFitter,
 )
 import matplotlib.pyplot as plt
-from numpyro.handlers import seed, trace
+from numpyro.distributions.util import scale_and_mask
+from numpyro.handlers import seed, substitute, trace
 from numpyro.infer import SVI, Trace_ELBO
 from numpyro.infer import init_to_median, init_to_sample, init_to_value
 from numpyro.infer.autoguide import (
@@ -681,6 +682,42 @@ def _model_sample_site_names(model: BaseModel, config: Config) -> set[str]:
         for name, site in model_trace.items()
         if site["type"] == "sample" and not site.get("is_observed", False)
     }
+
+
+def _trace_site_log_prob(site):
+    fn = site["fn"]
+    value = site["value"]
+    log_prob = fn.log_prob(value)
+    if hasattr(fn, "support"):
+        log_prob = jnp.where(fn.support.check(value), log_prob, -jnp.inf)
+    log_prob = scale_and_mask(log_prob, scale=site.get("scale"))
+    return jnp.sum(log_prob)
+
+
+def _split_spectral_log_density(
+    model: BaseModel,
+    config: Config,
+    params: dict,
+) -> tuple[float, float]:
+    model_trace = trace(substitute(seed(model, random.PRNGKey(0)), data=params)).get_trace(
+        wave=config.data.masked_wave,
+        flux=config.data.masked_flux,
+        flux_err=config.data.masked_flux_err,
+    )
+    log_prior = 0.0
+    log_likelihood = 0.0
+    for name, site in model_trace.items():
+        if site["type"] != "sample":
+            continue
+        logp = _trace_site_log_prob(site)
+        if name == "total_flux":
+            log_likelihood = log_likelihood + logp
+        else:
+            log_prior = log_prior + logp
+    return (
+        float(jax.device_get(log_prior)),
+        float(jax.device_get(log_likelihood)),
+    )
 
 
 def _best_guide_sample_by_log_density(
@@ -1408,11 +1445,19 @@ class MAPInitializer(BaseInitializer):
     candidates: int = 64
     candidate_distance_threshold: float = 0.25
     start_method: str = "prior"
+    selection_score: str = "likelihood"
     num_steps: int = 200
     learning_rate: float = 1e-2
     grad_clip: float = 10.0
 
     def __call__(self, config: Config, model: BaseModel):
+        selection_score = self.selection_score.lower()
+        if selection_score not in {"posterior", "likelihood"}:
+            raise ValueError(
+                "MAP selection_score must be 'posterior' or 'likelihood', "
+                f"got {self.selection_score!r}."
+            )
+
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, model_key = random.split(rng_key)
 
@@ -1448,11 +1493,30 @@ class MAPInitializer(BaseInitializer):
             )
             init_params = _strip_flux_outputs(init_params)
             init_params = _move_init_params_inside_bounds(config, init_params)
+            try:
+                log_prior, log_likelihood = _split_spectral_log_density(
+                    model, config, init_params
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"MAP candidate {candidate_idx}: likelihood scoring failed: {exc}"
+                )
+                log_prior = np.nan
+                log_likelihood = np.nan
+            log_density = float(-loss)
+            selection_value = (
+                log_likelihood if selection_score == "likelihood" else log_density
+            )
             results.append(
                 {
                     "candidate_id": candidate_idx,
                     "init_params": init_params,
-                    "score": float(-loss),
+                    "score": log_density,
+                    "log_density": log_density,
+                    "log_prior": float(log_prior),
+                    "log_likelihood": float(log_likelihood),
+                    "selection_metric": selection_score,
+                    "selection_value": float(selection_value),
                     "final_loss": loss,
                     "start_method": candidate["fitter"],
                     "start_objective": float(candidate["objective"]),
@@ -1477,8 +1541,11 @@ class MAPInitializer(BaseInitializer):
 
         logger.info(
             "Selected MAP candidate "
-            f"{selected['candidate_id']} with log_density={selected['score']:.4g}, "
+            f"{selected['candidate_id']} with "
+            f"log_likelihood={selected['log_likelihood']:.4g}, "
+            f"log_density={selected['log_density']:.4g}, "
             f"final_loss={selected['final_loss']:.4g}, "
+            f"selection_metric={selected['selection_metric']}, "
             f"start_method={selected['start_method']}."
         )
 
@@ -1624,17 +1691,22 @@ class MAPInitializer(BaseInitializer):
         ranked = []
         for result in results:
             result = dict(result)
-            finite = np.isfinite(result["score"])
+            finite = np.isfinite(result["selection_value"])
             result["selection_eligible"] = bool(finite)
             result["selection_rejection_reason"] = (
-                "" if finite else "nonfinite_log_density"
+                "" if finite else "nonfinite_selection_score"
             )
-            result["selection_score"] = float(result["score"]) if finite else -np.inf
+            result["selection_score"] = (
+                float(result["selection_value"]) if finite else -np.inf
+            )
             ranked.append(result)
 
         ranked = sorted(
             ranked,
-            key=lambda item: item["selection_score"],
+            key=lambda item: (
+                item["selection_score"],
+                item["log_density"] if np.isfinite(item["log_density"]) else -np.inf,
+            ),
             reverse=True,
         )
         for rank, result in enumerate(ranked):
@@ -1661,7 +1733,10 @@ class MAPInitializer(BaseInitializer):
                 "selection_rejection_reason": result.get(
                     "selection_rejection_reason", ""
                 ),
-                "log_density": result["score"],
+                "selection_metric": result["selection_metric"],
+                "log_density": result["log_density"],
+                "log_likelihood": result["log_likelihood"],
+                "log_prior": result["log_prior"],
                 "final_loss": result["final_loss"],
                 "start_method": result["start_method"],
                 "start_objective": result["start_objective"],

@@ -393,6 +393,16 @@ def cli():
     help="How to generate batched MAP starts before gradient optimization.",
 )
 @click.option(
+    "--map-selection-score",
+    type=click.Choice(["likelihood", "posterior"], case_sensitive=False),
+    default="likelihood",
+    show_default=True,
+    help=(
+        "Score used to select among optimized MAP candidates. The optimizer "
+        "still follows the posterior; this controls final basin ranking."
+    ),
+)
+@click.option(
     "--map-init-steps",
     type=int,
     default=200,
@@ -441,6 +451,7 @@ def run_cmd(
     pathfinder_init_maxiter: int,
     map_init_candidates: int,
     map_start_method: str,
+    map_selection_score: str,
     map_init_steps: int,
     map_init_learning_rate: float,
     map_init_grad_clip: float,
@@ -492,6 +503,7 @@ def run_cmd(
             debug_plot=debug_plot,
             candidates=max(1, int(map_init_candidates)),
             start_method=map_start_method.lower(),
+            selection_score=map_selection_score.lower(),
             candidate_distance_threshold=init_candidate_distance_threshold,
             num_steps=max(1, int(map_init_steps)),
             learning_rate=float(map_init_learning_rate),
