@@ -14,6 +14,7 @@ from .core.parser import Template, Config, Data, Mask
 from .sampling.initializers import (
     DefaultInitializer,
     PathfinderInitializer,
+    MAPInitializer,
     SVIInitializer,
     LSQInitializer,
 )
@@ -239,7 +240,7 @@ def cli():
 )
 @click.option(
     "--init-method",
-    type=click.Choice(["svi", "pathfinder"], case_sensitive=False),
+    type=click.Choice(["svi", "pathfinder", "map"], case_sensitive=False),
     default="svi",
     show_default=True,
     help="Initializer basin-refinement method to use before NUTS.",
@@ -377,6 +378,41 @@ def cli():
     show_default=True,
     help="Maximum L-BFGS iterations per Pathfinder path.",
 )
+@click.option(
+    "--map-init-candidates",
+    type=int,
+    default=64,
+    show_default=True,
+    help="Number of independent starts to optimize with batched MAP initialization.",
+)
+@click.option(
+    "--map-start-method",
+    type=click.Choice(["prior", "structured"], case_sensitive=False),
+    default="prior",
+    show_default=True,
+    help="How to generate batched MAP starts before gradient optimization.",
+)
+@click.option(
+    "--map-init-steps",
+    type=int,
+    default=200,
+    show_default=True,
+    help="Number of gradient optimization steps for each MAP initialization start.",
+)
+@click.option(
+    "--map-init-learning-rate",
+    type=float,
+    default=1e-2,
+    show_default=True,
+    help="Adam learning rate for batched MAP initialization.",
+)
+@click.option(
+    "--map-init-grad-clip",
+    type=float,
+    default=10.0,
+    show_default=True,
+    help="Global gradient-norm clipping threshold for batched MAP initialization.",
+)
 def run_cmd(
     template_path: str,
     data_path: str,
@@ -403,6 +439,11 @@ def run_cmd(
     pathfinder_init_samples: int,
     pathfinder_score_batch_size: int,
     pathfinder_init_maxiter: int,
+    map_init_candidates: int,
+    map_start_method: str,
+    map_init_steps: int,
+    map_init_learning_rate: float,
+    map_init_grad_clip: float,
     compute_prior_predictive: bool,
     progress_bar: bool,
     rebin: float | None,
@@ -445,6 +486,16 @@ def run_cmd(
             num_samples=max(1, int(pathfinder_init_samples)),
             score_batch_size=max(1, int(pathfinder_score_batch_size)),
             maxiter=max(1, int(pathfinder_init_maxiter)),
+        )
+    elif init_method.lower() == "map":
+        initializer = MAPInitializer(
+            debug_plot=debug_plot,
+            candidates=max(1, int(map_init_candidates)),
+            start_method=map_start_method.lower(),
+            candidate_distance_threshold=init_candidate_distance_threshold,
+            num_steps=max(1, int(map_init_steps)),
+            learning_rate=float(map_init_learning_rate),
+            grad_clip=float(map_init_grad_clip),
         )
     else:
         initializer = SVIInitializer(

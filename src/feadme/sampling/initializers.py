@@ -16,7 +16,7 @@ from astropy.modeling.fitting import (
 import matplotlib.pyplot as plt
 from numpyro.handlers import seed, trace
 from numpyro.infer import SVI, Trace_ELBO
-from numpyro.infer import init_to_median, init_to_value
+from numpyro.infer import init_to_median, init_to_sample, init_to_value
 from numpyro.infer.autoguide import (
     AutoBNAFNormal,
     AutoMultivariateNormal,
@@ -1401,6 +1401,285 @@ class SVIInitializer(BaseInitializer):
 
         fig.savefig(f"{config.output_path}/svi_fit.png")
         plt.close(fig)
+
+
+@flax.struct.dataclass
+class MAPInitializer(BaseInitializer):
+    candidates: int = 64
+    candidate_distance_threshold: float = 0.25
+    start_method: str = "prior"
+    num_steps: int = 200
+    learning_rate: float = 1e-2
+    grad_clip: float = 10.0
+
+    def __call__(self, config: Config, model: BaseModel):
+        rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
+        rng_key, model_key = random.split(rng_key)
+
+        model_kwargs = {
+            "wave": config.data.masked_wave,
+            "flux": config.data.masked_flux,
+            "flux_err": config.data.masked_flux_err,
+        }
+        initial_positions, start_candidates, potential_fn, postprocess_fn = (
+            self._make_initial_positions(model_key, config, model, model_kwargs)
+        )
+
+        logger.info(
+            "Running batched MAP initialization from "
+            f"{len(start_candidates)} {self.start_method.lower()} start(s) "
+            f"for {max(1, int(self.num_steps))} optimization step(s)."
+        )
+
+        final_positions, final_losses = self._optimize_positions(
+            potential_fn,
+            initial_positions,
+        )
+        constrained_batch = jax.vmap(postprocess_fn)(final_positions)
+
+        results = []
+        for candidate_idx, candidate in enumerate(start_candidates):
+            loss = float(jax.device_get(final_losses[candidate_idx]))
+            if not np.isfinite(loss):
+                continue
+            init_params = jax.tree.map(
+                lambda x, idx=candidate_idx: x[idx],
+                constrained_batch,
+            )
+            init_params = _strip_flux_outputs(init_params)
+            init_params = _move_init_params_inside_bounds(config, init_params)
+            results.append(
+                {
+                    "candidate_id": candidate_idx,
+                    "init_params": init_params,
+                    "score": float(-loss),
+                    "final_loss": loss,
+                    "start_method": candidate["fitter"],
+                    "start_objective": float(candidate["objective"]),
+                }
+            )
+
+        if not results:
+            raise RuntimeError("All MAP initialization candidates failed.")
+
+        ranked_results = self._rank_candidates(results)
+        distinct_results = _dedupe_basin_candidates(
+            ranked_results,
+            distance_threshold=self.candidate_distance_threshold,
+            params_key="init_params",
+            config=config,
+        )
+        selected = distinct_results[0]
+        init_params = selected["init_params"]
+
+        self._write_candidate_summary(config, ranked_results, selected)
+        diagnose_init_params(model, init_params, config)
+
+        logger.info(
+            "Selected MAP candidate "
+            f"{selected['candidate_id']} with log_density={selected['score']:.4g}, "
+            f"final_loss={selected['final_loss']:.4g}, "
+            f"start_method={selected['start_method']}."
+        )
+
+        return init_params, init_to_value(values=init_params)
+
+    def _make_initial_positions(
+        self,
+        rng_key,
+        config: Config,
+        model: BaseModel,
+        model_kwargs: dict,
+    ):
+        start_method = self.start_method.lower()
+        count = max(1, int(self.candidates))
+        if start_method == "structured":
+            candidates = _structured_pathfinder_candidates(config, count)
+        elif start_method == "prior":
+            candidates = [
+                {
+                    "fit_model": None,
+                    "objective": np.nan,
+                    "fitter": "prior",
+                    "start_candidate": {},
+                    "init_params": {},
+                    "failed": False,
+                }
+                for _ in range(count)
+            ]
+        else:
+            raise ValueError(
+                "MAP start_method must be 'prior' or 'structured', "
+                f"got {self.start_method!r}."
+            )
+
+        positions = []
+        usable_candidates = []
+        potential_fn = None
+        postprocess_fn = None
+        keys = random.split(rng_key, len(candidates))
+
+        for key, candidate in zip(keys, candidates):
+            try:
+                init_strategy = None
+                if candidate["init_params"]:
+                    init_strategy = init_to_value(values=candidate["init_params"])
+                elif candidate["fitter"] == "prior":
+                    init_strategy = init_to_sample()
+
+                if init_strategy is None:
+                    param_info, this_potential_fn, this_postprocess_fn, _ = (
+                        initialize_model(
+                            key,
+                            model,
+                            model_kwargs=model_kwargs,
+                        )
+                    )
+                else:
+                    param_info, this_potential_fn, this_postprocess_fn, _ = (
+                        initialize_model(
+                            key,
+                            model,
+                            model_kwargs=model_kwargs,
+                            init_strategy=init_strategy,
+                        )
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Skipping MAP start candidate because unconstrained "
+                    f"initialization failed: {exc}"
+                )
+                continue
+
+            positions.append(param_info.z)
+            usable_candidates.append(candidate)
+            potential_fn = this_potential_fn
+            postprocess_fn = this_postprocess_fn
+
+        if not positions:
+            raise RuntimeError("No start candidate could initialize MAP optimizer.")
+
+        initial_positions = jax.tree.map(lambda *xs: jnp.stack(xs), *positions)
+        return initial_positions, usable_candidates, potential_fn, postprocess_fn
+
+    def _optimize_positions(self, potential_fn, initial_positions):
+        optimizer = optax.chain(
+            optax.clip_by_global_norm(float(self.grad_clip)),
+            optax.adam(float(self.learning_rate)),
+        )
+
+        def clean_tree(tree):
+            return jax.tree.map(
+                lambda x: jnp.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0),
+                tree,
+            )
+
+        def optimize_one(initial_position):
+            opt_state = optimizer.init(initial_position)
+            initial_loss = potential_fn(initial_position)
+            initial_loss = jnp.where(jnp.isfinite(initial_loss), initial_loss, jnp.inf)
+
+            def step(carry, _):
+                position, state, best_position, best_loss = carry
+                loss, grads = jax.value_and_grad(potential_fn)(position)
+                finite_loss = jnp.isfinite(loss)
+                clean_grads = clean_tree(grads)
+                updates, state = optimizer.update(clean_grads, state, position)
+                next_position = optax.apply_updates(position, updates)
+                next_position = jax.tree.map(
+                    lambda new, old: jnp.where(finite_loss, new, old),
+                    next_position,
+                    position,
+                )
+                safe_loss = jnp.where(finite_loss, loss, jnp.inf)
+                improved = safe_loss < best_loss
+                best_position = jax.tree.map(
+                    lambda new, old: jnp.where(improved, new, old),
+                    position,
+                    best_position,
+                )
+                best_loss = jnp.where(improved, safe_loss, best_loss)
+                return (next_position, state, best_position, best_loss), safe_loss
+
+            (final_position, _, best_position, best_loss), _ = jax.lax.scan(
+                step,
+                (initial_position, opt_state, initial_position, initial_loss),
+                None,
+                length=max(1, int(self.num_steps)),
+            )
+            final_loss = potential_fn(final_position)
+            final_loss = jnp.where(jnp.isfinite(final_loss), final_loss, jnp.inf)
+            improved = final_loss < best_loss
+            best_position = jax.tree.map(
+                lambda new, old: jnp.where(improved, new, old),
+                final_position,
+                best_position,
+            )
+            best_loss = jnp.where(improved, final_loss, best_loss)
+            return best_position, best_loss
+
+        return jax.jit(jax.vmap(optimize_one))(initial_positions)
+
+    def _rank_candidates(self, results: list[dict]) -> list[dict]:
+        ranked = []
+        for result in results:
+            result = dict(result)
+            finite = np.isfinite(result["score"])
+            result["selection_eligible"] = bool(finite)
+            result["selection_rejection_reason"] = (
+                "" if finite else "nonfinite_log_density"
+            )
+            result["selection_score"] = float(result["score"]) if finite else -np.inf
+            ranked.append(result)
+
+        ranked = sorted(
+            ranked,
+            key=lambda item: item["selection_score"],
+            reverse=True,
+        )
+        for rank, result in enumerate(ranked):
+            result["selection_rank"] = rank
+        return ranked
+
+    def _write_candidate_summary(
+        self,
+        config: Config,
+        results: list[dict],
+        selected: dict,
+    ) -> None:
+        output_path = Path(config.output_path)
+        output_path.mkdir(parents=True, exist_ok=True)
+        path = output_path / "initialization_candidates.csv"
+        rows = []
+        for result in results:
+            row = {
+                "candidate_id": result["candidate_id"],
+                "selected": result["candidate_id"] == selected["candidate_id"],
+                "selection_rank": result.get("selection_rank", ""),
+                "selection_eligible": result.get("selection_eligible", ""),
+                "selection_score": result.get("selection_score", ""),
+                "selection_rejection_reason": result.get(
+                    "selection_rejection_reason", ""
+                ),
+                "log_density": result["score"],
+                "final_loss": result["final_loss"],
+                "start_method": result["start_method"],
+                "start_objective": result["start_objective"],
+                "distance_to_selected": _basin_distance(
+                    result["init_params"], selected["init_params"], config
+                ),
+            }
+            rows.append(row)
+
+        try:
+            with path.open("w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+                writer.writeheader()
+                writer.writerows(rows)
+        except OSError as exc:
+            logger.warning(
+                f"Could not write initialization candidate summary to {path}: {exc}"
+            )
 
 
 @flax.struct.dataclass
