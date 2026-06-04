@@ -40,6 +40,8 @@ c_kms = const.c.to(u.km / u.s).value
 INIT_BOUNDARY_MARGIN_FRAC = 1e-2
 DISK_RADIUS_RATIO_LOW = 2.0
 DISK_RADIUS_RATIO_HIGH = 22.0
+INIT_EDGE_PENALTY_WEIGHT = 10.0
+INIT_EDGE_COMBO_PENALTY = 25.0
 
 
 def _resolve_bounds(
@@ -777,6 +779,78 @@ def _direct_spectral_log_likelihood(
     return -0.5 * jnp.sum(
         jnp.square(residual) + jnp.log(2.0 * jnp.pi * jnp.square(total_error))
     )
+
+
+def _param_fraction(config: Config, name: str, value) -> float | None:
+    if value is None:
+        return None
+    low, high = _resolve_bounds(config, name)
+    if low is None or high is None:
+        return None
+    if not np.isfinite(low) or not np.isfinite(high) or high <= low:
+        return None
+    try:
+        scalar = float(jax.device_get(value))
+    except Exception:
+        scalar = float(value)
+    return float((scalar - low) / (high - low))
+
+
+def _edge_pressure_penalty(
+    config: Config,
+    params: dict,
+) -> tuple[float, str]:
+    """Softly penalize initializer basins that sit on fragile disk edges."""
+    penalty = 0.0
+    flags: list[str] = []
+
+    def add_top(name: str, label: str, *, threshold: float = 0.90):
+        nonlocal penalty
+        frac = _param_fraction(config, name, params.get(name))
+        if frac is None:
+            return None
+        frac = float(np.clip(frac, 0.0, 1.0))
+        if frac > threshold:
+            pressure = (frac - threshold) / (1.0 - threshold)
+            penalty += INIT_EDGE_PENALTY_WEIGHT * pressure**2
+        if frac >= 0.95:
+            flags.append(f"{label}_top={frac:.3f}")
+        return frac
+
+    def add_bottom(name: str, label: str, *, threshold: float = 0.10):
+        nonlocal penalty
+        frac = _param_fraction(config, name, params.get(name))
+        if frac is None:
+            return None
+        frac = float(np.clip(frac, 0.0, 1.0))
+        if frac < threshold:
+            pressure = (threshold - frac) / threshold
+            penalty += INIT_EDGE_PENALTY_WEIGHT * pressure**2
+        if frac <= 0.05:
+            flags.append(f"{label}_bottom={frac:.3f}")
+        return frac
+
+    for profile in config.template.disk_profiles:
+        prefix = profile.name
+        inclination_frac = add_top(
+            f"{prefix}_inclination",
+            f"{prefix}_inclination",
+        )
+        sigma_frac = add_bottom(f"{prefix}_sigma", f"{prefix}_sigma")
+        add_top(f"{prefix}_inner_radius", f"{prefix}_inner_radius")
+        add_top(f"{prefix}_radius_ratio", f"{prefix}_radius_ratio")
+        add_bottom(f"{prefix}_q", f"{prefix}_q")
+
+        if (
+            inclination_frac is not None
+            and sigma_frac is not None
+            and inclination_frac >= 0.97
+            and sigma_frac <= 0.05
+        ):
+            penalty += INIT_EDGE_COMBO_PENALTY
+            flags.append(f"{prefix}_edge_on_low_sigma_combo")
+
+    return float(penalty), ";".join(flags)
 
 
 def _best_guide_sample_by_log_density(
@@ -1796,6 +1870,8 @@ class MAPInitializer(BaseInitializer):
                 "log_density": result["log_density"],
                 "log_likelihood": result["log_likelihood"],
                 "log_prior": result["log_prior"],
+                "edge_penalty": result.get("edge_penalty", ""),
+                "edge_flags": result.get("edge_flags", ""),
                 "final_loss": result["final_loss"],
                 "start_method": result["start_method"],
                 "start_objective": result["start_objective"],
@@ -1819,6 +1895,13 @@ class MAPInitializer(BaseInitializer):
 @flax.struct.dataclass
 class JAXLSQInitializer(MAPInitializer):
     def __call__(self, config: Config, model: BaseModel):
+        selection_score = self.selection_score.lower().replace("_", "-")
+        if selection_score not in {"likelihood", "posterior", "penalized-posterior"}:
+            raise ValueError(
+                "JAX-LSQ selection_score must be 'likelihood', 'posterior', "
+                f"or 'penalized-posterior', got {self.selection_score!r}."
+            )
+
         rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
         rng_key, model_key = random.split(rng_key)
 
@@ -1878,6 +1961,13 @@ class JAXLSQInitializer(MAPInitializer):
                 )
             except Exception:
                 log_density = np.nan
+            edge_penalty, edge_flags = _edge_pressure_penalty(config, init_params)
+            if selection_score == "likelihood":
+                selection_value = log_likelihood
+            elif selection_score == "posterior":
+                selection_value = log_density
+            else:
+                selection_value = log_density - edge_penalty
             results.append(
                 {
                     "candidate_id": candidate_idx,
@@ -1886,8 +1976,10 @@ class JAXLSQInitializer(MAPInitializer):
                     "log_density": float(log_density),
                     "log_prior": float(log_prior),
                     "log_likelihood": float(log_likelihood),
-                    "selection_metric": "jax_lsq_likelihood",
-                    "selection_value": float(log_likelihood),
+                    "edge_penalty": float(edge_penalty),
+                    "edge_flags": edge_flags,
+                    "selection_metric": f"jax_lsq_{selection_score}",
+                    "selection_value": float(selection_value),
                     "final_loss": loss,
                     "start_method": candidate["fitter"],
                     "start_objective": float(candidate["objective"]),
@@ -1915,7 +2007,9 @@ class JAXLSQInitializer(MAPInitializer):
             f"{selected['candidate_id']} with "
             f"log_likelihood={selected['log_likelihood']:.4g}, "
             f"log_density={selected['log_density']:.4g}, "
+            f"edge_penalty={selected.get('edge_penalty', 0.0):.4g}, "
             f"final_loss={selected['final_loss']:.4g}, "
+            f"selection_metric={selected['selection_metric']}, "
             f"start_method={selected['start_method']}."
         )
 

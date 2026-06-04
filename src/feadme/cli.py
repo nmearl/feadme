@@ -459,6 +459,18 @@ def cli():
     show_default=True,
     help="Global gradient-norm clipping threshold for batched JAX-LSQ initialization.",
 )
+@click.option(
+    "--jax-lsq-selection-score",
+    type=click.Choice(
+        ["likelihood", "posterior", "penalized-posterior"], case_sensitive=False
+    ),
+    default="penalized-posterior",
+    show_default=True,
+    help=(
+        "Score used to select among optimized JAX-LSQ candidates. "
+        "'penalized-posterior' downranks fragile disk-edge basins."
+    ),
+)
 def run_cmd(
     template_path: str,
     data_path: str,
@@ -496,6 +508,7 @@ def run_cmd(
     jax_lsq_init_steps: int,
     jax_lsq_init_learning_rate: float,
     jax_lsq_init_grad_clip: float,
+    jax_lsq_selection_score: str,
     compute_prior_predictive: bool,
     progress_bar: bool,
     rebin: float | None,
@@ -555,7 +568,7 @@ def run_cmd(
             debug_plot=debug_plot,
             candidates=max(1, int(jax_lsq_init_candidates)),
             start_method=jax_lsq_start_method.lower(),
-            selection_score="likelihood",
+            selection_score=jax_lsq_selection_score.lower(),
             candidate_distance_threshold=init_candidate_distance_threshold,
             num_steps=max(1, int(jax_lsq_init_steps)),
             learning_rate=float(jax_lsq_init_learning_rate),
