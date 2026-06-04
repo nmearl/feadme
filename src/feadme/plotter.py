@@ -2,6 +2,9 @@ import arviz as az
 import xarray as xr
 from .core.parser import Config
 import corner
+import matplotlib
+
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd

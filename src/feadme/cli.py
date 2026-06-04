@@ -13,6 +13,7 @@ import astropy.constants as const
 from .core.parser import Template, Config, Data, Mask
 from .sampling.initializers import (
     DefaultInitializer,
+    DeltaMAPInitializer,
     JAXLSQInitializer,
     PathfinderInitializer,
     MAPInitializer,
@@ -241,7 +242,10 @@ def cli():
 )
 @click.option(
     "--init-method",
-    type=click.Choice(["svi", "pathfinder", "map", "jax-lsq"], case_sensitive=False),
+    type=click.Choice(
+        ["svi", "pathfinder", "map", "jax-lsq", "delta-map"],
+        case_sensitive=False,
+    ),
     default="svi",
     show_default=True,
     help="Initializer basin-refinement method to use before NUTS.",
@@ -408,56 +412,58 @@ def cli():
     type=int,
     default=200,
     show_default=True,
-    help="Number of gradient optimization steps for each MAP initialization start.",
+    help="Number of L-BFGS iterations for each MAP initialization start.",
 )
 @click.option(
-    "--map-init-learning-rate",
-    type=float,
-    default=1e-2,
+    "--delta-map-init-candidates",
+    type=int,
+    default=8,
     show_default=True,
-    help="Adam learning rate for batched MAP initialization.",
+    help="Number of independent starts to optimize with AutoDelta/BFGS.",
 )
 @click.option(
-    "--map-init-grad-clip",
-    type=float,
-    default=10.0,
+    "--delta-map-start-method",
+    type=click.Choice(["prior", "structured"], case_sensitive=False),
+    default="structured",
     show_default=True,
-    help="Global gradient-norm clipping threshold for batched MAP initialization.",
+    help="How to generate AutoDelta/BFGS starting points.",
+)
+@click.option(
+    "--delta-map-init-maxiter",
+    type=int,
+    default=300,
+    show_default=True,
+    help="Maximum BFGS iterations per AutoDelta/BFGS start.",
+)
+@click.option(
+    "--delta-map-selection-score",
+    type=click.Choice(
+        ["likelihood", "posterior", "penalized-posterior"], case_sensitive=False
+    ),
+    default="penalized-posterior",
+    show_default=True,
+    help="Score used to select among optimized AutoDelta/BFGS candidates.",
 )
 @click.option(
     "--jax-lsq-init-candidates",
     type=int,
     default=64,
     show_default=True,
-    help="Number of independent starts to optimize with batched JAX-LSQ initialization.",
+    help="Number of independent starts to optimize with JAX-LSQ initialization.",
 )
 @click.option(
     "--jax-lsq-start-method",
     type=click.Choice(["prior", "structured"], case_sensitive=False),
     default="structured",
     show_default=True,
-    help="How to generate batched JAX-LSQ starts before gradient optimization.",
+    help="How to generate JAX-LSQ starts before gradient optimization.",
 )
 @click.option(
     "--jax-lsq-init-steps",
     type=int,
     default=500,
     show_default=True,
-    help="Number of gradient optimization steps for each JAX-LSQ initialization start.",
-)
-@click.option(
-    "--jax-lsq-init-learning-rate",
-    type=float,
-    default=3e-3,
-    show_default=True,
-    help="Adam learning rate for batched JAX-LSQ initialization.",
-)
-@click.option(
-    "--jax-lsq-init-grad-clip",
-    type=float,
-    default=10.0,
-    show_default=True,
-    help="Global gradient-norm clipping threshold for batched JAX-LSQ initialization.",
+    help="Number of Levenberg-Marquardt iterations for each JAX-LSQ initialization start.",
 )
 @click.option(
     "--jax-lsq-selection-score",
@@ -501,13 +507,13 @@ def run_cmd(
     map_start_method: str,
     map_selection_score: str,
     map_init_steps: int,
-    map_init_learning_rate: float,
-    map_init_grad_clip: float,
+    delta_map_init_candidates: int,
+    delta_map_start_method: str,
+    delta_map_init_maxiter: int,
+    delta_map_selection_score: str,
     jax_lsq_init_candidates: int,
     jax_lsq_start_method: str,
     jax_lsq_init_steps: int,
-    jax_lsq_init_learning_rate: float,
-    jax_lsq_init_grad_clip: float,
     jax_lsq_selection_score: str,
     compute_prior_predictive: bool,
     progress_bar: bool,
@@ -560,8 +566,15 @@ def run_cmd(
             selection_score=map_selection_score.lower(),
             candidate_distance_threshold=init_candidate_distance_threshold,
             num_steps=max(1, int(map_init_steps)),
-            learning_rate=float(map_init_learning_rate),
-            grad_clip=float(map_init_grad_clip),
+        )
+    elif init_method.lower() == "delta-map":
+        initializer = DeltaMAPInitializer(
+            debug_plot=debug_plot,
+            candidates=max(1, int(delta_map_init_candidates)),
+            start_method=delta_map_start_method.lower(),
+            selection_score=delta_map_selection_score.lower(),
+            candidate_distance_threshold=init_candidate_distance_threshold,
+            maxiter=max(1, int(delta_map_init_maxiter)),
         )
     elif init_method.lower() == "jax-lsq":
         initializer = JAXLSQInitializer(
@@ -571,8 +584,6 @@ def run_cmd(
             selection_score=jax_lsq_selection_score.lower(),
             candidate_distance_threshold=init_candidate_distance_threshold,
             num_steps=max(1, int(jax_lsq_init_steps)),
-            learning_rate=float(jax_lsq_init_learning_rate),
-            grad_clip=float(jax_lsq_init_grad_clip),
         )
     else:
         initializer = SVIInitializer(

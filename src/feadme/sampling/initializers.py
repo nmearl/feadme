@@ -9,16 +9,22 @@ import loguru
 import optax
 import corner
 import jax
+import matplotlib
+from jax.flatten_util import ravel_pytree
 from astropy.modeling.fitting import (
     TRFLSQFitter,
     DogBoxLSQFitter,
 )
+
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
+from numpyro.optim import Minimize
 from numpyro.distributions.util import scale_and_mask
 from numpyro.handlers import seed, substitute, trace
 from numpyro.infer import SVI, Trace_ELBO
 from numpyro.infer import init_to_median, init_to_sample, init_to_value
 from numpyro.infer.autoguide import (
+    AutoDelta,
     AutoBNAFNormal,
     AutoMultivariateNormal,
 )
@@ -38,7 +44,7 @@ logger = loguru.logger.opt(colors=True)
 
 c_kms = const.c.to(u.km / u.s).value
 INIT_BOUNDARY_MARGIN_FRAC = 1e-2
-DISK_RADIUS_RATIO_LOW = 2.0
+DISK_RADIUS_RATIO_LOW = 1.2
 DISK_RADIUS_RATIO_HIGH = 22.0
 INIT_EDGE_PENALTY_WEIGHT = 10.0
 INIT_EDGE_COMBO_PENALTY = 25.0
@@ -393,6 +399,100 @@ def _strip_flux_outputs(sample_dict: dict) -> dict:
     return {k: v for k, v in sample_dict.items() if not k.endswith("_flux")}
 
 
+def _complete_params_for_evaluation(config: Config, params: dict) -> dict:
+    complete = dict(params)
+    for param_ref in config.template.iter_all:
+        if "inclination" in param_ref.name:
+            base_name = f"{param_ref.name}_base"
+            if param_ref.name not in complete and base_name in complete:
+                complete[param_ref.name] = jnp.arccos(complete[base_name])
+        if param_ref.param.circular:
+            x_name = f"{param_ref.name}_x_base"
+            y_name = f"{param_ref.name}_y_base"
+            if param_ref.name not in complete and x_name in complete and y_name in complete:
+                complete[param_ref.name] = jnp.mod(
+                    jnp.arctan2(complete[y_name], complete[x_name]), 2 * jnp.pi
+                )
+    for param_ref in config.template.iter_fixed:
+        complete.setdefault(param_ref.name, param_ref.param.value)
+    for param_ref in config.template.iter_shared:
+        if param_ref.target_name in complete:
+            complete.setdefault(param_ref.name, complete[param_ref.target_name])
+    return complete
+
+
+def _plot_selected_init_fit(
+    *,
+    config: Config,
+    model: BaseModel,
+    init_params: dict,
+    filename: str,
+    fit_label: str,
+) -> None:
+    output_path = Path(config.output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    redshift = float(
+        jax.device_get(init_params.get("redshift", config.template.redshift.value))
+    )
+    plot_params = _complete_params_for_evaluation(config, init_params)
+    total_flux, disk_flux, line_flux = evaluate_model(
+        config.template,
+        config.data.masked_wave,
+        plot_params,
+        redshift,
+        integrator=model.integrator,
+    )
+    total_flux = np.asarray(jax.device_get(total_flux), dtype=float)
+    disk_flux = np.asarray(jax.device_get(disk_flux), dtype=float)
+    line_flux = np.asarray(jax.device_get(line_flux), dtype=float)
+
+    masks = config.template.mask or []
+    n_sf = max(1, len(masks))
+    fig, axes = plt.subplots(
+        1,
+        n_sf,
+        layout="constrained",
+        figsize=(10 * n_sf, 5),
+    )
+
+    for i in range(n_sf):
+        ax = axes.flat[i] if hasattr(axes, "flat") else axes
+        mask_spec = masks[i] if i < len(masks) else None
+        if mask_spec is None:
+            mask = np.ones_like(config.data.masked_wave, dtype=bool)
+        else:
+            mask = (config.data.masked_wave > mask_spec.lower_limit) & (
+                config.data.masked_wave < mask_spec.upper_limit
+            )
+
+        wave = np.asarray(config.data.masked_wave[mask], dtype=float)
+        rest_wave = wave / (1.0 + redshift)
+        ax.errorbar(
+            rest_wave,
+            np.asarray(config.data.masked_flux[mask], dtype=float),
+            yerr=np.asarray(config.data.masked_flux_err[mask], dtype=float),
+            fmt="o",
+            color="grey",
+            zorder=-10,
+            alpha=0.25,
+        )
+        ax.plot(rest_wave, total_flux[mask], label=fit_label, color="C3")
+        ax.plot(rest_wave, disk_flux[mask], label="Disk", color="C4")
+        ax.plot(rest_wave, line_flux[mask], label="Lines", color="C5", linestyle="--")
+        if mask_spec is not None:
+            ax.set_title(
+                f"{mask_spec.lower_limit / (1.0 + redshift):.0f}"
+                f"–{mask_spec.upper_limit / (1.0 + redshift):.0f} Å"
+            )
+        ax.set_xlabel("Wavelength (Å)")
+        ax.set_ylabel("Flux (mJy)")
+        ax.legend()
+
+    fig.savefig(output_path / filename)
+    plt.close(fig)
+
+
 def _add_radius_ratio_init_values(config: Config, params: dict) -> dict:
     params = dict(params)
     for profile in config.template.disk_profiles:
@@ -462,21 +562,8 @@ def _structured_start_to_init_params(
 
         elif param_ref.field_name == "apocenter":
             apo = float(params[name])
-            ecc_name = f"{param_ref.profile_name}_eccentricity"
-            ecc = params.get(ecc_name)
-            if ecc is None:
-                params[f"{name}_x_base"] = float(np.cos(apo))
-                params[f"{name}_y_base"] = float(np.sin(apo))
-                continue
-
-            low, high = _resolve_bounds(config, ecc_name)
-            if low is None or high is None or high <= low:
-                r = 1.0
-            else:
-                unit_e = np.clip((float(ecc) - low) / (high - low), 0.0, 0.9999)
-                r = float(np.arctanh(unit_e))
-            params[f"{name}_h"] = float(r * np.cos(apo))
-            params[f"{name}_k"] = float(r * np.sin(apo))
+            params[f"{name}_x_base"] = float(np.cos(apo))
+            params[f"{name}_y_base"] = float(np.sin(apo))
 
     return _strip_flux_outputs(params)
 
@@ -514,6 +601,21 @@ def _move_init_params_inside_bounds(
             continue
         margin = margin_frac * (high - low)
         params[name] = float(np.clip(float(value), low + margin, high - margin))
+
+    for param_ref in config.template.iter_all:
+        if "inclination" not in param_ref.name:
+            continue
+        base_name = f"{param_ref.name}_base"
+        if base_name not in params:
+            continue
+        mu_low = float(np.cos(param_ref.param.high))
+        mu_high = float(np.cos(param_ref.param.low))
+        if not np.isfinite(mu_low) or not np.isfinite(mu_high) or mu_high <= mu_low:
+            continue
+        margin = margin_frac * (mu_high - mu_low)
+        params[base_name] = float(
+            np.clip(float(params[base_name]), mu_low + margin, mu_high - margin)
+        )
 
     for profile in config.template.disk_profiles:
         inner_name = f"{profile.name}_inner_radius"
@@ -762,7 +864,7 @@ def _direct_spectral_log_likelihood(
     config: Config,
     params: dict,
 ):
-    param_mods = _complete_param_mods(config, params)
+    param_mods = _complete_param_mods(config, _complete_params_for_evaluation(config, params))
     total_flux, _, _ = evaluate_model(
         template=config.template,
         wave=config.data.masked_wave,
@@ -779,6 +881,27 @@ def _direct_spectral_log_likelihood(
     return -0.5 * jnp.sum(
         jnp.square(residual) + jnp.log(2.0 * jnp.pi * jnp.square(total_error))
     )
+
+
+def _direct_spectral_residual(
+    model: BaseModel,
+    config: Config,
+    params: dict,
+):
+    param_mods = _complete_param_mods(config, _complete_params_for_evaluation(config, params))
+    total_flux, _, _ = evaluate_model(
+        template=config.template,
+        wave=config.data.masked_wave,
+        param_mods=param_mods,
+        redshift=param_mods["redshift"],
+        integrator=model.integrator,
+    )
+    log_frac_noise = param_mods.get("log_frac_noise", -jnp.inf)
+    total_error = jnp.sqrt(
+        jnp.square(config.data.masked_flux_err)
+        + jnp.square(total_flux) * jnp.exp(2.0 * log_frac_noise)
+    )
+    return (total_flux - config.data.masked_flux) / total_error
 
 
 def _param_fraction(config: Config, name: str, value) -> float | None:
@@ -1580,8 +1703,6 @@ class MAPInitializer(BaseInitializer):
     start_method: str = "prior"
     selection_score: str = "likelihood"
     num_steps: int = 200
-    learning_rate: float = 1e-2
-    grad_clip: float = 10.0
 
     def __call__(self, config: Config, model: BaseModel):
         selection_score = self.selection_score.lower()
@@ -1671,6 +1792,14 @@ class MAPInitializer(BaseInitializer):
 
         self._write_candidate_summary(config, ranked_results, selected)
         diagnose_init_params(model, init_params, config)
+        if self.debug_plot:
+            _plot_selected_init_fit(
+                config=config,
+                model=model,
+                init_params=init_params,
+                filename="map_init_fit.png",
+                fit_label="MAP Init Fit",
+            )
 
         logger.info(
             "Selected MAP candidate "
@@ -1763,60 +1892,19 @@ class MAPInitializer(BaseInitializer):
         return initial_positions, usable_candidates, potential_fn, postprocess_fn
 
     def _optimize_positions(self, potential_fn, initial_positions):
-        optimizer = optax.chain(
-            optax.clip_by_global_norm(float(self.grad_clip)),
-            optax.adam(float(self.learning_rate)),
+        import jaxopt
+
+        solver = jaxopt.LBFGS(
+            fun=potential_fn,
+            maxiter=max(1, int(self.num_steps)),
+            history_size=20,
         )
 
-        def clean_tree(tree):
-            return jax.tree.map(
-                lambda x: jnp.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0),
-                tree,
-            )
-
         def optimize_one(initial_position):
-            opt_state = optimizer.init(initial_position)
-            initial_loss = potential_fn(initial_position)
-            initial_loss = jnp.where(jnp.isfinite(initial_loss), initial_loss, jnp.inf)
-
-            def step(carry, _):
-                position, state, best_position, best_loss = carry
-                loss, grads = jax.value_and_grad(potential_fn)(position)
-                finite_loss = jnp.isfinite(loss)
-                clean_grads = clean_tree(grads)
-                updates, state = optimizer.update(clean_grads, state, position)
-                next_position = optax.apply_updates(position, updates)
-                next_position = jax.tree.map(
-                    lambda new, old: jnp.where(finite_loss, new, old),
-                    next_position,
-                    position,
-                )
-                safe_loss = jnp.where(finite_loss, loss, jnp.inf)
-                improved = safe_loss < best_loss
-                best_position = jax.tree.map(
-                    lambda new, old: jnp.where(improved, new, old),
-                    position,
-                    best_position,
-                )
-                best_loss = jnp.where(improved, safe_loss, best_loss)
-                return (next_position, state, best_position, best_loss), safe_loss
-
-            (final_position, _, best_position, best_loss), _ = jax.lax.scan(
-                step,
-                (initial_position, opt_state, initial_position, initial_loss),
-                None,
-                length=max(1, int(self.num_steps)),
-            )
-            final_loss = potential_fn(final_position)
-            final_loss = jnp.where(jnp.isfinite(final_loss), final_loss, jnp.inf)
-            improved = final_loss < best_loss
-            best_position = jax.tree.map(
-                lambda new, old: jnp.where(improved, new, old),
-                final_position,
-                best_position,
-            )
-            best_loss = jnp.where(improved, final_loss, best_loss)
-            return best_position, best_loss
+            result = solver.run(initial_position)
+            loss = result.state.value
+            loss = jnp.where(jnp.isfinite(loss), loss, jnp.inf)
+            return result.params, loss
 
         return jax.jit(jax.vmap(optimize_one))(initial_positions)
 
@@ -1893,7 +1981,196 @@ class MAPInitializer(BaseInitializer):
 
 
 @flax.struct.dataclass
+class DeltaMAPInitializer(MAPInitializer):
+    maxiter: int = 300
+
+    def __call__(self, config: Config, model: BaseModel):
+        selection_score = self.selection_score.lower().replace("_", "-")
+        if selection_score not in {"likelihood", "posterior", "penalized-posterior"}:
+            raise ValueError(
+                "Delta-MAP selection_score must be 'likelihood', 'posterior', "
+                f"or 'penalized-posterior', got {self.selection_score!r}."
+            )
+
+        rng_key = random.PRNGKey(int(time.time() * 1000) % 2**32)
+        model_kwargs = {
+            "wave": config.data.masked_wave,
+            "flux": config.data.masked_flux,
+            "flux_err": config.data.masked_flux_err,
+        }
+        start_candidates = self._start_candidates(config)
+        logger.info(
+            "Running AutoDelta/BFGS initialization from "
+            f"{len(start_candidates)} {self.start_method.lower()} start(s) "
+            f"with maxiter={max(1, int(self.maxiter))}."
+        )
+
+        results = []
+        keys = random.split(rng_key, len(start_candidates))
+        for candidate_idx, (key, candidate) in enumerate(
+            zip(keys, start_candidates)
+        ):
+            try:
+                init_loc_fn = self._init_loc_fn(candidate)
+                guide = AutoDelta(model, init_loc_fn=init_loc_fn)
+                optimizer = Minimize(
+                    method="BFGS",
+                    options={"maxiter": max(1, int(self.maxiter))},
+                )
+                svi = SVI(model, guide, optimizer, Trace_ELBO())
+                svi_state = svi.init(key, **model_kwargs)
+                svi_state, loss = svi.update(svi_state, **model_kwargs)
+                params = svi.get_params(svi_state)
+                init_params = guide.median(params)
+                init_params = _strip_flux_outputs(init_params)
+                init_params = _move_init_params_inside_bounds(config, init_params)
+                init_params = _complete_params_for_evaluation(config, init_params)
+                log_prior, log_likelihood = _split_spectral_log_density(
+                    model, config, init_params
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"Delta-MAP candidate {candidate_idx} failed: {exc}"
+                )
+                continue
+
+            loss = float(jax.device_get(loss))
+            log_density = float(log_prior + log_likelihood)
+            edge_penalty, edge_flags = _edge_pressure_penalty(config, init_params)
+            if selection_score == "likelihood":
+                selection_value = log_likelihood
+            elif selection_score == "posterior":
+                selection_value = log_density
+            else:
+                selection_value = log_density - edge_penalty
+
+            results.append(
+                {
+                    "candidate_id": candidate_idx,
+                    "init_params": init_params,
+                    "score": float(log_likelihood),
+                    "log_density": float(log_density),
+                    "log_prior": float(log_prior),
+                    "log_likelihood": float(log_likelihood),
+                    "edge_penalty": float(edge_penalty),
+                    "edge_flags": edge_flags,
+                    "selection_metric": f"delta_map_{selection_score}",
+                    "selection_value": float(selection_value),
+                    "final_loss": loss,
+                    "start_method": candidate["fitter"],
+                    "start_objective": float(candidate["objective"]),
+                }
+            )
+
+        if not results:
+            raise RuntimeError("All Delta-MAP initialization candidates failed.")
+
+        ranked_results = self._rank_candidates(results)
+        distinct_results = _dedupe_basin_candidates(
+            ranked_results,
+            distance_threshold=self.candidate_distance_threshold,
+            params_key="init_params",
+            config=config,
+        )
+        selected = distinct_results[0]
+        init_params = selected["init_params"]
+
+        self._write_candidate_summary(config, ranked_results, selected)
+        diagnose_init_params(model, init_params, config)
+        if self.debug_plot:
+            _plot_selected_init_fit(
+                config=config,
+                model=model,
+                init_params=init_params,
+                filename="delta_map_init_fit.png",
+                fit_label="Delta-MAP Init Fit",
+            )
+
+        logger.info(
+            "Selected Delta-MAP candidate "
+            f"{selected['candidate_id']} with "
+            f"log_likelihood={selected['log_likelihood']:.4g}, "
+            f"log_density={selected['log_density']:.4g}, "
+            f"edge_penalty={selected.get('edge_penalty', 0.0):.4g}, "
+            f"final_loss={selected['final_loss']:.4g}, "
+            f"selection_metric={selected['selection_metric']}, "
+            f"start_method={selected['start_method']}."
+        )
+
+        return init_params, init_to_value(values=init_params)
+
+    def _start_candidates(self, config: Config) -> list[dict]:
+        start_method = self.start_method.lower()
+        count = max(1, int(self.candidates))
+        if start_method == "structured":
+            return _structured_pathfinder_candidates(config, count)
+        if start_method == "prior":
+            return [
+                {
+                    "fit_model": None,
+                    "objective": np.nan,
+                    "fitter": "prior",
+                    "start_candidate": {},
+                    "init_params": {},
+                    "failed": False,
+                }
+                for _ in range(count)
+            ]
+        raise ValueError(
+            "Delta-MAP start_method must be 'prior' or 'structured', "
+            f"got {self.start_method!r}."
+        )
+
+    @staticmethod
+    def _init_loc_fn(candidate: dict):
+        init_params = candidate.get("init_params") or {}
+        if init_params:
+            return init_to_value(values=init_params)
+        if candidate.get("fitter") == "prior":
+            return init_to_sample()
+        return init_to_median()
+
+
+@flax.struct.dataclass
 class JAXLSQInitializer(MAPInitializer):
+    def _optimize_positions(self, residual_fn, initial_positions):
+        import jaxopt
+
+        leaves = jax.tree.leaves(initial_positions)
+        if not leaves:
+            raise RuntimeError("No JAX-LSQ initial positions were provided.")
+        num_candidates = int(leaves[0].shape[0])
+
+        final_positions = []
+        final_losses = []
+        for candidate_idx in range(num_candidates):
+            initial_position = jax.tree.map(
+                lambda x, idx=candidate_idx: x[idx],
+                initial_positions,
+            )
+            flat_initial_position, unravel_position = ravel_pytree(initial_position)
+
+            def flat_residual(flat_position):
+                return residual_fn(unravel_position(flat_position))
+
+            solver = jaxopt.LevenbergMarquardt(
+                residual_fun=flat_residual,
+                maxiter=max(1, int(self.num_steps)),
+                tol=1e-5,
+                xtol=1e-5,
+                gtol=1e-5,
+                damping_parameter=1e-3,
+            )
+            result = solver.run(flat_initial_position)
+            loss = jnp.where(jnp.isfinite(result.state.value), result.state.value, jnp.inf)
+            final_positions.append(unravel_position(result.params))
+            final_losses.append(loss)
+
+        return (
+            jax.tree.map(lambda *xs: jnp.stack(xs), *final_positions),
+            jnp.stack(final_losses),
+        )
+
     def __call__(self, config: Config, model: BaseModel):
         selection_score = self.selection_score.lower().replace("_", "-")
         if selection_score not in {"likelihood", "posterior", "penalized-posterior"}:
@@ -1914,18 +2191,18 @@ class JAXLSQInitializer(MAPInitializer):
             self._make_initial_positions(model_key, config, model, model_kwargs)
         )
 
-        def objective_fn(position):
+        def residual_fn(position):
             params = postprocess_fn(position)
-            return -_direct_spectral_log_likelihood(model, config, params)
+            return _direct_spectral_residual(model, config, params)
 
         logger.info(
-            "Running batched JAX-LSQ initialization from "
+            "Running JAX-LSQ initialization from "
             f"{len(start_candidates)} {self.start_method.lower()} start(s) "
-            f"for {max(1, int(self.num_steps))} optimization step(s)."
+            f"for {max(1, int(self.num_steps))} Levenberg-Marquardt iteration(s)."
         )
 
         final_positions, final_losses = self._optimize_positions(
-            objective_fn,
+            residual_fn,
             initial_positions,
         )
         constrained_batch = jax.vmap(postprocess_fn)(final_positions)
@@ -2001,6 +2278,14 @@ class JAXLSQInitializer(MAPInitializer):
 
         self._write_candidate_summary(config, ranked_results, selected)
         diagnose_init_params(model, init_params, config)
+        if self.debug_plot:
+            _plot_selected_init_fit(
+                config=config,
+                model=model,
+                init_params=init_params,
+                filename="jax_lsq_init_fit.png",
+                fit_label="JAX-LSQ Init Fit",
+            )
 
         logger.info(
             "Selected JAX-LSQ candidate "
