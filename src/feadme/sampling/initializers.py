@@ -2133,6 +2133,8 @@ class DeltaMAPInitializer(MAPInitializer):
 
 @flax.struct.dataclass
 class JAXLSQInitializer(MAPInitializer):
+    batch_size: int = 4
+
     def _optimize_positions(self, residual_fn, initial_positions):
         import jaxopt
 
@@ -2141,30 +2143,52 @@ class JAXLSQInitializer(MAPInitializer):
             raise RuntimeError("No JAX-LSQ initial positions were provided.")
         num_candidates = int(leaves[0].shape[0])
 
-        final_positions = []
-        final_losses = []
+        reference_position = jax.tree.map(lambda x: x[0], initial_positions)
+        _, unravel_position = ravel_pytree(reference_position)
+
+        flat_initial_positions = []
         for candidate_idx in range(num_candidates):
             initial_position = jax.tree.map(
                 lambda x, idx=candidate_idx: x[idx],
                 initial_positions,
             )
-            flat_initial_position, unravel_position = ravel_pytree(initial_position)
+            flat_initial_position, _ = ravel_pytree(initial_position)
+            flat_initial_positions.append(flat_initial_position)
+        flat_initial_positions = jnp.stack(flat_initial_positions)
 
-            def flat_residual(flat_position):
-                return residual_fn(unravel_position(flat_position))
+        def flat_residual(flat_position):
+            return residual_fn(unravel_position(flat_position))
 
-            solver = jaxopt.LevenbergMarquardt(
-                residual_fun=flat_residual,
-                maxiter=max(1, int(self.num_steps)),
-                tol=1e-5,
-                xtol=1e-5,
-                gtol=1e-5,
-                damping_parameter=1e-3,
-            )
+        solver = jaxopt.LevenbergMarquardt(
+            residual_fun=flat_residual,
+            maxiter=max(1, int(self.num_steps)),
+            tol=1e-5,
+            xtol=1e-5,
+            gtol=1e-5,
+            damping_parameter=1e-3,
+        )
+
+        def solve_one(flat_initial_position):
             result = solver.run(flat_initial_position)
-            loss = jnp.where(jnp.isfinite(result.state.value), result.state.value, jnp.inf)
-            final_positions.append(unravel_position(result.params))
-            final_losses.append(loss)
+            loss = jnp.where(
+                jnp.isfinite(result.state.value),
+                result.state.value,
+                jnp.inf,
+            )
+            return result.params, loss
+
+        solve_batch = jax.jit(jax.vmap(solve_one))
+        batch_size = max(1, int(self.batch_size))
+        final_positions = []
+        final_losses = []
+        for start in range(0, num_candidates, batch_size):
+            stop = min(start + batch_size, num_candidates)
+            flat_final_batch, loss_batch = solve_batch(
+                flat_initial_positions[start:stop]
+            )
+            for row_idx in range(stop - start):
+                final_positions.append(unravel_position(flat_final_batch[row_idx]))
+                final_losses.append(loss_batch[row_idx])
 
         return (
             jax.tree.map(lambda *xs: jnp.stack(xs), *final_positions),
@@ -2198,7 +2222,8 @@ class JAXLSQInitializer(MAPInitializer):
         logger.info(
             "Running JAX-LSQ initialization from "
             f"{len(start_candidates)} {self.start_method.lower()} start(s) "
-            f"for {max(1, int(self.num_steps))} Levenberg-Marquardt iteration(s)."
+            f"for {max(1, int(self.num_steps))} Levenberg-Marquardt iteration(s) "
+            f"with batch_size={max(1, int(self.batch_size))}."
         )
 
         final_positions, final_losses = self._optimize_positions(

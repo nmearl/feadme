@@ -466,6 +466,13 @@ def cli():
     help="Number of Levenberg-Marquardt iterations for each JAX-LSQ initialization start.",
 )
 @click.option(
+    "--jax-lsq-batch-size",
+    type=int,
+    default=4,
+    show_default=True,
+    help="Number of JAX-LSQ starts to optimize in one vmapped Levenberg-Marquardt batch.",
+)
+@click.option(
     "--jax-lsq-selection-score",
     type=click.Choice(
         ["likelihood", "posterior", "penalized-posterior"], case_sensitive=False
@@ -514,6 +521,7 @@ def run_cmd(
     jax_lsq_init_candidates: int,
     jax_lsq_start_method: str,
     jax_lsq_init_steps: int,
+    jax_lsq_batch_size: int,
     jax_lsq_selection_score: str,
     compute_prior_predictive: bool,
     progress_bar: bool,
@@ -584,6 +592,7 @@ def run_cmd(
             selection_score=jax_lsq_selection_score.lower(),
             candidate_distance_threshold=init_candidate_distance_threshold,
             num_steps=max(1, int(jax_lsq_init_steps)),
+            batch_size=max(1, int(jax_lsq_batch_size)),
         )
     else:
         initializer = SVIInitializer(
