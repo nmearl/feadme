@@ -10,8 +10,10 @@ and uses JAX and NumPyro for JIT-compiled, gradient-based NUTS sampling.
 ## Features
 
 - JAX-accelerated disk integration with GPU support
-- NUTS posterior sampling via NumPyro
+- NUTS posterior sampling via NumPyro, with NeuTra available for experiments
+- Multiple initialization strategies, including SVI, Pathfinder, MAP, AutoDelta-style MAP, and JAX-LSQ
 - JSON-driven model templates with multi-component and shared-parameter support
+- Disk radial extent sampled with `radius_ratio`; `outer_radius` is derived as `inner_radius * radius_ratio`
 
 ## Installation
 
@@ -34,4 +36,16 @@ From source without uv:
 git clone https://github.com/nmearl/feadme.git
 cd feadme
 pip install -e ".[dev]"
+```
+
+## Quickstart
+
+```bash
+feadme run \
+  --template-path template.json \
+  --data-path data.csv \
+  --output-path results \
+  --sampler nuts \
+  --init-method jax-lsq \
+  --integrator mixed
 ```

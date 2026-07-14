@@ -11,6 +11,7 @@ and fits it to double-peaked emission line profiles via Bayesian inference.
 - **Fast**: JAX-accelerated disk integration with JIT compilation and GPU support.
 - **Bayesian**: NUTS-based posterior sampling via NumPyro with full uncertainty quantification.
 - **Flexible**: JSON-driven model templates supporting multiple disk and line components with shared parameters.
+- **Robust initialization**: SVI, Pathfinder, MAP, AutoDelta-style MAP, and JAX-LSQ initializers for difficult multimodal line-profile fits.
 
 ## Installation
 
@@ -38,7 +39,12 @@ pip install -e ".[dev]"
 ## Quickstart
 
 ```bash
-feadme run --template-path my_template.json --data-path my_data.csv
+feadme run \
+  --template-path my_template.json \
+  --data-path my_data.csv \
+  --output-path results \
+  --init-method jax-lsq \
+  --integrator mixed
 ```
 
 See the [documentation](https://nmearl.github.io/feadme) for the full CLI reference, data format, and template specification.
