@@ -11,14 +11,30 @@ Also included is a data set for the AGN double-peaked emitter ZTF18aahiqst.
 To run the example, you can use the following command:
 
 ```bash
-feadme template.json data.csv --output-path=./output --num-warmup=1000 --num-samples=1000 --num-chains=2 --pre-fit
+feadme run \
+  --template-path template.json \
+  --data-path data.csv \
+  --output-path ./output \
+  --num-warmup 1000 \
+  --num-samples 1000 \
+  --num-chains 2 \
+  --init-method jax-lsq \
+  --integrator mixed
 ```
 
-If you are using a CPU and wish to have Jax treat it as several distinct devices,
-you can set the environment variable `FORCEFORCE_DEVICE_COUNT` to the number of devices 
+If you are using a CPU and want JAX to treat it as several distinct devices,
+set `FORCE_DEVICE_COUNT` to the number of devices
 you want to simulate, e.g.
 
 ```bash
-export FORCEFORCE_DEVICE_COUNT=2
-feadme template.json data.csv --output-path=./output --num-warmup=1000 --num-samples=1000 --num-chains=2 --pre-fit
+export FORCE_DEVICE_COUNT=2
+feadme run \
+  --template-path template.json \
+  --data-path data.csv \
+  --output-path ./output \
+  --num-warmup 1000 \
+  --num-samples 1000 \
+  --num-chains 2 \
+  --init-method jax-lsq \
+  --integrator mixed
 ```
