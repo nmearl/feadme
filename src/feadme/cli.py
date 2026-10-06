@@ -117,10 +117,11 @@ def perform_sampling(config, model, sampler):
         output_path.mkdir(parents=True, exist_ok=True)
         logger.info(f"Created output directory: <light-red>{output_path}</light-red>")
 
-    # If a results file already exists, load it instead of running the sampler
+    # Reuse an existing posterior only when the caller explicitly requests it.
     results_exist = (Path(output_path) / "results.nc").exists()
+    reuse_results = results_exist and config.skip_existing
 
-    if results_exist:
+    if reuse_results:
         logger.info(
             f"Loading existing results at "
             f"<light-red>{output_path}/results.nc</light-red>."
@@ -135,7 +136,7 @@ def perform_sampling(config, model, sampler):
     # Report results and write to disk
     reporter = Reporter(config=config, idata=idata)
 
-    if not results_exist:
+    if not reuse_results:
         reporter.write_netcdf()
         logger.info(
             f"Results written to <green>{config.output_path}/results.nc</green>."
