@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import numpy as np
 
 from feadme.core.evaluators import (
     compose_param_arrays,
@@ -39,6 +40,34 @@ def test_handles_empty_line_flux():
 
     assert result.shape == wave.shape
     assert (result == 0).all()
+
+
+def test_line_velocity_width_convention():
+    center = 6562.8
+    vel_width = 300.0
+    sigma_lambda = vel_width / 299792.458 * center
+
+    gaussian_half_width = np.sqrt(2.0 * np.log(2.0)) * sigma_lambda
+    gaussian = _compute_line_flux_vectorized(
+        jnp.array([center, center + gaussian_half_width]),
+        jnp.array([center]),
+        jnp.array([0.0]),
+        jnp.array([vel_width]),
+        jnp.array([1.0]),
+        jnp.array([True]),
+    )
+    assert np.isclose(float(gaussian[1] / gaussian[0]), 0.5, rtol=1e-5)
+
+    lorentzian_half_width = 0.5 * 2.35482 * sigma_lambda
+    lorentzian = _compute_line_flux_vectorized(
+        jnp.array([center, center + lorentzian_half_width]),
+        jnp.array([center]),
+        jnp.array([0.0]),
+        jnp.array([vel_width]),
+        jnp.array([1.0]),
+        jnp.array([False]),
+    )
+    assert np.isclose(float(lorentzian[1] / lorentzian[0]), 0.5, rtol=1e-5)
 
 
 def test_compose_derives_outer_radius_from_radius_ratio():
