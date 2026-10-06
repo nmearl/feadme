@@ -15,7 +15,7 @@ feadme run --template-path TEMPLATE --data-path DATA [OPTIONS]
 | `--template-path PATH` | required | JSON template file |
 | `--data-path PATH` | required | CSV spectrum file |
 | `--output-path PATH` | `output` | Directory for `results.nc`, `summary.csv`, and plots |
-| `--skip-existing / --no-skip-existing` | `False` | Skip sampling when output already exists |
+| `--skip-existing / --no-skip-existing` | `False` | Reuse an existing `results.nc` instead of sampling again |
 | `--compute-prior-predictive / --no-compute-prior-predictive` | `False` | Save prior predictive samples for diagnostics |
 | `--progress-bar / --no-progress-bar` | `True` | Toggle sampler progress bars |
 | `--rebin FLOAT` | `None` | Rebin the loaded spectrum to a velocity resolution in km/s before fitting |
@@ -106,8 +106,9 @@ Input data must be a CSV file with three columns. Column names are ignored.
 | Flux | User-defined flux density or continuum-subtracted flux unit |
 | Flux uncertainty | Same flux unit as `Flux` |
 
+The wavelength array and mask limits are interpreted in the observed frame.
 The template mask is applied after loading the data. If `--rebin` is supplied,
-the spectrum is rebinned before fitting.
+the full spectrum is rebinned before the mask is applied.
 
 ---
 
@@ -147,14 +148,35 @@ Free and fixed parameters share the same schema:
 
 | Field | Description |
 |---|---|
-| `distribution` | Prior family. Current templates use `uniform`, `log_uniform`, `normal`, `log_normal`, and `beta` where supported |
+| `distribution` | Prior family. Supported values are `uniform`, `log_uniform`, `normal`, `log_normal`, and `beta` |
 | `value` | Fixed value or initializer/reference value |
 | `fixed` | `true` locks the parameter at `value` |
 | `shared` | Name of another profile whose same-named parameter this profile shares |
 | `low` / `high` | Hard parameter bounds |
 | `loc` / `scale` | Center and width for normal/log-normal priors |
 | `alpha` / `beta` | Shape parameters for `beta` priors |
-| `circular` | `true` for angular parameters such as `apocenter` |
+| `circular` | `true` for a full-circle angular parameter such as `apocenter` |
+
+Normal and log-normal priors are bounded by `low` and `high`. For a
+log-normal prior, `loc` and `scale` describe the corresponding positive-valued
+parameter; FEADME converts them to log-space distribution parameters.
+
+Inclination receives special treatment. It is sampled through
+`mu = cos(inclination)`:
+
+- `uniform` gives a prior uniform in `mu`, corresponding to isotropically
+  oriented disks within the requested angular bounds. It is not uniform in
+  inclination angle.
+- `normal` interprets `loc` and `scale` in radians and maps them locally into
+  cosine space.
+- `beta` applies `Beta(alpha, beta)` to cosine space after scaling it to the
+  interval implied by the inclination bounds.
+
+For other parameters, a `beta` prior has its standard support on `[0, 1]`.
+When `circular` is `true`, FEADME samples an angle uniformly on `[0, 2*pi)`
+through auxiliary Cartesian variables. The declared distribution parameters
+and bounds are not used for a free circular parameter, so this option should
+only be used for full-circle angles.
 
 ### Disk Profile Parameters
 
@@ -191,13 +213,15 @@ Each line profile has a `name`, a fixed rest-frame `center`, and a `shape`
 | Parameter | Units | Description |
 |---|---|---|
 | `area` | flux x wavelength | Integrated line flux |
-| `vel_width` | km/s | Velocity width parameter |
+| `vel_width` | km/s | Nominal line velocity dispersion (`sigma_v`) |
 | `offset` | km/s | Velocity offset from `center` |
 
 ### Mask
 
-The `mask` field is a list of wavelength windows to include in the fit. Pixels
-outside all windows are excluded.
+The `mask` field is a list of observed-frame wavelength windows to include in
+the fit. The mask is applied directly to the input wavelength column; FEADME
+does not divide the data wavelengths or mask limits by `(1 + redshift)`.
+Pixels outside all windows are excluded.
 
 ```json
 "mask": [
